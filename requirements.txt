@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+alembic
+psycopg2-binary
+python-jose
+passlib
+celery
+redis
+instagrapi
+cryptography
+stripe
+email-validator
