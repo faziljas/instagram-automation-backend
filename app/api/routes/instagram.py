@@ -375,62 +375,58 @@ async def execute_automation_action(rule: AutomationRule, sender_id: str, accoun
             import requests
             
             try:
-                # Get access token from encrypted credentials
-                access_token = decrypt_credentials(account.encrypted_credentials)
+                # Get access token - use encrypted_page_token for OAuth accounts, fallback to encrypted_credentials
+                if account.encrypted_page_token:
+                    access_token = decrypt_credentials(account.encrypted_page_token)
+                    print(f"✅ Using OAuth page token for sending DM")
+                elif account.encrypted_credentials:
+                    access_token = decrypt_credentials(account.encrypted_credentials)
+                    print(f"⚠️ Using legacy encrypted credentials")
+                else:
+                    raise Exception("No access token found for account")
                 
-                # Use Instagram Graph API to send DM
-                # First, get the Instagram Business Account ID (IGSID)
-                igsid = account.igsid or sender_id  # Fallback to sender_id if IGSID not set
+                # Use Instagram Graph API to send DM via Page token
+                # For Instagram messaging, we need to use the Page ID and Page token
+                if not account.page_id:
+                    raise Exception("Page ID not found. Account may not be properly connected via OAuth.")
                 
-                # Send message via Graph API
-                # Note: Instagram Graph API requires the recipient to have messaged you first
-                # or you need to use the messaging API with proper permissions
-                send_url = f"https://graph.facebook.com/v18.0/{igsid}/messages"
+                # Use Page-scoped ID for messaging (page_id is the Facebook Page ID)
+                # The sender_id is the Instagram user ID who commented/messaged
+                send_url = f"https://graph.facebook.com/v19.0/{account.page_id}/messages"
                 send_data = {
                     "recipient": {"id": sender_id},
                     "message": {"text": message_template},
                     "access_token": access_token
                 }
                 
+                print(f"📤 Sending DM via Page API: Page ID={account.page_id}, Recipient={sender_id}")
                 response = requests.post(send_url, json=send_data)
+                
                 if response.status_code == 200:
                     print(f"✅ DM sent to {sender_id}: {message_template}")
                 else:
-                    print(f"⚠️ Failed to send DM via Graph API: {response.text}")
-                    # Fallback: Try using instagrapi if password is available
-                    # (for backward compatibility with password-based accounts)
-                    if hasattr(account, 'password') and account.password:
-                        client = InstagramClient()
-                        client.authenticate(account.username, account.password)
-                        client.send_dm([sender_id], message_template)
-                        print(f"✅ DM sent via instagrapi fallback")
-                    else:
-                        raise Exception(f"Graph API failed: {response.text}")
+                    error_detail = response.text
+                    print(f"❌ Failed to send DM via Graph API: {error_detail}")
+                    raise Exception(f"Graph API failed: {error_detail}")
                 
                 # Log the DM
                 from app.models.dm_log import DmLog
                 dm_log = DmLog(
+                    user_id=account.user_id,
                     instagram_account_id=account.id,
-                    recipient_username=sender_id,
-                    message_content=message_template,
-                    status="sent"
+                    recipient_username=str(sender_id),  # Using sender_id as recipient username (ID format)
+                    message=message_template
                 )
                 db.add(dm_log)
                 db.commit()
+                print(f"✅ DM logged successfully")
                 
             except Exception as e:
                 print(f"❌ Failed to send DM: {str(e)}")
-                
-                # Log the failure
-                from app.models.dm_log import DmLog
-                dm_log = DmLog(
-                    instagram_account_id=account.id,
-                    recipient_username=sender_id,
-                    message_content=message_template,
-                    status="failed"
-                )
-                db.add(dm_log)
-                db.commit()
+                import traceback
+                traceback.print_exc()
+                # Note: Not logging failed DMs to avoid cluttering the log table
+                # Errors are already logged via print statements above
                 
         elif rule.action_type == "add_to_list":
             # Implementation for adding user to a list
