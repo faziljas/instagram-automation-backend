@@ -364,8 +364,8 @@ async def execute_automation_action(rule: AutomationRule, sender_id: str, accoun
     """Execute the automation action defined in the rule."""
     try:
         if rule.action_type == "send_dm":
-            # Get message template from action config
-            message_template = rule.action_config.get("message_template", "")
+            # Get message template from config
+            message_template = rule.config.get("message_template", "")
             if not message_template:
                 print("⚠️ No message template configured")
                 return
@@ -434,7 +434,7 @@ async def execute_automation_action(rule: AutomationRule, sender_id: str, accoun
                 
         elif rule.action_type == "add_to_list":
             # Implementation for adding user to a list
-            list_name = rule.action_config.get("list_name", "")
+            list_name = rule.config.get("list_name", "")
             print(f"📝 Would add {sender_id} to list: {list_name}")
             # TODO: Implement list management
             
