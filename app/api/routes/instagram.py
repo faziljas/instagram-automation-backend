@@ -155,8 +155,8 @@ async def process_instagram_message(event: dict, db: Session):
             
             if rule.trigger_type == "new_message":
                 should_trigger = True
-            elif rule.trigger_type == "keyword" and rule.trigger_config:
-                keyword = rule.trigger_config.get("keyword", "").lower()
+            elif rule.trigger_type == "keyword" and rule.config:
+                keyword = rule.config.get("keyword", "").lower()
                 if keyword and keyword in message_text.lower():
                     should_trigger = True
                     print(f"🎯 Keyword '{keyword}' found in message")
@@ -260,8 +260,8 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
             print(f"🔄 Processing rule: {rule.name or 'Comment Rule'} → {rule.action_type}")
             # Check keyword filter if configured
             should_trigger = True
-            if rule.trigger_config and rule.trigger_config.get("keyword"):
-                keyword = rule.trigger_config.get("keyword", "").lower()
+            if rule.config and rule.config.get("keyword"):
+                keyword = rule.config.get("keyword", "").lower()
                 if keyword not in comment_text.lower():
                     should_trigger = False
                     print(f"⏭️ Keyword '{keyword}' not found in comment")
@@ -346,8 +346,8 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
             print(f"🔄 Processing rule: {rule.name or 'Live Comment Rule'} → {rule.action_type}")
             # Check keyword filter if configured
             should_trigger = True
-            if rule.trigger_config and rule.trigger_config.get("keyword"):
-                keyword = rule.trigger_config.get("keyword", "").lower()
+            if rule.config and rule.config.get("keyword"):
+                keyword = rule.config.get("keyword", "").lower()
                 if keyword not in comment_text.lower():
                     should_trigger = False
                     print(f"⏭️ Keyword '{keyword}' not found in live comment")
