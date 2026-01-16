@@ -126,16 +126,17 @@ async def instagram_oauth_callback(
         print(f"📥 Callback URL from Instagram: {callback_url}")
         print(f"📥 Extracted redirect_uri from callback: {actual_redirect_uri}")
         print(f"🔗 Configured redirect_uri: {INSTAGRAM_REDIRECT_URI}")
+        print(f"🔗 Actual redirect_uri used by Instagram: {actual_redirect_uri}")
         
         # Exchange code for short-lived access token
-        # CRITICAL: redirect_uri must match EXACTLY what was sent in authorize request
-        # Instagram stores redirect_uri as it appears in authorize URL (URL-encoded in query string)
-        # But in POST body, we send raw value and requests.post() form-encodes it
-        # Instagram compares the RAW values, so both must be the same raw redirect_uri
+        # CRITICAL: Use the exact redirect_uri that Instagram actually used, not our configured one
+        # Instagram normalizes URLs by removing trailing slashes, so they may differ
+        # We must use the actual redirect_uri from the callback URL to match what Instagram expects
         token_url = "https://api.instagram.com/oauth/access_token"
         
-        # Use exact redirect_uri (same as authorize request)
-        redirect_uri_for_exchange = INSTAGRAM_REDIRECT_URI.strip()
+        # CRITICAL: Use the actual redirect_uri that Instagram used, not our configured one
+        # Instagram normalizes URLs by removing trailing slashes, so they may differ
+        redirect_uri_for_exchange = actual_redirect_uri
         
         # Build token exchange request
         # Note: requests.post(data=...) sends as application/x-www-form-urlencoded
@@ -144,13 +145,14 @@ async def instagram_oauth_callback(
             "client_id": INSTAGRAM_APP_ID,
             "client_secret": INSTAGRAM_APP_SECRET,
             "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri_for_exchange,
+            "redirect_uri": redirect_uri_for_exchange,  # Use the ACTUAL redirect_uri Instagram used
             "code": code
         }
         
         print(f"🔄 Exchanging code for token...")
         print(f"   client_id: {INSTAGRAM_APP_ID}")
         print(f"   redirect_uri: '{redirect_uri_for_exchange}'")
+        print(f"🔗 Using actual redirect_uri for token exchange")
         print(f"   Full request data: {token_data}")
         
         # Send POST request - requests will form-encode the data
