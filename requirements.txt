@@ -11,3 +11,4 @@ instagrapi
 cryptography
 stripe
 email-validator
+python-dotenv==1.0.0
