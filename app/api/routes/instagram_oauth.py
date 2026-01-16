@@ -126,17 +126,18 @@ async def instagram_oauth_callback(
         print(f"📥 Callback URL from Instagram: {callback_url}")
         print(f"📥 Extracted redirect_uri from callback: {actual_redirect_uri}")
         print(f"🔗 Configured redirect_uri: {INSTAGRAM_REDIRECT_URI}")
-        print(f"🔗 Actual redirect_uri used by Instagram: {actual_redirect_uri}")
+        print(f"🔗 Actual redirect_uri used by Instagram (normalized): {actual_redirect_uri}")
         
         # Exchange code for short-lived access token
-        # CRITICAL: Use the exact redirect_uri that Instagram actually used, not our configured one
-        # Instagram normalizes URLs by removing trailing slashes, so they may differ
-        # We must use the actual redirect_uri from the callback URL to match what Instagram expects
+        # CRITICAL: Instagram normalizes URLs by removing trailing slashes during redirect
+        # However, for token exchange, we must use the ORIGINAL redirect_uri from authorize request
+        # Instagram stores the original redirect_uri and expects it to match in token exchange
+        # Even though the callback URL is normalized (no trailing slash), we use the original (with slash)
         token_url = "https://api.instagram.com/oauth/access_token"
         
-        # CRITICAL: Use the actual redirect_uri that Instagram used, not our configured one
-        # Instagram normalizes URLs by removing trailing slashes, so they may differ
-        redirect_uri_for_exchange = actual_redirect_uri
+        # CRITICAL: Use the ORIGINAL redirect_uri from authorize request, not the normalized callback URL
+        # Instagram normalizes the callback URL (removes trailing slash) but expects the original in token exchange
+        redirect_uri_for_exchange = INSTAGRAM_REDIRECT_URI.strip()
         
         # Build token exchange request
         # Note: requests.post(data=...) sends as application/x-www-form-urlencoded
@@ -145,14 +146,14 @@ async def instagram_oauth_callback(
             "client_id": INSTAGRAM_APP_ID,
             "client_secret": INSTAGRAM_APP_SECRET,
             "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri_for_exchange,  # Use the ACTUAL redirect_uri Instagram used
+            "redirect_uri": redirect_uri_for_exchange,  # Use ORIGINAL redirect_uri from authorize request
             "code": code
         }
         
         print(f"🔄 Exchanging code for token...")
         print(f"   client_id: {INSTAGRAM_APP_ID}")
         print(f"   redirect_uri: '{redirect_uri_for_exchange}'")
-        print(f"🔗 Using actual redirect_uri for token exchange")
+        print(f"🔗 Using ORIGINAL redirect_uri from authorize request (not normalized callback URL)")
         print(f"   Full request data: {token_data}")
         
         # Send POST request - requests will form-encode the data
