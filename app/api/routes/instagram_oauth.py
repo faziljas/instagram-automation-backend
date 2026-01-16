@@ -64,12 +64,15 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
         )
     
     # Required scopes for Instagram Business API with Auto DM on Comment
+    # business_management is needed for Pages inside Meta Business Suite portfolio
     scopes = [
         "instagram_basic",
         "instagram_manage_comments",
         "instagram_manage_messages",
         "pages_show_list",
-        "pages_read_engagement"
+        "pages_read_engagement",
+        "pages_manage_metadata",
+        "business_management"
     ]
     
     redirect_uri = INSTAGRAM_REDIRECT_URI.strip()
@@ -137,9 +140,11 @@ async def instagram_oauth_callback(
         print(f"✅ Got User Access Token")
         
         # Step 2: Fetch user's Facebook Pages with Instagram Business Accounts
+        # Add limit=100 to avoid pagination issues, and use type=page as fallback
         pages_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/me/accounts"
         pages_params = {
             "fields": "id,name,access_token,instagram_business_account{id,username}",
+            "limit": "100",
             "access_token": user_access_token
         }
         
@@ -156,6 +161,27 @@ async def instagram_oauth_callback(
         
         pages_data = pages_response.json()
         pages = pages_data.get("data", [])
+        
+        # Fallback: Try fetching with type=page if no pages found
+        if not pages:
+            print("⚠️ No pages found with me/accounts, trying fallback with type=page...")
+            fallback_pages_params = {
+                "fields": "id,name,access_token,instagram_business_account{id,username}",
+                "type": "page",
+                "limit": "100",
+                "access_token": user_access_token
+            }
+            fallback_response = requests.get(pages_url, params=fallback_pages_params)
+            
+            if fallback_response.status_code == 200:
+                fallback_data = fallback_response.json()
+                pages = fallback_data.get("data", [])
+                if pages:
+                    print(f"✅ Found {len(pages)} pages using fallback method")
+                else:
+                    print("❌ No Facebook Pages found even with fallback method")
+            else:
+                print(f"⚠️ Fallback request failed: {fallback_response.text}")
         
         if not pages:
             print("❌ No Facebook Pages found")
