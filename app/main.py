@@ -52,7 +52,7 @@ async def startup_event():
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Local development
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Local development
     allow_origin_regex=r"https://.*\.onrender\.com",  # Render deployment
     allow_credentials=True,
     allow_methods=["*"],
