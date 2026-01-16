@@ -1,10 +1,10 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
 alembic
 psycopg2-binary
-python-jose
-passlib
+python-jose[cryptography]
+passlib[bcrypt]
 celery
 redis
 instagrapi
@@ -12,3 +12,4 @@ cryptography
 stripe
 email-validator
 python-dotenv==1.0.0
+requests
