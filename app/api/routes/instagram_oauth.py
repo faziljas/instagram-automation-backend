@@ -20,7 +20,9 @@ router = APIRouter()
 # The Instagram App ID is shown in Meta Console → Instagram → API setup → App Credentials
 INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "1236315365125564")  # Instagram App ID (correct)
 INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "ebb1f998812da792755")  # Instagram App Secret
-INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "https://89bf24e721d81226-121-7-110-230.serveousercontent.com/api/instagram/oauth/callback")
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback")
+# Frontend URL for OAuth redirects after successful authentication
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
 def get_current_user_id(authorization: str = Header(None)) -> int:
@@ -241,7 +243,7 @@ async def instagram_oauth_callback(
         if not user_id:
             print("⚠️ No user_id in state, cannot save to database")
             return RedirectResponse(
-                url=f"http://localhost:3000/dashboard/accounts?error=no_user_id"
+                url=f"{FRONTEND_URL}/dashboard/accounts?error=no_user_id"
             )
         
         # Check if account already exists
@@ -276,13 +278,13 @@ async def instagram_oauth_callback(
         
         # Redirect to frontend success page
         return RedirectResponse(
-            url=f"http://localhost:3000/dashboard/accounts?success=true&account_id={account_id}"
+            url=f"{FRONTEND_URL}/dashboard/accounts?success=true&account_id={account_id}"
         )
         
     except ValueError as e:
         print(f"❌ ValueError: {str(e)}")
         return RedirectResponse(
-            url=f"http://localhost:3000/dashboard/accounts?error=invalid_state"
+            url=f"{FRONTEND_URL}/dashboard/accounts?error=invalid_state"
         )
     except Exception as e:
         print(f"❌ OAuth callback error: {str(e)}")
@@ -291,7 +293,7 @@ async def instagram_oauth_callback(
         
         # Redirect to frontend error page
         return RedirectResponse(
-            url=f"http://localhost:3000/dashboard/accounts?error=oauth_failed"
+            url=f"{FRONTEND_URL}/dashboard/accounts?error=oauth_failed"
         )
 
 
