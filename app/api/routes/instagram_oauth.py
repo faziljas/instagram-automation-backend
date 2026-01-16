@@ -217,15 +217,16 @@ async def instagram_oauth_callback(
         print(f"   Instagram ID: {page_with_instagram['instagram_id']}")
         print(f"   Instagram Username: {page_with_instagram['instagram_username']}")
         
-        # Step 4: Subscribe page to webhooks (feed, comments, mentions)
+        # Step 4: Subscribe page to webhooks (feed, mention, messages)
+        # Note: 'feed' handles posts and comments, 'mention' handles mentions, 'messages' handles DMs
         try:
             webhook_subscribe_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/{page_with_instagram['page_id']}/subscribed_apps"
             webhook_params = {
-                "subscribed_fields": "feed,comments,mentions",
+                "subscribed_fields": "feed,mention,messages",
                 "access_token": page_with_instagram['page_token']
             }
             
-            print(f"🔄 Subscribing page to webhooks (feed, comments, mentions)...")
+            print(f"🔄 Subscribing page to webhooks (feed, mention, messages)...")
             webhook_response = requests.post(webhook_subscribe_url, params=webhook_params)
             
             if webhook_response.status_code == 200:
