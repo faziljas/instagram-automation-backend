@@ -5,14 +5,28 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users
 from app.db.session import engine
+from app.db.base import Base
 from sqlalchemy import text
+# Import all models to ensure they're registered with Base
+from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower
 
 app = FastAPI(title="Instagram Automation SaaS")
 
 @app.on_event("startup")
 async def startup_event():
-    """Auto-migrate: Add igsid column if it doesn't exist"""
+    """Create all database tables and handle migrations"""
     import sys
+    
+    # Create all tables first
+    try:
+        print("🔄 Creating database tables...", file=sys.stderr)
+        Base.metadata.create_all(bind=engine)
+        print("✅ Database tables created successfully", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Error creating tables: {str(e)}", file=sys.stderr)
+        raise
+    
+    # Auto-migrate: Add igsid column if it doesn't exist
     try:
         with engine.begin() as conn:
             # Check if column exists
