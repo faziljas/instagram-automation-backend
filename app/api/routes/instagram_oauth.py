@@ -65,6 +65,7 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
     
     # Required scopes for Instagram Business API with Auto DM on Comment
     # business_management is needed for Pages inside Meta Business Suite portfolio
+    # pages_messaging is required to subscribe to 'messages' webhook field for DMs
     scopes = [
         "instagram_basic",
         "instagram_manage_comments",
@@ -72,7 +73,8 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
         "pages_show_list",
         "pages_read_engagement",
         "pages_manage_metadata",
-        "business_management"
+        "business_management",
+        "pages_messaging"
     ]
     
     redirect_uri = INSTAGRAM_REDIRECT_URI.strip()
