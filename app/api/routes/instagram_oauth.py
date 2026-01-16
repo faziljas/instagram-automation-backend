@@ -15,9 +15,10 @@ from app.utils.encryption import encrypt_credentials
 router = APIRouter()
 
 # Instagram App Configuration
-INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "")
-INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "")
-INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback")
+# Fallback to FACEBOOK_* variables if INSTAGRAM_* are not set (they're the same in Meta)
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", os.getenv("FACEBOOK_APP_ID", ""))
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", os.getenv("FACEBOOK_APP_SECRET", ""))
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", os.getenv("FACEBOOK_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 INSTAGRAM_API_VERSION = "v19.0"
 
