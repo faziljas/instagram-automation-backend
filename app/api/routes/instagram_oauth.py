@@ -1,10 +1,9 @@
 """
-Instagram OAuth Authentication Routes
-Implements secure OAuth flow for connecting Instagram accounts
+Facebook Login for Business OAuth Routes
+Implements OAuth flow for connecting Instagram Business accounts via Facebook Pages
 """
 import os
 import requests
-from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -15,16 +14,12 @@ from app.utils.encryption import encrypt_credentials
 
 router = APIRouter()
 
-# Instagram OAuth Configuration
-# IMPORTANT: Use Instagram App ID (1236315365125564), NOT Facebook App ID (1312634277295614)
-# The Instagram App ID is shown in Meta Console → Instagram → API setup → App Credentials
-INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "1236315365125564")  # Instagram App ID (correct)
-INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "ebb1f998812da792755")  # Instagram App Secret
-# IMPORTANT: Do NOT include trailing slash - Instagram normalizes URLs by removing trailing slashes
-# The redirect_uri must match EXACTLY what's registered in Meta Console (without trailing slash)
-INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback")
-# Frontend URL for OAuth redirects after successful authentication
+# Facebook App Configuration
+FACEBOOK_APP_ID = os.getenv("FACEBOOK_APP_ID", os.getenv("INSTAGRAM_APP_ID", ""))
+FACEBOOK_APP_SECRET = os.getenv("FACEBOOK_APP_SECRET", os.getenv("INSTAGRAM_APP_SECRET", ""))
+FACEBOOK_REDIRECT_URI = os.getenv("FACEBOOK_REDIRECT_URI", os.getenv("INSTAGRAM_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+FACEBOOK_API_VERSION = "v19.0"
 
 
 def get_current_user_id(authorization: str = Header(None)) -> int:
@@ -58,45 +53,38 @@ def get_current_user_id(authorization: str = Header(None)) -> int:
 @router.get("/oauth/authorize")
 def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
     """
-    Generate Instagram Business OAuth authorization URL.
+    Generate Facebook Login OAuth authorization URL.
     Frontend redirects user to this URL to start OAuth flow.
     """
-    if not INSTAGRAM_APP_ID:
+    if not FACEBOOK_APP_ID or not FACEBOOK_APP_SECRET:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Instagram OAuth not configured"
+            detail="Facebook OAuth not configured"
         )
     
-    # Build Instagram Business OAuth URL with all required permissions for DM automation
+    # Required scopes for Instagram Business API with Auto DM on Comment
     scopes = [
-        "instagram_business_basic",
-        "instagram_business_manage_messages",
-        "instagram_business_manage_comments",
-        "instagram_business_content_publish",
-        "instagram_business_manage_insights"
+        "instagram_basic",
+        "instagram_manage_comments",
+        "instagram_manage_messages",
+        "pages_show_list",
+        "pages_read_engagement",
+        "pages_manage_metadata"
     ]
     
-    # Build OAuth URL - Instagram requires redirect_uri to match EXACTLY
-    # CRITICAL: redirect_uri must match EXACTLY in:
-    # 1. Meta Developer Console → Valid OAuth Redirect URIs
-    # 2. Authorize request (this URL)
-    # 3. Token exchange request
-    redirect_uri_for_auth = INSTAGRAM_REDIRECT_URI.strip()  # Remove any whitespace
+    redirect_uri = FACEBOOK_REDIRECT_URI.strip()
     
-    # Build URL with raw redirect_uri - browser will URL-encode it automatically
-    # Instagram compares the RAW redirect_uri values (after decoding)
-    # So we send raw in both authorize and token exchange
+    # Build Facebook OAuth URL
     oauth_url = (
-        f"https://www.instagram.com/oauth/authorize"
-        f"?force_reauth=true"
-        f"&client_id={INSTAGRAM_APP_ID}"
-        f"&redirect_uri={redirect_uri_for_auth}"  # Raw value - browser encodes it
+        f"https://www.facebook.com/{FACEBOOK_API_VERSION}/dialog/oauth"
+        f"?client_id={FACEBOOK_APP_ID}"
+        f"&redirect_uri={redirect_uri}"
         f"&response_type=code"
         f"&scope={','.join(scopes)}"
         f"&state={user_id}"  # Pass user_id to identify user after callback
     )
     
-    print(f"🔗 OAuth authorize URL - redirect_uri: '{redirect_uri_for_auth}'")
+    print(f"🔗 Facebook OAuth authorize URL - redirect_uri: '{redirect_uri}'")
     print(f"🔗 Full OAuth URL: {oauth_url}")
     
     return {"authorization_url": oauth_url}
@@ -110,169 +98,142 @@ async def instagram_oauth_callback(
     request: Request = None
 ):
     """
-    Handle Instagram Business OAuth callback.
-    Exchange authorization code for access token and save account.
+    Handle Facebook OAuth callback.
+    Exchange authorization code for User Access Token, fetch Pages, find Instagram Business Account.
     """
     try:
         user_id = int(state) if state else None
         
-        # Get the actual callback URL that Instagram redirected to
-        callback_url = str(request.url) if request else "unknown"
-        # Extract base redirect_uri from callback URL (without query params)
-        parsed_url = urlparse(callback_url)
-        actual_redirect_uri = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
-        
         print(f"📥 OAuth callback received: code={code[:20]}..., user_id={user_id}")
-        print(f"📥 Callback URL from Instagram: {callback_url}")
-        print(f"📥 Extracted redirect_uri from callback: {actual_redirect_uri}")
-        print(f"🔗 Configured redirect_uri: {INSTAGRAM_REDIRECT_URI}")
-        print(f"🔗 Actual redirect_uri used by Instagram (normalized): {actual_redirect_uri}")
         
-        # Exchange code for short-lived access token
-        # CRITICAL: Instagram normalizes URLs by removing trailing slashes during redirect
-        # However, for token exchange, we must use the ORIGINAL redirect_uri from authorize request
-        # Instagram stores the original redirect_uri and expects it to match in token exchange
-        # Even though the callback URL is normalized (no trailing slash), we use the original (with slash)
-        token_url = "https://api.instagram.com/oauth/access_token"
-        
-        # CRITICAL: Use the ORIGINAL redirect_uri from authorize request, not the normalized callback URL
-        # Instagram normalizes the callback URL (removes trailing slash) but expects the original in token exchange
-        redirect_uri_for_exchange = INSTAGRAM_REDIRECT_URI.strip()
-        
-        # Build token exchange request
-        # Note: requests.post(data=...) sends as application/x-www-form-urlencoded
-        # This will URL-encode the values, but Instagram compares raw values
-        token_data = {
-            "client_id": INSTAGRAM_APP_ID,
-            "client_secret": INSTAGRAM_APP_SECRET,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri_for_exchange,  # Use ORIGINAL redirect_uri from authorize request
-            "code": code
-        }
-        
-        print(f"🔄 Exchanging code for token...")
-        print(f"   client_id: {INSTAGRAM_APP_ID}")
-        print(f"   redirect_uri: '{redirect_uri_for_exchange}'")
-        print(f"🔗 Using ORIGINAL redirect_uri from authorize request (not normalized callback URL)")
-        print(f"   Full request data: {token_data}")
-        
-        # Send POST request - requests will form-encode the data
-        # IMPORTANT: Instagram compares redirect_uri byte-by-byte
-        # Make sure it's exactly the same as in authorize URL
-        import urllib.parse
-        print(f"   🔍 Debug: redirect_uri URL-encoded would be: {urllib.parse.quote(redirect_uri_for_exchange, safe='')}")
-        print(f"   🔍 Debug: redirect_uri should match authorize URL exactly")
-        
-        token_response = requests.post(token_url, data=token_data)
-        
-        # Debug: Print what was actually sent
-        print(f"   Request URL: {token_url}")
-        print(f"   Response status: {token_response.status_code}")
-        if token_response.status_code != 200:
-            error_detail = token_response.text
-            print(f"   Response body: {error_detail}")
-            print(f"❌ Token exchange failed: {error_detail}")
-            
-            # Check if it's a redirect_uri mismatch
-            if "redirect_uri" in error_detail.lower():
-                print(f"\n🔍 REDIRECT_URI MISMATCH DETECTED!")
-                print(f"   Instagram App ID: {INSTAGRAM_APP_ID}")
-                print(f"   redirect_uri used in authorize: {INSTAGRAM_REDIRECT_URI}")
-                print(f"   redirect_uri used in token exchange: {redirect_uri_for_exchange}")
-                print(f"\n   ⚠️ CRITICAL: redirect_uri is NOT registered in Meta Console!")
-                print(f"   → Go to: Meta Developer Console → Your App → Settings → Basic")
-                print(f"   → Find: 'Valid OAuth Redirect URIs' section")
-                print(f"   → Add EXACTLY (copy-paste this):")
-                print(f"   → {INSTAGRAM_REDIRECT_URI}")
-                print(f"   → Click 'Save Changes'")
-                print(f"   → Wait 2-3 minutes for Meta to process")
-                print(f"   → Then try OAuth again")
-                print(f"\n   📋 Also verify:")
-                print(f"   → Instagram App ID in code matches Meta Console: {INSTAGRAM_APP_ID}")
-                print(f"   → No trailing slash, no extra spaces")
-                print(f"   → Protocol is https:// (not http://)")
-            
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Failed to exchange code for token: {error_detail}"
-            )
-        
-        token_result = token_response.json()
-        access_token = token_result.get("access_token")
-        instagram_user_id = token_result.get("user_id")
-        
-        print(f"✅ Got access token for user: {instagram_user_id}")
-        
-        # Get Instagram Business Account ID and username using Graph API
-        # First, get the Facebook Page connected to this Instagram account
-        me_url = "https://graph.facebook.com/v18.0/me"
-        me_params = {
-            "fields": "id,name",
-            "access_token": access_token
-        }
-        
-        me_response = requests.get(me_url, params=me_params)
-        if me_response.status_code != 200:
-            print(f"⚠️ Failed to get user info: {me_response.text}")
-        
-        # Get Instagram Business Account from Facebook Page
-        accounts_url = f"https://graph.facebook.com/v18.0/{instagram_user_id}/accounts"
-        accounts_params = {
-            "access_token": access_token
-        }
-        
-        accounts_response = requests.get(accounts_url, params=accounts_params)
-        
-        # Try to get Instagram Business Account info
-        ig_account_id = instagram_user_id
-        username = f"ig_user_{instagram_user_id[:8]}"  # Default username
-        
-        # Try to get actual Instagram username via Graph API
-        try:
-            ig_user_url = f"https://graph.facebook.com/v18.0/{instagram_user_id}"
-            ig_user_params = {
-                "fields": "username,id,name",
-                "access_token": access_token
-            }
-            ig_user_response = requests.get(ig_user_url, params=ig_user_params)
-            
-            if ig_user_response.status_code == 200:
-                ig_user_data = ig_user_response.json()
-                username = ig_user_data.get("username", username)
-                ig_account_id = ig_user_data.get("id", instagram_user_id)
-                print(f"✅ Got Instagram username: {username}, ID: {ig_account_id}")
-        except Exception as e:
-            print(f"⚠️ Could not get Instagram username: {str(e)}")
-        
-        # If we don't have a user_id from state, we can't save to database
         if not user_id:
             print("⚠️ No user_id in state, cannot save to database")
             return RedirectResponse(
                 url=f"{FRONTEND_URL}/dashboard/accounts?error=no_user_id"
             )
         
-        # Check if account already exists
+        # Step 1: Exchange code for User Access Token
+        token_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/oauth/access_token"
+        token_params = {
+            "client_id": FACEBOOK_APP_ID,
+            "client_secret": FACEBOOK_APP_SECRET,
+            "redirect_uri": FACEBOOK_REDIRECT_URI.strip(),
+            "code": code
+        }
+        
+        print(f"🔄 Exchanging code for User Access Token...")
+        token_response = requests.get(token_url, params=token_params)
+        
+        if token_response.status_code != 200:
+            error_detail = token_response.text
+            print(f"❌ Token exchange failed: {error_detail}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to exchange code for token: {error_detail}"
+            )
+        
+        token_data = token_response.json()
+        user_access_token = token_data.get("access_token")
+        print(f"✅ Got User Access Token")
+        
+        # Step 2: Fetch user's Facebook Pages with Instagram Business Accounts
+        pages_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/me/accounts"
+        pages_params = {
+            "fields": "id,name,access_token,instagram_business_account{id,username}",
+            "access_token": user_access_token
+        }
+        
+        print(f"🔄 Fetching Facebook Pages with Instagram Business Accounts...")
+        pages_response = requests.get(pages_url, params=pages_params)
+        
+        if pages_response.status_code != 200:
+            error_detail = pages_response.text
+            print(f"❌ Failed to fetch pages: {error_detail}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to fetch pages: {error_detail}"
+            )
+        
+        pages_data = pages_response.json()
+        pages = pages_data.get("data", [])
+        
+        if not pages:
+            print("❌ No Facebook Pages found")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No Facebook Pages found. Please create a Facebook Page and connect it to an Instagram Business account."
+            )
+        
+        # Step 3: Find first page with Instagram Business Account
+        page_with_instagram = None
+        for page in pages:
+            instagram_account = page.get("instagram_business_account")
+            if instagram_account:
+                page_with_instagram = {
+                    "page_id": page.get("id"),
+                    "page_name": page.get("name"),
+                    "page_token": page.get("access_token"),
+                    "instagram_id": instagram_account.get("id"),
+                    "instagram_username": instagram_account.get("username")
+                }
+                break
+        
+        if not page_with_instagram:
+            print("❌ No Facebook Page with connected Instagram Business Account found")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No Facebook Page with connected Instagram Business Account found. Please connect an Instagram Business account to your Facebook Page."
+            )
+        
+        print(f"✅ Found Instagram Business Account:")
+        print(f"   Page ID: {page_with_instagram['page_id']}")
+        print(f"   Page Name: {page_with_instagram['page_name']}")
+        print(f"   Instagram ID: {page_with_instagram['instagram_id']}")
+        print(f"   Instagram Username: {page_with_instagram['instagram_username']}")
+        
+        # Step 4: Subscribe page to webhooks (feed, comments, mentions)
+        try:
+            webhook_subscribe_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/{page_with_instagram['page_id']}/subscribed_apps"
+            webhook_params = {
+                "subscribed_fields": "feed,comments,mentions",
+                "access_token": page_with_instagram['page_token']
+            }
+            
+            print(f"🔄 Subscribing page to webhooks (feed, comments, mentions)...")
+            webhook_response = requests.post(webhook_subscribe_url, params=webhook_params)
+            
+            if webhook_response.status_code == 200:
+                print(f"✅ Webhook subscription successful")
+            else:
+                print(f"⚠️ Webhook subscription warning: {webhook_response.text}")
+        except Exception as e:
+            print(f"⚠️ Webhook subscription error (non-critical): {str(e)}")
+        
+        # Step 5: Save or update Instagram account
         existing_account = db.query(InstagramAccount).filter(
             InstagramAccount.user_id == user_id,
-            InstagramAccount.igsid == ig_account_id
+            InstagramAccount.igsid == page_with_instagram['instagram_id']
         ).first()
         
         if existing_account:
             # Update existing account
-            print(f"📝 Updating existing account: {username}")
-            existing_account.encrypted_credentials = encrypt_credentials(access_token)
-            existing_account.username = username
-            existing_account.igsid = ig_account_id
+            print(f"📝 Updating existing account: {page_with_instagram['instagram_username']}")
+            existing_account.username = page_with_instagram['instagram_username']
+            existing_account.igsid = page_with_instagram['instagram_id']
+            existing_account.page_id = page_with_instagram['page_id']
+            existing_account.encrypted_page_token = encrypt_credentials(page_with_instagram['page_token'])
             db.commit()
             account_id = existing_account.id
         else:
             # Create new account
-            print(f"✨ Creating new account: {username}")
+            print(f"✨ Creating new account: {page_with_instagram['instagram_username']}")
             new_account = InstagramAccount(
                 user_id=user_id,
-                username=username,
-                encrypted_credentials=encrypt_credentials(access_token),
-                igsid=ig_account_id
+                username=page_with_instagram['instagram_username'],
+                encrypted_credentials="",  # Legacy field, kept empty
+                encrypted_page_token=encrypt_credentials(page_with_instagram['page_token']),
+                page_id=page_with_instagram['page_id'],
+                igsid=page_with_instagram['instagram_id']
             )
             db.add(new_account)
             db.commit()
@@ -291,6 +252,8 @@ async def instagram_oauth_callback(
         return RedirectResponse(
             url=f"{FRONTEND_URL}/dashboard/accounts?error=invalid_state"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ OAuth callback error: {str(e)}")
         import traceback
@@ -309,8 +272,8 @@ async def refresh_instagram_token(
     db: Session = Depends(get_db)
 ):
     """
-    Exchange short-lived token for long-lived token (Instagram Business API).
-    Short-lived tokens expire in 1 hour, long-lived tokens last 60 days.
+    Refresh Facebook Page Access Token (long-lived tokens last 60 days).
+    Note: This endpoint may need to be updated based on Facebook's token refresh requirements.
     """
     account = db.query(InstagramAccount).filter(
         InstagramAccount.id == account_id,
@@ -323,15 +286,22 @@ async def refresh_instagram_token(
             detail="Instagram account not found"
         )
     
+    if not account.page_id or not account.encrypted_page_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account does not have Facebook Page credentials"
+        )
+    
     # Exchange short-lived token for long-lived token
     from app.utils.encryption import decrypt_credentials
-    current_token = decrypt_credentials(account.encrypted_credentials)
+    current_token = decrypt_credentials(account.encrypted_page_token)
     
-    exchange_url = "https://graph.instagram.com/access_token"
+    exchange_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/oauth/access_token"
     exchange_params = {
-        "grant_type": "ig_exchange_token",
-        "client_secret": INSTAGRAM_APP_SECRET,
-        "access_token": current_token
+        "grant_type": "fb_exchange_token",
+        "client_id": FACEBOOK_APP_ID,
+        "client_secret": FACEBOOK_APP_SECRET,
+        "fb_exchange_token": current_token
     }
     
     response = requests.get(exchange_url, params=exchange_params)
@@ -344,12 +314,12 @@ async def refresh_instagram_token(
     
     data = response.json()
     new_token = data.get("access_token")
-    expires_in = data.get("expires_in")  # Should be ~5184000 seconds (60 days)
+    expires_in = data.get("expires_in", 0)  # Long-lived tokens typically last 5184000 seconds (60 days)
     
     print(f"✅ Token exchanged! Expires in: {expires_in} seconds (~{expires_in // 86400} days)")
     
     # Update token in database
-    account.encrypted_credentials = encrypt_credentials(new_token)
+    account.encrypted_page_token = encrypt_credentials(new_token)
     db.commit()
     
     return {

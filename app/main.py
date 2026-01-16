@@ -26,26 +26,51 @@ async def startup_event():
         print(f"⚠️ Error creating tables: {str(e)}", file=sys.stderr)
         raise
     
-    # Auto-migrate: Add igsid column if it doesn't exist
+    # Auto-migrate: Add columns if they don't exist
     try:
         with engine.begin() as conn:
-            # Check if column exists
-            result = conn.execute(text("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name='instagram_accounts' AND column_name='igsid'
-            """))
-            exists = result.fetchone() is not None
+            # Check database type for compatibility
+            db_type = str(engine.url).split("://")[0]
             
-            if not exists:
+            def column_exists(table_name: str, column_name: str) -> bool:
+                """Check if a column exists in a table (SQLite/PostgreSQL compatible)"""
+                if db_type == "postgresql":
+                    result = conn.execute(text(f"""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name='{table_name}' AND column_name='{column_name}'
+                    """))
+                    return result.fetchone() is not None
+                else:  # SQLite
+                    pragma_result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+                    columns = [row[1] for row in pragma_result.fetchall()]
+                    return column_name in columns
+            
+            # Check and add igsid column
+            if not column_exists('instagram_accounts', 'igsid'):
                 print("🔄 Auto-migrating: Adding igsid column to instagram_accounts...", file=sys.stderr)
-                conn.execute(text("""
-                    ALTER TABLE instagram_accounts ADD COLUMN igsid VARCHAR(255);
-                    CREATE INDEX IF NOT EXISTS ix_instagram_accounts_igsid ON instagram_accounts(igsid);
-                """))
+                conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN igsid VARCHAR(255)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_instagram_accounts_igsid ON instagram_accounts(igsid)"))
                 print("✅ Auto-migration complete: igsid column added", file=sys.stderr)
             else:
                 print("✅ igsid column already exists", file=sys.stderr)
+            
+            # Check and add page_id column
+            if not column_exists('instagram_accounts', 'page_id'):
+                print("🔄 Auto-migrating: Adding page_id column to instagram_accounts...", file=sys.stderr)
+                conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN page_id VARCHAR(255)"))
+                print("✅ Auto-migration complete: page_id column added", file=sys.stderr)
+            else:
+                print("✅ page_id column already exists", file=sys.stderr)
+            
+            # Check and add encrypted_page_token column
+            if not column_exists('instagram_accounts', 'encrypted_page_token'):
+                print("🔄 Auto-migrating: Adding encrypted_page_token column to instagram_accounts...", file=sys.stderr)
+                conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN encrypted_page_token TEXT"))
+                print("✅ Auto-migration complete: encrypted_page_token column added", file=sys.stderr)
+            else:
+                print("✅ encrypted_page_token column already exists", file=sys.stderr)
+                
     except Exception as e:
         print(f"⚠️ Auto-migration warning: {str(e)}", file=sys.stderr)
 
