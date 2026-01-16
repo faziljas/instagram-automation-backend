@@ -20,9 +20,9 @@ router = APIRouter()
 # The Instagram App ID is shown in Meta Console → Instagram → API setup → App Credentials
 INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", "1236315365125564")  # Instagram App ID (correct)
 INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", "ebb1f998812da792755")  # Instagram App Secret
-# IMPORTANT: Trailing slash is required - Meta Console automatically adds it to saved URIs
-# The redirect_uri must match EXACTLY (including trailing slash) what's registered in Meta Console
-INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback/")
+# IMPORTANT: Do NOT include trailing slash - Instagram normalizes URLs by removing trailing slashes
+# The redirect_uri must match EXACTLY what's registered in Meta Console (without trailing slash)
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback")
 # Frontend URL for OAuth redirects after successful authentication
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
