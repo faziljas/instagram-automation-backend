@@ -6,6 +6,7 @@ from app.models.automation_rule import AutomationRule
 from app.models.instagram_account import InstagramAccount
 from app.schemas.automation import AutomationRuleCreate, AutomationRuleUpdate, AutomationRuleResponse
 from app.utils.auth import verify_token
+from app.utils.plan_enforcement import check_rule_limit
 
 router = APIRouter()
 
@@ -58,6 +59,9 @@ def create_automation_rule(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Instagram account not found"
         )
+
+    # Check rule limit BEFORE creating
+    check_rule_limit(user_id, db)
 
     # Create automation rule
     rule = AutomationRule(

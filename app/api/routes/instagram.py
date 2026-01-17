@@ -537,6 +537,12 @@ async def execute_automation_action(
     """
     try:
         if rule.action_type == "send_dm":
+            # Check monthly DM limit BEFORE sending
+            from app.utils.plan_enforcement import check_dm_limit
+            if not check_dm_limit(account.user_id, db):
+                print(f"⚠️ Monthly DM limit reached for user {account.user_id}. Skipping DM send.")
+                return  # Don't send DM if limit reached
+            
             # Get message template from config
             message_template = rule.config.get("message_template", "")
             if not message_template:

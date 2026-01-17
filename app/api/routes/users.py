@@ -255,9 +255,13 @@ def get_subscription(
         DmLog.sent_at >= start_of_month
     ).count()
     
+    # Free plan users should show as "active" (they have an active free plan)
+    # Paid users show their subscription status
+    status_value = "active" if user.plan_tier == "free" else (subscription.status if subscription else "inactive")
+    
     return {
         "plan_tier": user.plan_tier,
-        "status": subscription.status if subscription else "inactive",
+        "status": status_value,
         "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
         "usage": {
             "accounts": accounts_count,

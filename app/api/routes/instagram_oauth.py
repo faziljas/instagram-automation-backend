@@ -11,6 +11,7 @@ from app.db.session import get_db
 from app.models.instagram_account import InstagramAccount
 from app.utils.auth import verify_token
 from app.utils.encryption import encrypt_credentials
+from app.utils.plan_enforcement import check_account_limit
 
 router = APIRouter()
 
@@ -190,6 +191,15 @@ async def instagram_oauth_callback(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No Facebook Pages found. Please create a Facebook Page and connect it to an Instagram Business account."
+            )
+        
+        # Step 2.5: Check account limit BEFORE connecting
+        try:
+            check_account_limit(user_id, db)
+        except HTTPException as e:
+            print(f"❌ Account limit check failed: {e.detail}")
+            return RedirectResponse(
+                url=f"{FRONTEND_URL}/dashboard/accounts?error=account_limit_reached&message={e.detail}"
             )
         
         # Step 3: Find first page with Instagram Business Account
