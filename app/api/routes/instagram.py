@@ -240,14 +240,14 @@ async def process_instagram_message(event: dict, db: Session):
                 trigger_type="new_message"
             )
         
-        # Process keyword rules (only if keyword exactly matches - CASE SENSITIVE)
+        # Process keyword rules (only if keyword matches - CASE INSENSITIVE)
         for rule in keyword_rules:
             print(f"🔄 Processing 'keyword' rule: {rule.name or 'Keyword Rule'} → {rule.action_type}")
             if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "")  # Keep original case
-                # Case-sensitive exact match check
-                if keyword in message_text:
-                    print(f"✅ Keyword '{keyword}' found in message (exact case match), triggering keyword rule!")
+                keyword = rule.config.get("keyword", "").lower()  # Case-insensitive match
+                # Case-insensitive exact match check
+                if keyword in message_text.lower():
+                    print(f"✅ Keyword '{keyword}' found in message (case-insensitive match), triggering keyword rule!")
                     await execute_automation_action(
                         rule,
                         sender_id,
@@ -256,7 +256,7 @@ async def process_instagram_message(event: dict, db: Session):
                         trigger_type="keyword"
                     )
                 else:
-                    print(f"⏭️ Keyword '{keyword}' not found in message (case-sensitive check failed), skipping keyword rule")
+                    print(f"⏭️ Keyword '{keyword}' not found in message, skipping keyword rule")
             else:
                 print(f"⚠️ Keyword rule has no keyword configured, skipping")
                 
@@ -375,14 +375,14 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                     comment_id=comment_id
                 )
         
-        # Process keyword rules (only if keyword exactly matches - CASE SENSITIVE)
+        # Process keyword rules (only if keyword matches - CASE INSENSITIVE)
         for rule in keyword_rules:
             print(f"🔄 Processing 'keyword' rule: {rule.name or 'Keyword Rule'} → {rule.action_type}")
             if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "")  # Keep original case
-                # Case-sensitive exact match check
-                if keyword in comment_text:
-                    print(f"✅ Keyword '{keyword}' found in comment (exact case match), triggering keyword rule!")
+                keyword = rule.config.get("keyword", "").lower()  # Case-insensitive match
+                # Case-insensitive exact match check
+                if keyword in comment_text.lower():
+                    print(f"✅ Keyword '{keyword}' found in comment (case-insensitive match), triggering keyword rule!")
                     await execute_automation_action(
                         rule,
                         commenter_id,
@@ -392,7 +392,7 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                         comment_id=comment_id
                     )
                 else:
-                    print(f"⏭️ Keyword '{keyword}' not found in comment (case-sensitive check failed), skipping keyword rule")
+                    print(f"⏭️ Keyword '{keyword}' not found in comment, skipping keyword rule")
             else:
                 print(f"⚠️ Keyword rule has no keyword configured, skipping")
                 
@@ -499,14 +499,14 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                     comment_id=comment_id
                 )
         
-        # Process keyword rules (only if keyword exactly matches - CASE SENSITIVE)
+        # Process keyword rules (only if keyword matches - CASE INSENSITIVE)
         for rule in keyword_rules:
             print(f"🔄 Processing 'keyword' rule: {rule.name or 'Keyword Rule'} → {rule.action_type}")
             if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "")  # Keep original case
-                # Case-sensitive exact match check
-                if keyword in comment_text:
-                    print(f"✅ Keyword '{keyword}' found in live comment (exact case match), triggering keyword rule!")
+                keyword = rule.config.get("keyword", "").lower()  # Case-insensitive match
+                # Case-insensitive exact match check
+                if keyword in comment_text.lower():
+                    print(f"✅ Keyword '{keyword}' found in live comment (case-insensitive match), triggering keyword rule!")
                     await execute_automation_action(
                         rule,
                         commenter_id,
@@ -516,7 +516,7 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                         comment_id=comment_id
                     )
                 else:
-                    print(f"⏭️ Keyword '{keyword}' not found in live comment (case-sensitive check failed), skipping keyword rule")
+                    print(f"⏭️ Keyword '{keyword}' not found in live comment, skipping keyword rule")
             else:
                 print(f"⚠️ Keyword rule has no keyword configured, skipping")
                 
