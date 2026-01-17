@@ -102,6 +102,65 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
     return {"authorization_url": oauth_url}
 
 
+@router.get("/oauth/authorize-popup")
+def get_instagram_auth_url_popup(user_id: int = Depends(get_current_user_id)):
+    """
+    Generate OAuth authorization URL for popup flow with config_id support.
+    Used by frontend to open Instagram-branded login in popup window.
+    """
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Instagram OAuth not configured"
+        )
+    
+    # Get config_id from environment (for SuperProfile/Instagram Login flow)
+    config_id = os.getenv("FACEBOOK_CONFIG_ID", "")
+    
+    # Build redirect URI for popup callback (will be handled by frontend)
+    # For popup flow, we'll use a special callback that posts message back to parent
+    popup_redirect_uri = f"{FRONTEND_URL}/dashboard/accounts/oauth-callback"
+    
+    # Build OAuth URL with config_id if available (shows Instagram branding)
+    if config_id:
+        # When using config_id, Instagram Login product shows Instagram branding
+        oauth_url = (
+            f"https://www.facebook.com/{FACEBOOK_API_VERSION}/dialog/oauth"
+            f"?client_id={INSTAGRAM_APP_ID}"
+            f"&redirect_uri={popup_redirect_uri}"
+            f"&response_type=token"  # Use token for popup (no server-side callback needed)
+            f"&config_id={config_id}"
+            f"&state={user_id}"
+        )
+        print(f"🔗 Instagram OAuth URL with config_id: {config_id}")
+    else:
+        # Fallback: Use scope-based flow
+        scopes = [
+            "instagram_basic",
+            "instagram_manage_comments",
+            "instagram_manage_messages",
+            "pages_show_list",
+            "pages_read_engagement",
+            "pages_manage_metadata",
+            "business_management",
+            "pages_messaging"
+        ]
+        oauth_url = (
+            f"https://www.facebook.com/{FACEBOOK_API_VERSION}/dialog/oauth"
+            f"?client_id={INSTAGRAM_APP_ID}"
+            f"&redirect_uri={popup_redirect_uri}"
+            f"&response_type=token"
+            f"&scope={','.join(scopes)}"
+            f"&state={user_id}"
+        )
+        print(f"⚠️ No config_id found, using scope-based flow")
+    
+    return {
+        "authorization_url": oauth_url,
+        "popup_window": True
+    }
+
+
 @router.get("/oauth/callback")
 async def instagram_oauth_callback(
     code: str = Query(...),
