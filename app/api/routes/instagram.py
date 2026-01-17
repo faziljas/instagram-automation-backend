@@ -222,17 +222,23 @@ async def process_instagram_message(event: dict, db: Session):
             print(f"🔄 Processing rule: {rule.name or rule.trigger_type} → {rule.action_type}")
             
             # Check if rule should be triggered
-            # For DMs, only "new_message" trigger type is supported
-            # Keyword rules work only on comments (post_comment, live_comment), not on DMs
             should_trigger = False
             
             if rule.trigger_type == "new_message":
+                # Trigger on any new message
                 should_trigger = True
-            # Note: "keyword" trigger type is not supported for DMs
-            # Keyword filtering is only available for comment triggers (post_comment, live_comment)
             elif rule.trigger_type == "keyword":
-                print(f"⏭️ Skipping keyword trigger - keyword rules only work on comments, not DMs")
-                continue  # Skip this rule entirely for DMs
+                # Keyword trigger: check if keyword exists in message text
+                if rule.config and rule.config.get("keyword"):
+                    keyword = rule.config.get("keyword", "").lower()
+                    if keyword in message_text.lower():
+                        should_trigger = True
+                        print(f"✅ Keyword '{keyword}' found in message")
+                    else:
+                        print(f"⏭️ Keyword '{keyword}' not found in message")
+                else:
+                    print(f"⚠️ Keyword trigger rule has no keyword configured, skipping")
+                    continue
             
             if should_trigger:
                 print(f"✅ Rule triggered! Executing action: {rule.action_type}")
@@ -241,7 +247,7 @@ async def process_instagram_message(event: dict, db: Session):
                     sender_id, 
                     account, 
                     db,
-                    trigger_type="new_message"
+                    trigger_type=rule.trigger_type  # Pass the actual trigger type
                 )
             else:
                 print(f"⏭️ Rule not triggered")
