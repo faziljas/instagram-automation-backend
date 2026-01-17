@@ -122,20 +122,41 @@ async def process_instagram_message(event: dict, db: Session):
         message = event.get("message", {})
         message_text = message.get("text", "")
         
+        # Check for echo messages (messages sent by the bot itself)
+        is_echo = message.get("is_echo", False)
+        if is_echo:
+            print(f"🚫 Ignoring bot's own message (echo): {message_text}")
+            return
+        
         print(f"📨 Message from {sender_id} to {recipient_id}: {message_text}")
         
-        # For now, use first active Instagram account (TODO: implement IGSID matching)
+        # Match Instagram account by IGSID (recipient_id should be the bot's IGSID)
         from app.models.instagram_account import InstagramAccount
         print(f"🔍 Looking for Instagram account (IGSID: {recipient_id})")
+        
+        # First try to match by IGSID (most accurate)
         account = db.query(InstagramAccount).filter(
+            InstagramAccount.igsid == str(recipient_id),
             InstagramAccount.is_active == True
         ).first()
+        
+        # Fallback to first active account if IGSID matching fails
+        if not account:
+            print(f"⚠️ No account found by IGSID, trying fallback...")
+            account = db.query(InstagramAccount).filter(
+                InstagramAccount.is_active == True
+            ).first()
         
         if not account:
             print(f"❌ No active Instagram accounts found")
             return
         
-        print(f"✅ Found account: {account.username} (ID: {account.id})")
+        # Double safety: Check if sender is the bot itself (compare sender_id with account IGSID)
+        if account.igsid and str(sender_id) == str(account.igsid):
+            print(f"🚫 Ignoring message from bot's own account (sender_id={sender_id} matches IGSID={account.igsid})")
+            return
+        
+        print(f"✅ Found account: {account.username} (ID: {account.id}, IGSID: {account.igsid})")
         
         # Find active automation rules for this account
         from app.models.automation_rule import AutomationRule
