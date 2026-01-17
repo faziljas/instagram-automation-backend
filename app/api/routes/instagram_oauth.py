@@ -24,6 +24,7 @@ INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", os.getenv("FACEBOOK_APP
 INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", os.getenv("FACEBOOK_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 FACEBOOK_API_VERSION = "v19.0"
+# Note: FRONTEND_URL validation happens at runtime in endpoints to avoid import failures
 
 
 class ConnectSDKRequest(BaseModel):
@@ -68,11 +69,18 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
     Generate Instagram Business Login OAuth authorization URL.
     Frontend redirects user to this URL to start OAuth flow.
     Uses Instagram's native OAuth endpoint for Instagram-branded login screen.
+    Redirects to frontend callback URL to allow popup window closure.
     """
     if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Instagram OAuth not configured"
+        )
+    
+    if not FRONTEND_URL:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="FRONTEND_URL environment variable is required for OAuth callback"
         )
     
     # Instagram Business Login scopes (2025)
@@ -83,7 +91,8 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
         "instagram_business_content_publish"
     ]
     
-    redirect_uri = INSTAGRAM_REDIRECT_URI.strip()
+    # Construct frontend callback URL (popup redirects here to close window)
+    redirect_uri = f"{FRONTEND_URL.strip().rstrip('/')}/dashboard/callback"
     
     # Build Instagram Business Login OAuth URL
     oauth_url = (
@@ -113,12 +122,18 @@ def get_instagram_auth_url_popup(user_id: int = Depends(get_current_user_id)):
             detail="Instagram OAuth not configured"
         )
     
+    if not FRONTEND_URL:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="FRONTEND_URL environment variable is required for OAuth callback"
+        )
+    
     # Get config_id from environment (for SuperProfile/Instagram Login flow)
     config_id = os.getenv("FACEBOOK_CONFIG_ID", "")
     
     # Build redirect URI for popup callback (will be handled by frontend)
     # For popup flow, we'll use a special callback that posts message back to parent
-    popup_redirect_uri = f"{FRONTEND_URL}/dashboard/accounts/oauth-callback"
+    popup_redirect_uri = f"{FRONTEND_URL.strip().rstrip('/')}/dashboard/callback"
     
     # Build OAuth URL with config_id if available (shows Instagram branding)
     if config_id:
@@ -622,8 +637,14 @@ async def exchange_instagram_code(
                 detail="Authorization code is required"
             )
         
-        # Build redirect URI (must match frontend callback URL)
-        redirect_uri = f"{FRONTEND_URL}/dashboard/callback"
+        if not FRONTEND_URL:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="FRONTEND_URL environment variable is required for OAuth callback"
+            )
+        
+        # Build redirect URI (must match frontend callback URL used in OAuth authorization)
+        redirect_uri = f"{FRONTEND_URL.strip().rstrip('/')}/dashboard/callback"
         
         # Step 1: Exchange code for short-lived access token (Instagram OAuth)
         token_url = "https://api.instagram.com/oauth/access_token"
