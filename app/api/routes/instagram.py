@@ -163,7 +163,13 @@ async def process_instagram_message(event: dict, db: Session):
             
             if should_trigger:
                 print(f"✅ Rule triggered! Executing action: {rule.action_type}")
-                await execute_automation_action(rule, sender_id, account, db)
+                await execute_automation_action(
+                    rule, 
+                    sender_id, 
+                    account, 
+                    db,
+                    trigger_type="new_message"
+                )
             else:
                 print(f"⏭️ Rule not triggered")
                 
@@ -267,7 +273,14 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                     print(f"⏭️ Keyword '{keyword}' not found in comment")
             
             if should_trigger:
-                await execute_automation_action(rule, commenter_id, account, db)
+                await execute_automation_action(
+                    rule, 
+                    commenter_id, 
+                    account, 
+                    db,
+                    trigger_type="post_comment",
+                    comment_id=comment_id
+                )
                 
     except Exception as e:
         print(f"❌ Error processing comment event: {str(e)}")
@@ -353,15 +366,39 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                     print(f"⏭️ Keyword '{keyword}' not found in live comment")
             
             if should_trigger:
-                await execute_automation_action(rule, commenter_id, account, db)
+                await execute_automation_action(
+                    rule,
+                    commenter_id,
+                    account,
+                    db,
+                    trigger_type="live_comment",
+                    comment_id=comment_id
+                )
                 
     except Exception as e:
         print(f"❌ Error processing live comment event: {str(e)}")
         import traceback
         traceback.print_exc()
 
-async def execute_automation_action(rule: AutomationRule, sender_id: str, account: InstagramAccount, db: Session):
-    """Execute the automation action defined in the rule."""
+async def execute_automation_action(
+    rule: AutomationRule, 
+    sender_id: str, 
+    account: InstagramAccount, 
+    db: Session,
+    trigger_type: str = None,
+    comment_id: str = None
+):
+    """
+    Execute the automation action defined in the rule.
+    
+    Args:
+        rule: The automation rule to execute
+        sender_id: The user ID who triggered the action (recipient for DMs)
+        account: The Instagram account to use
+        db: Database session
+        trigger_type: The type of trigger (e.g., 'post_comment', 'new_message', 'live_comment')
+        comment_id: The comment ID (required for post_comment triggers to use private_replies)
+    """
     try:
         if rule.action_type == "send_dm":
             # Get message template from config
@@ -372,42 +409,35 @@ async def execute_automation_action(rule: AutomationRule, sender_id: str, accoun
             
             # Send DM using Instagram Graph API (for OAuth accounts)
             from app.utils.encryption import decrypt_credentials
-            import requests
+            from app.utils.instagram_api import send_private_reply, send_dm as send_dm_api
             
             try:
                 # Get access token - use encrypted_page_token for OAuth accounts, fallback to encrypted_credentials
                 if account.encrypted_page_token:
                     access_token = decrypt_credentials(account.encrypted_page_token)
-                    print(f"✅ Using OAuth page token for sending DM")
+                    print(f"✅ Using OAuth page token for sending message")
                 elif account.encrypted_credentials:
                     access_token = decrypt_credentials(account.encrypted_credentials)
                     print(f"⚠️ Using legacy encrypted credentials")
                 else:
                     raise Exception("No access token found for account")
                 
-                # Use Instagram Graph API to send DM via Page token
-                # For Instagram messaging, we need to use the Page ID and Page token
                 if not account.page_id:
                     raise Exception("Page ID not found. Account may not be properly connected via OAuth.")
                 
-                # Use Page-scoped ID for messaging (page_id is the Facebook Page ID)
-                # The sender_id is the Instagram user ID who commented/messaged
-                send_url = f"https://graph.facebook.com/v19.0/{account.page_id}/messages"
-                send_data = {
-                    "recipient": {"id": sender_id},
-                    "message": {"text": message_template},
-                    "access_token": access_token
-                }
-                
-                print(f"📤 Sending DM via Page API: Page ID={account.page_id}, Recipient={sender_id}")
-                response = requests.post(send_url, json=send_data)
-                
-                if response.status_code == 200:
-                    print(f"✅ DM sent to {sender_id}: {message_template}")
+                # Use appropriate endpoint based on trigger type
+                # For comments, use private_replies endpoint (no 24h window restriction)
+                # For messages/DMs, use standard messages endpoint
+                if trigger_type in ["post_comment", "live_comment"] and comment_id:
+                    # Send private reply to comment
+                    print(f"💬 Sending private reply to comment: Comment ID={comment_id}")
+                    send_private_reply(comment_id, message_template, access_token)
+                    print(f"✅ Private reply sent to comment {comment_id}")
                 else:
-                    error_detail = response.text
-                    print(f"❌ Failed to send DM via Graph API: {error_detail}")
-                    raise Exception(f"Graph API failed: {error_detail}")
+                    # Send standard DM
+                    print(f"📤 Sending DM via Page API: Page ID={account.page_id}, Recipient={sender_id}")
+                    send_dm_api(sender_id, message_template, account.page_id, access_token)
+                    print(f"✅ DM sent to {sender_id}")
                 
                 # Log the DM
                 from app.models.dm_log import DmLog
@@ -422,7 +452,7 @@ async def execute_automation_action(rule: AutomationRule, sender_id: str, accoun
                 print(f"✅ DM logged successfully")
                 
             except Exception as e:
-                print(f"❌ Failed to send DM: {str(e)}")
+                print(f"❌ Failed to send message: {str(e)}")
                 import traceback
                 traceback.print_exc()
                 # Note: Not logging failed DMs to avoid cluttering the log table
