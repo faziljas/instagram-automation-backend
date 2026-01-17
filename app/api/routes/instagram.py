@@ -15,6 +15,11 @@ from app.utils.plan_enforcement import check_account_limit
 
 router = APIRouter()
 
+# In-memory cache to track recently processed message IDs (prevents duplicate processing)
+# Note: This is cleared on restart, but should prevent short-term loops
+_processed_message_ids = set()
+_MAX_CACHE_SIZE = 1000  # Limit cache size to prevent memory issues
+
 
 def get_current_user_id(authorization: str = Header(None)) -> int:
     if not authorization:
@@ -121,14 +126,33 @@ async def process_instagram_message(event: dict, db: Session):
         recipient_id = event.get("recipient", {}).get("id")
         message = event.get("message", {})
         message_text = message.get("text", "")
+        message_id = message.get("mid")  # Message ID for deduplication
         
-        # Check for echo messages (messages sent by the bot itself)
-        is_echo = message.get("is_echo", False)
-        if is_echo:
-            print(f"🚫 Ignoring bot's own message (echo): {message_text}")
+        # Deduplication: Skip if we've already processed this message
+        if message_id and message_id in _processed_message_ids:
+            print(f"🚫 Ignoring duplicate message (already processed): mid={message_id}")
             return
         
-        print(f"📨 Message from {sender_id} to {recipient_id}: {message_text}")
+        # Check for echo messages (messages sent by the bot itself)
+        # Echo can be at message level or event level
+        is_echo = message.get("is_echo", False) or event.get("is_echo", False)
+        if is_echo:
+            print(f"🚫 Ignoring bot's own message (echo flag): {message_text}")
+            if message_id:
+                _processed_message_ids.add(message_id)
+                # Clean cache if it gets too large
+                if len(_processed_message_ids) > _MAX_CACHE_SIZE:
+                    _processed_message_ids.clear()
+            return
+        
+        # Skip if no text (reactions, stickers, etc.)
+        if not message_text or not message_text.strip():
+            print(f"🚫 Ignoring message with no text content (mid: {message_id})")
+            if message_id:
+                _processed_message_ids.add(message_id)
+            return
+        
+        print(f"📨 Message from {sender_id} (type: {type(sender_id).__name__}) to {recipient_id}: {message_text} (mid: {message_id})")
         
         # Match Instagram account by IGSID (recipient_id should be the bot's IGSID)
         from app.models.instagram_account import InstagramAccount
@@ -151,12 +175,38 @@ async def process_instagram_message(event: dict, db: Session):
             print(f"❌ No active Instagram accounts found")
             return
         
-        # Double safety: Check if sender is the bot itself (compare sender_id with account IGSID)
-        if account.igsid and str(sender_id) == str(account.igsid):
-            print(f"🚫 Ignoring message from bot's own account (sender_id={sender_id} matches IGSID={account.igsid})")
+        # CRITICAL: Check if sender is the bot itself
+        # Compare sender_id with account IGSID AND page_id (both can be the bot)
+        # Normalize all IDs to strings for comparison
+        sender_id_str = str(sender_id) if sender_id else None
+        account_igsid_str = str(account.igsid) if account.igsid else None
+        account_page_id_str = str(account.page_id) if account.page_id else None
+        
+        sender_matches_bot = False
+        if sender_id_str and account_igsid_str and sender_id_str == account_igsid_str:
+            sender_matches_bot = True
+            print(f"🚫 Sender ID {sender_id_str} matches account IGSID {account_igsid_str}")
+        
+        if sender_id_str and account_page_id_str and sender_id_str == account_page_id_str:
+            sender_matches_bot = True
+            print(f"🚫 Sender ID {sender_id_str} matches account Page ID {account_page_id_str}")
+        
+        if sender_matches_bot:
+            print(f"🚫 IGNORING message from bot's own account!")
+            print(f"   sender_id={sender_id_str}, IGSID={account_igsid_str}, PageID={account_page_id_str}")
+            # Mark as processed to prevent retry
+            if message_id:
+                _processed_message_ids.add(message_id)
             return
         
-        print(f"✅ Found account: {account.username} (ID: {account.id}, IGSID: {account.igsid})")
+        print(f"✅ Found account: {account.username} (ID: {account.id}, IGSID: {account.igsid}, PageID: {account.page_id})")
+        
+        # Mark message as processed BEFORE triggering actions (prevents loops if action triggers webhook)
+        if message_id:
+            _processed_message_ids.add(message_id)
+            # Clean cache if it gets too large
+            if len(_processed_message_ids) > _MAX_CACHE_SIZE:
+                _processed_message_ids.clear()
         
         # Find active automation rules for this account
         from app.models.automation_rule import AutomationRule
