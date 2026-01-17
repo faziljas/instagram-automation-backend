@@ -4,16 +4,18 @@ Instagram Graph API utility functions for sending messages and replies.
 import requests
 
 
-def send_private_reply(comment_id: str, message: str, page_access_token: str) -> dict:
+def send_private_reply(comment_id: str, message: str, page_access_token: str, page_id: str = None) -> dict:
     """
     Send a private reply to an Instagram comment.
     
     This endpoint allows replying to comments without the 24-hour messaging window restriction.
+    For Instagram, we use the standard messages endpoint with a special recipient format.
     
     Args:
         comment_id: The Instagram comment ID (e.g., "17890603191406594")
         message: The message text to send as a private reply
         page_access_token: The Facebook Page access token
+        page_id: Optional page ID. If provided, uses {page_id}/messages, otherwise uses me/messages
         
     Returns:
         dict: API response
@@ -21,10 +23,18 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str) ->
     Raises:
         Exception: If the API request fails
     """
-    url = f"https://graph.facebook.com/v19.0/{comment_id}/private_replies"
+    # Use page_id if provided, otherwise use 'me' (resolves to the page with page token)
+    endpoint = f"{page_id}/messages" if page_id else "me/messages"
+    url = f"https://graph.facebook.com/v19.0/{endpoint}"
     
+    # Instagram private reply format: recipient uses comment_id instead of id
     payload = {
-        "message": message
+        "recipient": {
+            "comment_id": comment_id
+        },
+        "message": {
+            "text": message
+        }
     }
     
     headers = {

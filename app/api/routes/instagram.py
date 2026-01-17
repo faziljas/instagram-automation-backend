@@ -429,9 +429,9 @@ async def execute_automation_action(
                 # For comments, use private_replies endpoint (no 24h window restriction)
                 # For messages/DMs, use standard messages endpoint
                 if trigger_type in ["post_comment", "live_comment"] and comment_id:
-                    # Send private reply to comment
+                    # Send private reply to comment using Instagram private reply format
                     print(f"💬 Sending private reply to comment: Comment ID={comment_id}")
-                    send_private_reply(comment_id, message_template, access_token)
+                    send_private_reply(comment_id, message_template, access_token, account.page_id)
                     print(f"✅ Private reply sent to comment {comment_id}")
                 else:
                     # Send standard DM
