@@ -30,6 +30,10 @@ class ConnectSDKRequest(BaseModel):
     access_token: str
 
 
+class ExchangeCodeRequest(BaseModel):
+    code: str
+
+
 def get_current_user_id(authorization: str = Header(None)) -> int:
     """Extract and verify user ID from JWT token in Authorization header."""
     if not authorization:
@@ -600,6 +604,190 @@ async def connect_instagram_sdk(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to connect Instagram account: {str(e)}"
+        )
+
+
+@router.post("/exchange-code")
+async def exchange_instagram_code(
+    request_data: ExchangeCodeRequest = Body(...),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Exchange Instagram OAuth authorization code for access token.
+    Handles Instagram Business Login OAuth flow with code exchange.
+    """
+    try:
+        code = request_data.code
+        print(f"📥 Instagram OAuth code exchange request received for user {user_id}")
+        
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Authorization code is required"
+            )
+        
+        # Build redirect URI (must match frontend callback URL)
+        redirect_uri = f"{FRONTEND_URL}/dashboard/callback"
+        
+        # Step 1: Exchange code for short-lived access token
+        # POST to Instagram OAuth endpoint
+        token_url = "https://api.instagram.com/oauth/access_token"
+        token_data = {
+            "client_id": INSTAGRAM_APP_ID,
+            "client_secret": INSTAGRAM_APP_SECRET,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+            "code": code
+        }
+        
+        print(f"🔄 Step 1: Exchanging code for short-lived token...")
+        token_response = requests.post(token_url, data=token_data)
+        
+        if token_response.status_code != 200:
+            error_detail = token_response.text
+            print(f"❌ Token exchange failed: {error_detail}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to exchange code for token: {error_detail}"
+            )
+        
+        token_result = token_response.json()
+        short_lived_token = token_result.get("access_token")
+        user_id_from_token = token_result.get("user_id")
+        
+        if not short_lived_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No access token received from Instagram"
+            )
+        
+        print(f"✅ Step 1 complete: Got short-lived token")
+        
+        # Step 2: Exchange short-lived token for long-lived token (60 days)
+        # GET from Instagram Graph API
+        exchange_url = "https://graph.instagram.com/access_token"
+        exchange_params = {
+            "grant_type": "ig_exchange_token",
+            "client_secret": INSTAGRAM_APP_SECRET,
+            "access_token": short_lived_token
+        }
+        
+        print(f"🔄 Step 2: Exchanging short-lived token for long-lived token...")
+        exchange_response = requests.get(exchange_url, params=exchange_params)
+        
+        if exchange_response.status_code != 200:
+            error_detail = exchange_response.text
+            print(f"❌ Long-lived token exchange failed: {error_detail}")
+            # Fallback: Use short-lived token if long-lived exchange fails
+            print(f"⚠️ Falling back to short-lived token")
+            long_lived_token = short_lived_token
+            expires_in = 3600  # Short-lived tokens expire in 1 hour
+        else:
+            exchange_result = exchange_response.json()
+            long_lived_token = exchange_result.get("access_token")
+            expires_in = exchange_result.get("expires_in", 5184000)  # Default 60 days
+            
+            if not long_lived_token:
+                # Fallback to short-lived token
+                print(f"⚠️ No long-lived token, using short-lived token")
+                long_lived_token = short_lived_token
+                expires_in = 3600
+            else:
+                print(f"✅ Step 2 complete: Got long-lived token (expires in {expires_in} seconds ~{expires_in // 86400} days)")
+        
+        # Step 3: Get Instagram user info
+        user_info_url = f"https://graph.instagram.com/{user_id_from_token}"
+        user_info_params = {
+            "fields": "id,username,account_type",
+            "access_token": long_lived_token
+        }
+        
+        print(f"🔄 Step 3: Fetching Instagram account info...")
+        user_info_response = requests.get(user_info_url, params=user_info_params)
+        
+        if user_info_response.status_code != 200:
+            error_detail = user_info_response.text
+            print(f"⚠️ Failed to fetch user info: {error_detail}")
+            # Continue anyway, we'll use the user_id from token
+        
+        instagram_username = None
+        account_type = None
+        if user_info_response.status_code == 200:
+            user_info = user_info_response.json()
+            instagram_username = user_info.get("username")
+            account_type = user_info.get("account_type")
+            print(f"✅ Instagram account info: username={instagram_username}, type={account_type}")
+            
+            # Validate account type (must be BUSINESS or CREATOR)
+            if account_type == "PERSONAL":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Personal Instagram accounts are not supported. Please switch to a Business or Creator account."
+                )
+        
+        # Step 4: Check account limit BEFORE connecting
+        try:
+            check_account_limit(user_id, db)
+        except HTTPException as e:
+            print(f"❌ Account limit check failed: {e.detail}")
+            raise
+        
+        # Step 5: Save or update Instagram account
+        # Note: For Instagram native OAuth, we store the token directly
+        # The user_id_from_token is the Instagram Business Account ID
+        existing_account = db.query(InstagramAccount).filter(
+            InstagramAccount.user_id == user_id,
+            InstagramAccount.igsid == str(user_id_from_token)
+        ).first()
+        
+        if existing_account:
+            # Update existing account
+            print(f"📝 Updating existing account: {instagram_username or user_id_from_token}")
+            if instagram_username:
+                existing_account.username = instagram_username
+            existing_account.igsid = str(user_id_from_token)
+            existing_account.encrypted_page_token = encrypt_credentials(long_lived_token)
+            db.commit()
+            account_id = existing_account.id
+        else:
+            # Create new account
+            username = instagram_username or f"instagram_{user_id_from_token}"
+            print(f"✨ Creating new account: {username}")
+            new_account = InstagramAccount(
+                user_id=user_id,
+                username=username,
+                encrypted_credentials="",  # Legacy field
+                encrypted_page_token=encrypt_credentials(long_lived_token),
+                igsid=str(user_id_from_token)
+            )
+            db.add(new_account)
+            db.commit()
+            db.refresh(new_account)
+            account_id = new_account.id
+        
+        print(f"✅ Account saved successfully! Account ID: {account_id}")
+        
+        return {
+            "success": True,
+            "account": {
+                "id": account_id,
+                "username": instagram_username or f"instagram_{user_id_from_token}",
+                "account_type": account_type,
+                "expires_in": expires_in
+            },
+            "message": "Instagram account connected successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Instagram code exchange error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to exchange Instagram OAuth code: {str(e)}"
         )
 
 
