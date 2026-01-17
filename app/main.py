@@ -91,3 +91,4 @@ app.include_router(instagram.router, prefix="/api/instagram", tags=["Instagram"]
 app.include_router(instagram_oauth.router, prefix="/api/instagram", tags=["Instagram OAuth"])
 app.include_router(automation.router, prefix="/automation", tags=["Automation"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
+app.include_router(stripe_router.router, prefix="/api/stripe", tags=["Stripe"])
