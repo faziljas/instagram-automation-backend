@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import requests
@@ -548,6 +549,14 @@ async def execute_automation_action(
             if not message_template:
                 print("⚠️ No message template configured")
                 return
+            
+            # Apply delay if configured (delay is in minutes, convert to seconds)
+            delay_minutes = rule.config.get("delay_minutes", 0)
+            if delay_minutes and delay_minutes > 0:
+                delay_seconds = delay_minutes * 60
+                print(f"⏳ Waiting {delay_minutes} minute(s) ({delay_seconds} seconds) before sending message...")
+                await asyncio.sleep(delay_seconds)
+                print(f"✅ Delay complete, proceeding to send message")
             
             # Send DM using Instagram Graph API (for OAuth accounts)
             from app.utils.encryption import decrypt_credentials
