@@ -3,7 +3,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users
+from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router
 from app.db.session import engine
 from app.db.base import Base
 from sqlalchemy import text

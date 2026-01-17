@@ -33,7 +33,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         )
 
     # Handle the event
-    if event["type"] == "customer.subscription.created":
+    if event["type"] == "checkout.session.completed":
+        # Handle successful checkout (subscription created)
+        handle_checkout_session_completed(event["data"]["object"], db)
+    elif event["type"] == "customer.subscription.created":
         handle_subscription_created(event["data"]["object"], db)
     elif event["type"] == "customer.subscription.updated":
         handle_subscription_updated(event["data"]["object"], db)
@@ -41,6 +44,63 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         handle_subscription_deleted(event["data"]["object"], db)
 
     return {"status": "success"}
+
+
+def handle_checkout_session_completed(session_data: dict, db: Session):
+    """Handle successful checkout session completion."""
+    print(f"✅ Checkout session completed: {session_data.get('id')}")
+    
+    # Extract user ID from metadata
+    user_id = session_data.get("metadata", {}).get("user_id")
+    customer_email = session_data.get("customer_email")
+    
+    if not user_id:
+        print("⚠️ No user_id in checkout session metadata")
+        return
+    
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        print(f"❌ User not found: {user_id}")
+        return
+    
+    # Get subscription ID from checkout session
+    subscription_id = session_data.get("subscription")
+    customer_id = session_data.get("customer")
+    
+    if not subscription_id:
+        print("⚠️ No subscription ID in checkout session")
+        return
+    
+    # Retrieve subscription details from Stripe
+    try:
+        subscription = stripe.Subscription.retrieve(subscription_id)
+        
+        # Create or update subscription record
+        db_subscription = db.query(Subscription).filter(
+            Subscription.user_id == user.id
+        ).first()
+        
+        if db_subscription:
+            db_subscription.stripe_subscription_id = subscription_id
+            db_subscription.status = subscription.status
+        else:
+            db_subscription = Subscription(
+                user_id=user.id,
+                stripe_subscription_id=subscription_id,
+                status=subscription.status
+            )
+            db.add(db_subscription)
+        
+        # Update user plan tier
+        plan_tier = get_plan_tier_from_subscription(subscription.to_dict())
+        user.plan_tier = plan_tier
+        
+        db.commit()
+        print(f"✅ User {user_id} upgraded to {plan_tier} plan")
+        
+    except stripe.error.StripeError as e:
+        print(f"❌ Error retrieving subscription from Stripe: {str(e)}")
+        db.rollback()
 
 
 def handle_subscription_created(subscription_data: dict, db: Session):
@@ -139,10 +199,17 @@ def get_plan_tier_from_subscription(subscription_data: dict) -> str:
     price_id = items[0].get("price", {}).get("id", "")
 
     # Map price IDs to plan tiers (configure these in environment or database)
+    # Note: STRIPE_PRICE_ID_PRO is the price ID for the Pro plan ($15/mo)
+    STRIPE_PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO", "")
+    
     PRICE_TO_TIER = {
         os.getenv("STRIPE_BASIC_PRICE_ID", ""): "basic",
-        os.getenv("STRIPE_PRO_PRICE_ID", ""): "pro",
+        STRIPE_PRICE_ID_PRO: "pro",  # Pro plan
         os.getenv("STRIPE_ENTERPRISE_PRICE_ID", ""): "enterprise",
     }
+    
+    # Check if price ID matches Pro plan
+    if price_id == STRIPE_PRICE_ID_PRO:
+        return "pro"
 
     return PRICE_TO_TIER.get(price_id, "free")
