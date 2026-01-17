@@ -228,26 +228,17 @@ async def process_instagram_message(event: dict, db: Session):
         
         print(f"📋 Found {len(new_message_rules)} 'new_message' rules and {len(keyword_rules)} 'keyword' rules for this account")
         
-        # Process new_message rules (trigger on all DMs)
-        for rule in new_message_rules:
-            print(f"🔄 Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
-            print(f"✅ 'new_message' rule triggered!")
-            await execute_automation_action(
-                rule, 
-                sender_id, 
-                account, 
-                db,
-                trigger_type="new_message"
-            )
-        
-        # Process keyword rules (only if keyword matches - CASE INSENSITIVE)
+        # First, check if any keyword rule matches (exact match only)
+        # If keyword rule matches, ONLY trigger that rule, skip new_message rules
+        keyword_rule_matched = False
         for rule in keyword_rules:
-            print(f"🔄 Processing 'keyword' rule: {rule.name or 'Keyword Rule'} → {rule.action_type}")
             if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").lower()  # Case-insensitive match
-                # Case-insensitive exact match check
-                if keyword in message_text.lower():
-                    print(f"✅ Keyword '{keyword}' found in message (case-insensitive match), triggering keyword rule!")
+                keyword = rule.config.get("keyword", "").strip().lower()
+                message_text_lower = message_text.strip().lower()
+                # Check if message is EXACTLY the keyword (case-insensitive)
+                if keyword == message_text_lower:
+                    keyword_rule_matched = True
+                    print(f"✅ Keyword '{keyword}' exactly matches message, triggering keyword rule!")
                     await execute_automation_action(
                         rule,
                         sender_id,
@@ -255,10 +246,22 @@ async def process_instagram_message(event: dict, db: Session):
                         db,
                         trigger_type="keyword"
                     )
-                else:
-                    print(f"⏭️ Keyword '{keyword}' not found in message, skipping keyword rule")
-            else:
-                print(f"⚠️ Keyword rule has no keyword configured, skipping")
+                    break  # Only trigger first matching keyword rule
+        
+        # Process new_message rules ONLY if no keyword rule matched
+        if not keyword_rule_matched:
+            for rule in new_message_rules:
+                print(f"🔄 Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
+                print(f"✅ 'new_message' rule triggered (no keyword match)!")
+                await execute_automation_action(
+                    rule, 
+                    sender_id, 
+                    account, 
+                    db,
+                    trigger_type="new_message"
+                )
+        else:
+            print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
                 
     except Exception as e:
         print(f"❌ Error processing message: {str(e)}")
@@ -353,36 +356,17 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
             for rule in acc_rules:
                 print(f"     Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}")
         
-        # Process post_comment rules
-        for rule in post_comment_rules:
-            print(f"🔄 Processing 'post_comment' rule: {rule.name or 'Comment Rule'} → {rule.action_type}")
-            # Check keyword filter if configured
-            should_trigger = True
-            if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").lower()
-                if keyword not in comment_text.lower():
-                    should_trigger = False
-                    print(f"⏭️ Keyword '{keyword}' not found in comment, skipping rule")
-            
-            if should_trigger:
-                print(f"✅ 'post_comment' rule triggered!")
-                await execute_automation_action(
-                    rule, 
-                    commenter_id, 
-                    account, 
-                    db,
-                    trigger_type="post_comment",
-                    comment_id=comment_id
-                )
-        
-        # Process keyword rules (only if keyword matches - CASE INSENSITIVE)
+        # First, check if any keyword rule matches (exact match only)
+        # If keyword rule matches, ONLY trigger that rule, skip post_comment rules
+        keyword_rule_matched = False
         for rule in keyword_rules:
-            print(f"🔄 Processing 'keyword' rule: {rule.name or 'Keyword Rule'} → {rule.action_type}")
             if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").lower()  # Case-insensitive match
-                # Case-insensitive exact match check
-                if keyword in comment_text.lower():
-                    print(f"✅ Keyword '{keyword}' found in comment (case-insensitive match), triggering keyword rule!")
+                keyword = rule.config.get("keyword", "").strip().lower()
+                comment_text_lower = comment_text.strip().lower()
+                # Check if comment is EXACTLY the keyword (case-insensitive)
+                if keyword == comment_text_lower:
+                    keyword_rule_matched = True
+                    print(f"✅ Keyword '{keyword}' exactly matches comment, triggering keyword rule!")
                     await execute_automation_action(
                         rule,
                         commenter_id,
@@ -391,10 +375,23 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                         trigger_type="keyword",
                         comment_id=comment_id
                     )
-                else:
-                    print(f"⏭️ Keyword '{keyword}' not found in comment, skipping keyword rule")
-            else:
-                print(f"⚠️ Keyword rule has no keyword configured, skipping")
+                    break  # Only trigger first matching keyword rule
+        
+        # Process post_comment rules ONLY if no keyword rule matched
+        if not keyword_rule_matched:
+            for rule in post_comment_rules:
+                print(f"🔄 Processing 'post_comment' rule: {rule.name or 'Comment Rule'} → {rule.action_type}")
+                print(f"✅ 'post_comment' rule triggered (no keyword match)!")
+                await execute_automation_action(
+                    rule, 
+                    commenter_id, 
+                    account, 
+                    db,
+                    trigger_type="post_comment",
+                    comment_id=comment_id
+                )
+        else:
+            print(f"⏭️ Skipping 'post_comment' rules because keyword rule matched")
                 
     except Exception as e:
         print(f"❌ Error processing comment event: {str(e)}")
@@ -477,36 +474,17 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         
         print(f"📋 Found {len(live_comment_rules)} 'live_comment' rules and {len(keyword_rules)} 'keyword' rules for this account")
         
-        # Process live_comment rules
-        for rule in live_comment_rules:
-            print(f"🔄 Processing 'live_comment' rule: {rule.name or 'Live Comment Rule'} → {rule.action_type}")
-            # Check keyword filter if configured
-            should_trigger = True
-            if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").lower()
-                if keyword not in comment_text.lower():
-                    should_trigger = False
-                    print(f"⏭️ Keyword '{keyword}' not found in live comment, skipping rule")
-            
-            if should_trigger:
-                print(f"✅ 'live_comment' rule triggered!")
-                await execute_automation_action(
-                    rule,
-                    commenter_id,
-                    account,
-                    db,
-                    trigger_type="live_comment",
-                    comment_id=comment_id
-                )
-        
-        # Process keyword rules (only if keyword matches - CASE INSENSITIVE)
+        # First, check if any keyword rule matches (exact match only)
+        # If keyword rule matches, ONLY trigger that rule, skip live_comment rules
+        keyword_rule_matched = False
         for rule in keyword_rules:
-            print(f"🔄 Processing 'keyword' rule: {rule.name or 'Keyword Rule'} → {rule.action_type}")
             if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").lower()  # Case-insensitive match
-                # Case-insensitive exact match check
-                if keyword in comment_text.lower():
-                    print(f"✅ Keyword '{keyword}' found in live comment (case-insensitive match), triggering keyword rule!")
+                keyword = rule.config.get("keyword", "").strip().lower()
+                comment_text_lower = comment_text.strip().lower()
+                # Check if comment is EXACTLY the keyword (case-insensitive)
+                if keyword == comment_text_lower:
+                    keyword_rule_matched = True
+                    print(f"✅ Keyword '{keyword}' exactly matches live comment, triggering keyword rule!")
                     await execute_automation_action(
                         rule,
                         commenter_id,
@@ -515,10 +493,23 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                         trigger_type="keyword",
                         comment_id=comment_id
                     )
-                else:
-                    print(f"⏭️ Keyword '{keyword}' not found in live comment, skipping keyword rule")
-            else:
-                print(f"⚠️ Keyword rule has no keyword configured, skipping")
+                    break  # Only trigger first matching keyword rule
+        
+        # Process live_comment rules ONLY if no keyword rule matched
+        if not keyword_rule_matched:
+            for rule in live_comment_rules:
+                print(f"🔄 Processing 'live_comment' rule: {rule.name or 'Live Comment Rule'} → {rule.action_type}")
+                print(f"✅ 'live_comment' rule triggered (no keyword match)!")
+                await execute_automation_action(
+                    rule,
+                    commenter_id,
+                    account,
+                    db,
+                    trigger_type="live_comment",
+                    comment_id=comment_id
+                )
+        else:
+            print(f"⏭️ Skipping 'live_comment' rules because keyword rule matched")
                 
     except Exception as e:
         print(f"❌ Error processing live comment event: {str(e)}")
