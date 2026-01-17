@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import requests
-from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.instagram_account import InstagramAccount
@@ -20,6 +20,11 @@ router = APIRouter()
 # Note: This is cleared on restart, but should prevent short-term loops
 _processed_message_ids = set()
 _MAX_CACHE_SIZE = 1000  # Limit cache size to prevent memory issues
+
+# Track rules that are currently being processed with delays (prevents duplicate triggering)
+# Format: (message_id, rule_id) -> timestamp when processing started
+_processing_rules = {}
+_MAX_PROCESSING_CACHE_SIZE = 1000
 
 
 def get_current_user_id(authorization: str = Header(None)) -> int:
@@ -240,13 +245,25 @@ async def process_instagram_message(event: dict, db: Session):
                 if keyword == message_text_lower:
                     keyword_rule_matched = True
                     print(f"✅ Keyword '{keyword}' exactly matches message, triggering keyword rule!")
-                    await execute_automation_action(
+                    # Check if this rule is already being processed for this message
+                    processing_key = f"{message_id}_{rule.id}"
+                    if processing_key in _processing_rules:
+                        print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
+                        break
+                    # Mark as processing
+                    _processing_rules[processing_key] = True
+                    # Clean cache if too large
+                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                        _processing_rules.clear()
+                    # Run in background task to avoid blocking webhook handler
+                    asyncio.create_task(execute_automation_action(
                         rule,
                         sender_id,
                         account,
                         db,
-                        trigger_type="keyword"
-                    )
+                        trigger_type="keyword",
+                        message_id=message_id
+                    ))
                     break  # Only trigger first matching keyword rule
         
         # Process new_message rules ONLY if no keyword rule matched
@@ -254,13 +271,25 @@ async def process_instagram_message(event: dict, db: Session):
             for rule in new_message_rules:
                 print(f"🔄 Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
                 print(f"✅ 'new_message' rule triggered (no keyword match)!")
-                await execute_automation_action(
+                # Check if this rule is already being processed for this message
+                processing_key = f"{message_id}_{rule.id}"
+                if processing_key in _processing_rules:
+                    print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
+                    continue
+                # Mark as processing
+                _processing_rules[processing_key] = True
+                # Clean cache if too large
+                if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                    _processing_rules.clear()
+                # Run in background task to avoid blocking webhook handler
+                asyncio.create_task(execute_automation_action(
                     rule, 
                     sender_id, 
                     account, 
                     db,
-                    trigger_type="new_message"
-                )
+                    trigger_type="new_message",
+                    message_id=message_id
+                ))
         else:
             print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
                 
@@ -368,14 +397,25 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                 if keyword == comment_text_lower:
                     keyword_rule_matched = True
                     print(f"✅ Keyword '{keyword}' exactly matches comment, triggering keyword rule!")
-                    await execute_automation_action(
+                    # Check if this rule is already being processed for this comment
+                    processing_key = f"{comment_id}_{rule.id}"
+                    if processing_key in _processing_rules:
+                        print(f"🚫 Rule {rule.id} already processing for comment {comment_id}, skipping duplicate")
+                        break
+                    # Mark as processing
+                    _processing_rules[processing_key] = True
+                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                        _processing_rules.clear()
+                    # Run in background task
+                    asyncio.create_task(execute_automation_action(
                         rule,
                         commenter_id,
                         account,
                         db,
                         trigger_type="keyword",
-                        comment_id=comment_id
-                    )
+                        comment_id=comment_id,
+                        message_id=comment_id  # Use comment_id as identifier
+                    ))
                     break  # Only trigger first matching keyword rule
         
         # Process post_comment rules ONLY if no keyword rule matched
@@ -383,14 +423,25 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
             for rule in post_comment_rules:
                 print(f"🔄 Processing 'post_comment' rule: {rule.name or 'Comment Rule'} → {rule.action_type}")
                 print(f"✅ 'post_comment' rule triggered (no keyword match)!")
-                await execute_automation_action(
+                # Check if this rule is already being processed for this comment
+                processing_key = f"{comment_id}_{rule.id}"
+                if processing_key in _processing_rules:
+                    print(f"🚫 Rule {rule.id} already processing for comment {comment_id}, skipping duplicate")
+                    continue
+                # Mark as processing
+                _processing_rules[processing_key] = True
+                if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                    _processing_rules.clear()
+                # Run in background task
+                asyncio.create_task(execute_automation_action(
                     rule, 
                     commenter_id, 
                     account, 
                     db,
                     trigger_type="post_comment",
-                    comment_id=comment_id
-                )
+                    comment_id=comment_id,
+                    message_id=comment_id  # Use comment_id as identifier
+                ))
         else:
             print(f"⏭️ Skipping 'post_comment' rules because keyword rule matched")
                 
@@ -486,14 +537,25 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                 if keyword == comment_text_lower:
                     keyword_rule_matched = True
                     print(f"✅ Keyword '{keyword}' exactly matches live comment, triggering keyword rule!")
-                    await execute_automation_action(
+                    # Check if this rule is already being processed for this comment
+                    processing_key = f"{comment_id}_{rule.id}"
+                    if processing_key in _processing_rules:
+                        print(f"🚫 Rule {rule.id} already processing for live comment {comment_id}, skipping duplicate")
+                        break
+                    # Mark as processing
+                    _processing_rules[processing_key] = True
+                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                        _processing_rules.clear()
+                    # Run in background task
+                    asyncio.create_task(execute_automation_action(
                         rule,
                         commenter_id,
                         account,
                         db,
                         trigger_type="keyword",
-                        comment_id=comment_id
-                    )
+                        comment_id=comment_id,
+                        message_id=comment_id  # Use comment_id as identifier
+                    ))
                     break  # Only trigger first matching keyword rule
         
         # Process live_comment rules ONLY if no keyword rule matched
@@ -501,14 +563,25 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
             for rule in live_comment_rules:
                 print(f"🔄 Processing 'live_comment' rule: {rule.name or 'Live Comment Rule'} → {rule.action_type}")
                 print(f"✅ 'live_comment' rule triggered (no keyword match)!")
-                await execute_automation_action(
+                # Check if this rule is already being processed for this comment
+                processing_key = f"{comment_id}_{rule.id}"
+                if processing_key in _processing_rules:
+                    print(f"🚫 Rule {rule.id} already processing for live comment {comment_id}, skipping duplicate")
+                    continue
+                # Mark as processing
+                _processing_rules[processing_key] = True
+                if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                    _processing_rules.clear()
+                # Run in background task
+                asyncio.create_task(execute_automation_action(
                     rule,
                     commenter_id,
                     account,
                     db,
                     trigger_type="live_comment",
-                    comment_id=comment_id
-                )
+                    comment_id=comment_id,
+                    message_id=comment_id  # Use comment_id as identifier
+                ))
         else:
             print(f"⏭️ Skipping 'live_comment' rules because keyword rule matched")
                 
@@ -523,7 +596,8 @@ async def execute_automation_action(
     account: InstagramAccount, 
     db: Session,
     trigger_type: str = None,
-    comment_id: str = None
+    comment_id: str = None,
+        message_id: str = None
 ):
     """
     Execute the automation action defined in the rule.
@@ -535,6 +609,7 @@ async def execute_automation_action(
         db: Database session
         trigger_type: The type of trigger (e.g., 'post_comment', 'new_message', 'live_comment')
         comment_id: The comment ID (required for post_comment triggers to use private_replies)
+        message_id: The message or comment ID (used for deduplication cache cleanup)
     """
     try:
         if rule.action_type == "send_dm":
@@ -619,6 +694,14 @@ async def execute_automation_action(
         print(f"❌ Error executing action: {str(e)}")
         import traceback
         traceback.print_exc()
+    finally:
+        # Clean up processing cache after completion (whether success or failure)
+        # Use comment_id if available (for comments), otherwise message_id (for DMs)
+        identifier = comment_id if comment_id else message_id
+        if identifier:
+            processing_key = f"{identifier}_{rule.id}"
+            _processing_rules.pop(processing_key, None)
+            print(f"🧹 Cleaned up processing cache for {processing_key}")
 
 @router.post("/accounts", response_model=InstagramAccountResponse, status_code=status.HTTP_201_CREATED)
 def create_instagram_account(
