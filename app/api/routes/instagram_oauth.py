@@ -1,11 +1,13 @@
 """
 Facebook Login for Business OAuth Routes
 Implements OAuth flow for connecting Instagram Business accounts via Facebook Pages
+Supports both server-side redirect flow and Facebook SDK popup flow
 """
 import os
 import requests
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, Request, Body
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.instagram_account import InstagramAccount
@@ -22,6 +24,10 @@ INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", os.getenv("FACEBOOK_APP
 INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", os.getenv("FACEBOOK_REDIRECT_URI", "https://instagram-automation-backend-23mp.onrender.com/api/instagram/oauth/callback"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 FACEBOOK_API_VERSION = "v19.0"
+
+
+class ConnectSDKRequest(BaseModel):
+    access_token: str
 
 
 def get_current_user_id(authorization: str = Header(None)) -> int:
@@ -301,6 +307,240 @@ async def instagram_oauth_callback(
         # Redirect to frontend error page
         return RedirectResponse(
             url=f"{FRONTEND_URL}/dashboard/accounts?error=oauth_failed"
+        )
+
+
+def exchange_token_for_long_lived(short_lived_token: str) -> dict:
+    """
+    Exchange short-lived User Access Token for long-lived token (60 days).
+    Returns dict with access_token and expires_in.
+    """
+    exchange_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/oauth/access_token"
+    exchange_params = {
+        "grant_type": "fb_exchange_token",
+        "client_id": INSTAGRAM_APP_ID,
+        "client_secret": INSTAGRAM_APP_SECRET,
+        "fb_exchange_token": short_lived_token
+    }
+    
+    print(f"🔄 Exchanging short-lived token for long-lived token...")
+    response = requests.get(exchange_url, params=exchange_params)
+    
+    if response.status_code != 200:
+        error_detail = response.text
+        print(f"❌ Token exchange failed: {error_detail}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to exchange token: {error_detail}"
+        )
+    
+    token_data = response.json()
+    access_token = token_data.get("access_token")
+    expires_in = token_data.get("expires_in", 0)
+    
+    print(f"✅ Token exchanged successfully! Expires in: {expires_in} seconds (~{expires_in // 86400} days)")
+    return {"access_token": access_token, "expires_in": expires_in}
+
+
+def fetch_pages_with_instagram(user_access_token: str) -> list:
+    """
+    Fetch user's Facebook Pages with connected Instagram Business Accounts.
+    Returns list of pages with Instagram account data.
+    """
+    pages_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/me/accounts"
+    pages_params = {
+        "fields": "id,name,access_token,instagram_business_account{id,username}",
+        "limit": "100",
+        "access_token": user_access_token
+    }
+    
+    print(f"🔄 Fetching Facebook Pages with Instagram Business Accounts...")
+    pages_response = requests.get(pages_url, params=pages_params)
+    
+    if pages_response.status_code != 200:
+        error_detail = pages_response.text
+        print(f"❌ Failed to fetch pages: {error_detail}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to fetch pages: {error_detail}"
+        )
+    
+    pages_data = pages_response.json()
+    pages = pages_data.get("data", [])
+    
+    # Fallback: Try fetching with type=page if no pages found
+    if not pages:
+        print("⚠️ No pages found with me/accounts, trying fallback with type=page...")
+        fallback_pages_params = {
+            "fields": "id,name,access_token,instagram_business_account{id,username}",
+            "type": "page",
+            "limit": "100",
+            "access_token": user_access_token
+        }
+        fallback_response = requests.get(pages_url, params=fallback_pages_params)
+        
+        if fallback_response.status_code == 200:
+            fallback_data = fallback_response.json()
+            pages = fallback_data.get("data", [])
+            if pages:
+                print(f"✅ Found {len(pages)} pages using fallback method")
+            else:
+                print("❌ No Facebook Pages found even with fallback method")
+        else:
+            print(f"⚠️ Fallback request failed: {fallback_response.text}")
+    
+    if not pages:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No Facebook Pages found. Please create a Facebook Page and connect it to an Instagram Business account."
+        )
+    
+    return pages
+
+
+def find_instagram_account_from_pages(pages: list) -> dict:
+    """
+    Find first page with connected Instagram Business Account.
+    Returns dict with page_id, page_name, page_token, instagram_id, instagram_username.
+    """
+    for page in pages:
+        instagram_account = page.get("instagram_business_account")
+        if instagram_account:
+            return {
+                "page_id": page.get("id"),
+                "page_name": page.get("name"),
+                "page_token": page.get("access_token"),
+                "instagram_id": instagram_account.get("id"),
+                "instagram_username": instagram_account.get("username")
+            }
+    
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="No Facebook Page with connected Instagram Business Account found. Please connect an Instagram Business account to your Facebook Page."
+    )
+
+
+def save_or_update_instagram_account(
+    user_id: int,
+    page_with_instagram: dict,
+    db: Session
+) -> InstagramAccount:
+    """
+    Save or update Instagram account in database.
+    Returns the saved/updated InstagramAccount instance.
+    """
+    existing_account = db.query(InstagramAccount).filter(
+        InstagramAccount.user_id == user_id,
+        InstagramAccount.igsid == page_with_instagram['instagram_id']
+    ).first()
+    
+    if existing_account:
+        # Update existing account
+        print(f"📝 Updating existing account: {page_with_instagram['instagram_username']}")
+        existing_account.username = page_with_instagram['instagram_username']
+        existing_account.igsid = page_with_instagram['instagram_id']
+        existing_account.page_id = page_with_instagram['page_id']
+        existing_account.encrypted_page_token = encrypt_credentials(page_with_instagram['page_token'])
+        db.commit()
+        return existing_account
+    else:
+        # Create new account
+        print(f"✨ Creating new account: {page_with_instagram['instagram_username']}")
+        new_account = InstagramAccount(
+            user_id=user_id,
+            username=page_with_instagram['instagram_username'],
+            encrypted_credentials="",  # Legacy field, kept empty
+            encrypted_page_token=encrypt_credentials(page_with_instagram['page_token']),
+            page_id=page_with_instagram['page_id'],
+            igsid=page_with_instagram['instagram_id']
+        )
+        db.add(new_account)
+        db.commit()
+        db.refresh(new_account)
+        return new_account
+
+
+@router.post("/connect-sdk")
+async def connect_instagram_sdk(
+    request_data: ConnectSDKRequest = Body(...),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Handle Instagram account connection via Facebook SDK popup.
+    Receives short-lived access token from SDK, exchanges for long-lived token,
+    fetches pages, finds Instagram account, and saves to database.
+    """
+    try:
+        short_lived_token = request_data.access_token
+        print(f"📥 SDK connection request received for user {user_id}")
+        
+        # Step 1: Exchange short-lived token for long-lived token
+        long_lived_data = exchange_token_for_long_lived(short_lived_token)
+        long_lived_token = long_lived_data["access_token"]
+        
+        # Step 2: Check account limit BEFORE connecting
+        try:
+            check_account_limit(user_id, db)
+        except HTTPException as e:
+            print(f"❌ Account limit check failed: {e.detail}")
+            raise
+        
+        # Step 3: Fetch user's Facebook Pages with Instagram Business Accounts
+        pages = fetch_pages_with_instagram(long_lived_token)
+        
+        # Step 4: Find first page with Instagram Business Account
+        page_with_instagram = find_instagram_account_from_pages(pages)
+        
+        print(f"✅ Found Instagram Business Account:")
+        print(f"   Page ID: {page_with_instagram['page_id']}")
+        print(f"   Page Name: {page_with_instagram['page_name']}")
+        print(f"   Instagram ID: {page_with_instagram['instagram_id']}")
+        print(f"   Instagram Username: {page_with_instagram['instagram_username']}")
+        
+        # Step 5: Subscribe page to webhooks (feed, mention, messages)
+        try:
+            webhook_subscribe_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/{page_with_instagram['page_id']}/subscribed_apps"
+            webhook_params = {
+                "subscribed_fields": "feed,mention,messages",
+                "access_token": page_with_instagram['page_token']
+            }
+            
+            print(f"🔄 Subscribing page to webhooks (feed, mention, messages)...")
+            webhook_response = requests.post(webhook_subscribe_url, params=webhook_params)
+            
+            if webhook_response.status_code == 200:
+                print(f"✅ Webhook subscription successful")
+            else:
+                print(f"⚠️ Webhook subscription warning: {webhook_response.text}")
+        except Exception as e:
+            print(f"⚠️ Webhook subscription error (non-critical): {str(e)}")
+        
+        # Step 6: Save or update Instagram account
+        account = save_or_update_instagram_account(user_id, page_with_instagram, db)
+        
+        print(f"✅ Account saved successfully!")
+        
+        return {
+            "success": True,
+            "account": {
+                "id": account.id,
+                "username": account.username,
+                "is_active": account.is_active,
+                "created_at": account.created_at.isoformat() if account.created_at else None
+            },
+            "message": "Instagram account connected successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ SDK connection error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to connect Instagram account: {str(e)}"
         )
 
 
