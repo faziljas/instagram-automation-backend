@@ -614,12 +614,12 @@ async def exchange_instagram_code(
     db: Session = Depends(get_db)
 ):
     """
-    Exchange Instagram OAuth authorization code for access token.
-    Handles Instagram Business Login OAuth flow with code exchange.
+    Exchange Facebook OAuth authorization code for Instagram Business account.
+    Handles Instagram Business Login via Facebook OAuth flow with code exchange.
     """
     try:
         code = request_data.code
-        print(f"📥 Instagram OAuth code exchange request received for user {user_id}")
+        print(f"📥 Facebook OAuth code exchange request received for user {user_id}")
         
         if not code:
             raise HTTPException(
@@ -630,19 +630,17 @@ async def exchange_instagram_code(
         # Build redirect URI (must match frontend callback URL)
         redirect_uri = f"{FRONTEND_URL}/dashboard/callback"
         
-        # Step 1: Exchange code for short-lived access token
-        # POST to Instagram OAuth endpoint
-        token_url = "https://api.instagram.com/oauth/access_token"
-        token_data = {
+        # Step 1: Exchange code for User Access Token (Facebook OAuth)
+        token_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/oauth/access_token"
+        token_params = {
             "client_id": INSTAGRAM_APP_ID,
             "client_secret": INSTAGRAM_APP_SECRET,
-            "grant_type": "authorization_code",
             "redirect_uri": redirect_uri,
             "code": code
         }
         
-        print(f"🔄 Step 1: Exchanging code for short-lived token...")
-        token_response = requests.post(token_url, data=token_data)
+        print(f"🔄 Step 1: Exchanging code for User Access Token...")
+        token_response = requests.get(token_url, params=token_params)
         
         if token_response.status_code != 200:
             error_detail = token_response.text
@@ -652,114 +650,124 @@ async def exchange_instagram_code(
                 detail=f"Failed to exchange code for token: {error_detail}"
             )
         
-        token_result = token_response.json()
-        short_lived_token = token_result.get("access_token")
-        user_id_from_token = token_result.get("user_id")
+        token_data = token_response.json()
+        user_access_token = token_data.get("access_token")
         
-        if not short_lived_token:
+        if not user_access_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No access token received from Instagram"
+                detail="No access token received from Facebook"
             )
         
-        print(f"✅ Step 1 complete: Got short-lived token")
+        print(f"✅ Step 1 complete: Got User Access Token")
         
-        # Step 2: Exchange short-lived token for long-lived token (60 days)
-        # GET from Instagram Graph API
-        exchange_url = "https://graph.instagram.com/access_token"
-        exchange_params = {
-            "grant_type": "ig_exchange_token",
-            "client_secret": INSTAGRAM_APP_SECRET,
-            "access_token": short_lived_token
+        # Step 2: Fetch user's Facebook Pages with Instagram Business Accounts
+        pages_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/me/accounts"
+        pages_params = {
+            "fields": "id,name,access_token,instagram_business_account",
+            "limit": 100,
+            "access_token": user_access_token
         }
         
-        print(f"🔄 Step 2: Exchanging short-lived token for long-lived token...")
-        exchange_response = requests.get(exchange_url, params=exchange_params)
+        print(f"🔄 Step 2: Fetching Facebook Pages with Instagram accounts...")
+        pages_response = requests.get(pages_url, params=pages_params)
         
-        if exchange_response.status_code != 200:
-            error_detail = exchange_response.text
-            print(f"❌ Long-lived token exchange failed: {error_detail}")
-            # Fallback: Use short-lived token if long-lived exchange fails
-            print(f"⚠️ Falling back to short-lived token")
-            long_lived_token = short_lived_token
-            expires_in = 3600  # Short-lived tokens expire in 1 hour
-        else:
-            exchange_result = exchange_response.json()
-            long_lived_token = exchange_result.get("access_token")
-            expires_in = exchange_result.get("expires_in", 5184000)  # Default 60 days
-            
-            if not long_lived_token:
-                # Fallback to short-lived token
-                print(f"⚠️ No long-lived token, using short-lived token")
-                long_lived_token = short_lived_token
-                expires_in = 3600
-            else:
-                print(f"✅ Step 2 complete: Got long-lived token (expires in {expires_in} seconds ~{expires_in // 86400} days)")
+        if pages_response.status_code != 200:
+            error_detail = pages_response.text
+            print(f"❌ Failed to fetch pages: {error_detail}")
+            # Try fallback query
+            pages_url_fallback = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/me/accounts?type=page"
+            pages_response = requests.get(pages_url_fallback, params={"access_token": user_access_token, "limit": 100})
+            if pages_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to fetch Facebook Pages: {error_detail}"
+                )
         
-        # Step 3: Get Instagram user info
-        user_info_url = f"https://graph.instagram.com/{user_id_from_token}"
-        user_info_params = {
+        pages_data = pages_response.json()
+        pages = pages_data.get("data", [])
+        
+        if not pages:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No Facebook Pages found. Please ensure you have a Facebook Page connected to your Instagram Business account."
+            )
+        
+        # Step 3: Find first page with Instagram Business Account
+        page_with_instagram = None
+        for page in pages:
+            ig_account = page.get("instagram_business_account")
+            if ig_account:
+                page_with_instagram = {
+                    "page_id": page["id"],
+                    "page_name": page.get("name", ""),
+                    "page_access_token": page.get("access_token", ""),
+                    "instagram_id": ig_account.get("id") if isinstance(ig_account, dict) else ig_account
+                }
+                break
+        
+        if not page_with_instagram or not page_with_instagram.get("instagram_id"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No Instagram Business Account found. Please ensure your Facebook Page has an Instagram Business account connected."
+            )
+        
+        page_access_token = page_with_instagram["page_access_token"]
+        instagram_id = str(page_with_instagram["instagram_id"])
+        
+        # Step 4: Get Instagram account details
+        instagram_info_url = f"https://graph.facebook.com/{FACEBOOK_API_VERSION}/{instagram_id}"
+        instagram_info_params = {
             "fields": "id,username,account_type",
-            "access_token": long_lived_token
+            "access_token": page_access_token
         }
         
         print(f"🔄 Step 3: Fetching Instagram account info...")
-        user_info_response = requests.get(user_info_url, params=user_info_params)
-        
-        if user_info_response.status_code != 200:
-            error_detail = user_info_response.text
-            print(f"⚠️ Failed to fetch user info: {error_detail}")
-            # Continue anyway, we'll use the user_id from token
+        instagram_info_response = requests.get(instagram_info_url, params=instagram_info_params)
         
         instagram_username = None
         account_type = None
-        if user_info_response.status_code == 200:
-            user_info = user_info_response.json()
-            instagram_username = user_info.get("username")
-            account_type = user_info.get("account_type")
+        if instagram_info_response.status_code == 200:
+            instagram_info = instagram_info_response.json()
+            instagram_username = instagram_info.get("username")
+            account_type = instagram_info.get("account_type")
             print(f"✅ Instagram account info: username={instagram_username}, type={account_type}")
-            
-            # Validate account type (must be BUSINESS or CREATOR)
-            if account_type == "PERSONAL":
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Personal Instagram accounts are not supported. Please switch to a Business or Creator account."
-                )
+        else:
+            print(f"⚠️ Could not fetch Instagram details, using page info")
+            instagram_username = page_with_instagram.get("page_name")
         
-        # Step 4: Check account limit BEFORE connecting
+        # Step 5: Check account limit BEFORE connecting
         try:
             check_account_limit(user_id, db)
         except HTTPException as e:
             print(f"❌ Account limit check failed: {e.detail}")
             raise
         
-        # Step 5: Save or update Instagram account
-        # Note: For Instagram native OAuth, we store the token directly
-        # The user_id_from_token is the Instagram Business Account ID
+        # Step 6: Save or update Instagram account
         existing_account = db.query(InstagramAccount).filter(
             InstagramAccount.user_id == user_id,
-            InstagramAccount.igsid == str(user_id_from_token)
+            InstagramAccount.igsid == instagram_id
         ).first()
         
         if existing_account:
-            # Update existing account
-            print(f"📝 Updating existing account: {instagram_username or user_id_from_token}")
+            print(f"📝 Updating existing account: {instagram_username or instagram_id}")
             if instagram_username:
                 existing_account.username = instagram_username
-            existing_account.igsid = str(user_id_from_token)
-            existing_account.encrypted_page_token = encrypt_credentials(long_lived_token)
+            existing_account.igsid = instagram_id
+            existing_account.page_id = page_with_instagram["page_id"]
+            existing_account.encrypted_page_token = encrypt_credentials(page_access_token)
             db.commit()
             account_id = existing_account.id
         else:
-            # Create new account
-            username = instagram_username or f"instagram_{user_id_from_token}"
+            username = instagram_username or f"instagram_{instagram_id}"
             print(f"✨ Creating new account: {username}")
             new_account = InstagramAccount(
                 user_id=user_id,
                 username=username,
                 encrypted_credentials="",  # Legacy field
-                encrypted_page_token=encrypt_credentials(long_lived_token),
-                igsid=str(user_id_from_token)
+                encrypted_page_token=encrypt_credentials(page_access_token),
+                page_id=page_with_instagram["page_id"],
+                igsid=instagram_id
             )
             db.add(new_account)
             db.commit()
@@ -772,9 +780,9 @@ async def exchange_instagram_code(
             "success": True,
             "account": {
                 "id": account_id,
-                "username": instagram_username or f"instagram_{user_id_from_token}",
-                "account_type": account_type,
-                "expires_in": expires_in
+                "username": instagram_username or f"instagram_{instagram_id}",
+                "igsid": instagram_id,
+                "is_active": True
             },
             "message": "Instagram account connected successfully"
         }
@@ -782,12 +790,12 @@ async def exchange_instagram_code(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Instagram code exchange error: {str(e)}")
+        print(f"❌ Facebook OAuth code exchange error: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to exchange Instagram OAuth code: {str(e)}"
+            detail=f"Failed to exchange OAuth code: {str(e)}"
         )
 
 
