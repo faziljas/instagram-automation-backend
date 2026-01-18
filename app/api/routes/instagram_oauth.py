@@ -830,6 +830,63 @@ async def exchange_instagram_code(
                         print(f"   ⚠️ No subscription data found in verification response")
                 else:
                     print(f"   ⚠️ Could not verify subscription: {verify_response.text}")
+                
+                # CRITICAL: For 'messages' webhooks, Instagram might require Page-level subscription
+                # Try to get the associated Facebook Page and subscribe there as well
+                # This is required because 'messages' webhooks often need Page-level subscription
+                print(f"🔄 Attempting Page-level webhook subscription for 'messages' field...")
+                try:
+                    # Try to get connected Facebook Page using Instagram Business Account
+                    # Query: GET /{ig-user-id}?fields=connected_facebook_page
+                    page_lookup_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}"
+                    page_lookup_params = {
+                        "fields": "connected_facebook_page{id,name,access_token}",
+                        "access_token": long_lived_token
+                    }
+                    
+                    page_response = requests.get(page_lookup_url, params=page_lookup_params)
+                    
+                    if page_response.status_code == 200:
+                        page_data = page_response.json()
+                        connected_page = page_data.get("connected_facebook_page")
+                        
+                        if connected_page and isinstance(connected_page, dict):
+                            page_id = connected_page.get("id")
+                            page_token = connected_page.get("access_token")
+                            
+                            if page_id and page_token:
+                                print(f"   ✅ Found connected Facebook Page: {page_id}")
+                                
+                                # Subscribe Page to messages webhook
+                                page_subscribe_url = f"https://graph.facebook.com/v21.0/{page_id}/subscribed_apps"
+                                page_subscribe_params = {
+                                    "subscribed_fields": "messages",
+                                    "access_token": page_token
+                                }
+                                
+                                page_webhook_response = requests.post(page_subscribe_url, params=page_subscribe_params)
+                                
+                                if page_webhook_response.status_code == 200:
+                                    print(f"   ✅ Successfully subscribed Page {page_id} to 'messages' webhook")
+                                    page_result = page_webhook_response.json()
+                                    print(f"      Response: {page_result}")
+                                else:
+                                    print(f"   ⚠️ Page-level subscription failed: {page_webhook_response.text}")
+                            else:
+                                print(f"   ⚠️ No Page ID or token found in connected_page: {connected_page}")
+                        elif connected_page:
+                            # Sometimes it's just an ID
+                            page_id = str(connected_page)
+                            print(f"   ⚠️ Found Page ID but no token (ID only): {page_id}")
+                            print(f"   ⚠️ Cannot subscribe at Page level without Page access token")
+                        else:
+                            print(f"   ⚠️ No connected Facebook Page found")
+                            print(f"   ⚠️ 'messages' webhooks might not work without Page-level subscription")
+                    else:
+                        print(f"   ⚠️ Could not fetch connected Facebook Page: {page_response.text}")
+                except Exception as e:
+                    print(f"   ⚠️ Error attempting Page-level subscription: {str(e)}")
+                    # Don't fail the whole flow - continue anyway
             else:
                 error_detail = webhook_response.text
                 print(f"❌ CRITICAL: Webhook subscription failed (status {webhook_response.status_code}): {error_detail}")
