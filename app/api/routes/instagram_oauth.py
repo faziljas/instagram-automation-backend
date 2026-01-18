@@ -662,6 +662,39 @@ async def exchange_instagram_code(
         if token_response.status_code != 200:
             error_detail = token_response.text
             print(f"❌ Token exchange failed: {error_detail}")
+            
+            # Check for specific Instagram OAuth errors
+            try:
+                error_json = token_response.json()
+                error_type = error_json.get("error_type", "")
+                error_message = error_json.get("error_message", "")
+                
+                # Handle "Insufficient Developer Role" error (app in development mode)
+                if "Insufficient Developer Role" in error_message or "insufficient developer role" in error_message.lower():
+                    user_friendly_message = (
+                        "This Instagram app is currently in development mode. "
+                        "Only test users added to the app can connect their accounts. "
+                        "Please contact the app administrator to be added as a test user, "
+                        "or wait until the app is approved and published."
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=user_friendly_message
+                    )
+                
+                # Handle other Instagram OAuth errors
+                if error_type or error_message:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Instagram OAuth error: {error_message or error_type}"
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                # If JSON parsing fails, use raw error text
+                pass
+            
+            # Generic error if we couldn't parse it
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Failed to exchange code for token: {error_detail}"
