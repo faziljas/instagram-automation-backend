@@ -70,6 +70,7 @@ def create_automation_rule(
         trigger_type=rule_data.trigger_type,
         action_type=rule_data.action_type,
         config=rule_data.config,
+        media_id=rule_data.config.get('media_id'),  # Extract media_id from config if present
         is_active=True
     )
     db.add(rule)

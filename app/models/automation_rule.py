@@ -12,5 +12,6 @@ class AutomationRule(Base):
     trigger_type = Column(String, nullable=False)
     action_type = Column(String, nullable=False)
     config = Column(JSON, nullable=False)
+    media_id = Column(String, nullable=True)  # Instagram media ID (post/reel/story) this rule is tied to
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

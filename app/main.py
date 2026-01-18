@@ -70,6 +70,14 @@ async def startup_event():
                 print("✅ Auto-migration complete: encrypted_page_token column added", file=sys.stderr)
             else:
                 print("✅ encrypted_page_token column already exists", file=sys.stderr)
+            
+            # Check and add media_id column to automation_rules
+            if not column_exists('automation_rules', 'media_id'):
+                print("🔄 Auto-migrating: Adding media_id column to automation_rules...", file=sys.stderr)
+                conn.execute(text("ALTER TABLE automation_rules ADD COLUMN media_id VARCHAR(255)"))
+                print("✅ Auto-migration complete: media_id column added", file=sys.stderr)
+            else:
+                print("✅ media_id column already exists", file=sys.stderr)
                 
     except Exception as e:
         print(f"⚠️ Auto-migration warning: {str(e)}", file=sys.stderr)

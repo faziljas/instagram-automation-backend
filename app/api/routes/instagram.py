@@ -9,7 +9,7 @@ from app.models.instagram_account import InstagramAccount
 from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.schemas.instagram import InstagramAccountCreate, InstagramAccountResponse
-from app.utils.encryption import encrypt_credentials
+from app.utils.encryption import encrypt_credentials, decrypt_credentials
 from app.services.instagram_client import InstagramClient
 from app.utils.auth import verify_token
 from app.utils.plan_enforcement import check_account_limit
@@ -828,6 +828,154 @@ async def test_instagram_api():
     response = requests.get(url)
     
     return response.json()
+
+
+@router.get("/media")
+async def get_instagram_media(
+    account_id: int = Query(..., description="Instagram account ID"),
+    media_type: str = Query("posts", description="Type of media: posts, stories, reels, live"),
+    limit: int = Query(25, description="Number of items to fetch"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch Instagram media (posts/reels/stories) for a specific account.
+    Returns list of media items with metadata.
+    """
+    try:
+        # Verify account belongs to user
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == account_id,
+            InstagramAccount.user_id == user_id
+        ).first()
+        
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instagram account not found"
+            )
+        
+        # Decrypt access token
+        if account.encrypted_page_token:
+            access_token = decrypt_credentials(account.encrypted_page_token)
+        elif account.encrypted_credentials:
+            access_token = decrypt_credentials(account.encrypted_credentials)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No access token found for this account"
+            )
+        
+        # Get Instagram Business Account ID
+        igsid = account.igsid
+        if not igsid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Instagram Business Account ID not found"
+            )
+        
+        media_items = []
+        
+        if media_type == "posts" or media_type == "reels":
+            # Fetch posts and reels
+            # For Instagram Graph API, we use the media edge
+            url = f"https://graph.instagram.com/v21.0/{igsid}/media"
+            params = {
+                "fields": "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,like_count,comments_count",
+                "limit": limit,
+                "access_token": access_token
+            }
+            
+            response = requests.get(url, params=params)
+            
+            if response.status_code != 200:
+                error_detail = response.text
+                print(f"❌ Failed to fetch media: {error_detail}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to fetch Instagram media: {error_detail}"
+                )
+            
+            data = response.json()
+            media_items = data.get("data", [])
+            
+            # Filter by type if specified
+            if media_type == "reels":
+                # Reels typically have CAROUSEL_ALBUM or VIDEO type
+                media_items = [item for item in media_items if item.get("media_type") in ["VIDEO", "CAROUSEL_ALBUM"]]
+            elif media_type == "posts":
+                # Posts are typically IMAGE or CAROUSEL_ALBUM
+                media_items = [item for item in media_items if item.get("media_type") in ["IMAGE", "CAROUSEL_ALBUM"]]
+        
+        elif media_type == "stories":
+            # Fetch stories (requires stories_read permission and different endpoint)
+            url = f"https://graph.instagram.com/v21.0/{igsid}/stories"
+            params = {
+                "fields": "id,media_type,media_url,timestamp",
+                "limit": limit,
+                "access_token": access_token
+            }
+            
+            response = requests.get(url, params=params)
+            
+            if response.status_code != 200:
+                error_detail = response.text
+                print(f"⚠️ Stories may not be available: {error_detail}")
+                # Stories might not be available, return empty list
+                media_items = []
+            else:
+                data = response.json()
+                media_items = data.get("data", [])
+        
+        elif media_type == "live":
+            # For live videos, we'd need to check live_media endpoint
+            # This is more complex and may require different permissions
+            url = f"https://graph.instagram.com/v21.0/{igsid}/live_media"
+            params = {
+                "fields": "id,media_type,media_url,permalink,timestamp,status",
+                "limit": limit,
+                "access_token": access_token
+            }
+            
+            response = requests.get(url, params=params)
+            
+            if response.status_code != 200:
+                error_detail = response.text
+                print(f"⚠️ Live media may not be available: {error_detail}")
+                media_items = []
+            else:
+                data = response.json()
+                media_items = data.get("data", [])
+        
+        # Format response
+        formatted_media = []
+        for item in media_items:
+            formatted_media.append({
+                "id": item.get("id"),
+                "media_type": item.get("media_type"),  # IMAGE, VIDEO, CAROUSEL_ALBUM
+                "caption": item.get("caption", ""),
+                "media_url": item.get("media_url"),
+                "thumbnail_url": item.get("thumbnail_url"),
+                "permalink": item.get("permalink"),
+                "timestamp": item.get("timestamp"),
+                "like_count": item.get("like_count", 0),
+                "comments_count": item.get("comments_count", 0),
+            })
+        
+        return {
+            "success": True,
+            "media": formatted_media,
+            "count": len(formatted_media)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching Instagram media: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch Instagram media: {str(e)}"
+        )
 
 # @router.get("/test-api")
 # async def test_instagram_api():
