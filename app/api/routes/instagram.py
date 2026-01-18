@@ -904,8 +904,9 @@ async def get_instagram_media(
                 # Reels have media_product_type == "REELS"
                 media_items = [item for item in media_items if item.get("media_product_type") == "REELS"]
             elif media_type == "posts":
-                # Posts have media_product_type == "FEED" or None (legacy posts)
-                media_items = [item for item in media_items if item.get("media_product_type") != "REELS" and item.get("media_product_type") != "STORY"]
+                # Posts/Reels tab: include both FEED (posts) and REELS, but exclude STORY
+                # This allows the "Posts/Reels" tab to show both types of content
+                media_items = [item for item in media_items if item.get("media_product_type") != "STORY"]
         
         elif media_type == "stories":
             # Fetch stories (requires stories_read permission and different endpoint)
