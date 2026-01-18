@@ -258,33 +258,47 @@ async def process_instagram_message(event: dict, db: Session):
         # If keyword rule matches, ONLY trigger that rule, skip new_message rules
         keyword_rule_matched = False
         for rule in keyword_rules:
-            if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").strip().lower()
-                message_text_lower = message_text.strip().lower()
-                # Check if message is EXACTLY the keyword (case-insensitive)
-                if keyword == message_text_lower:
-                    keyword_rule_matched = True
-                    print(f"✅ Keyword '{keyword}' exactly matches message, triggering keyword rule!")
-                    # Check if this rule is already being processed for this message
-                    processing_key = f"{message_id}_{rule.id}"
-                    if processing_key in _processing_rules:
-                        print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
-                        break
-                    # Mark as processing
-                    _processing_rules[processing_key] = True
-                    # Clean cache if too large
-                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
-                        _processing_rules.clear()
-                    # Run in background task to avoid blocking webhook handler
-                    asyncio.create_task(execute_automation_action(
-                        rule,
-                        sender_id,
-                        account,
-                        db,
-                        trigger_type="keyword",
-                        message_id=message_id
-                    ))
-                    break  # Only trigger first matching keyword rule
+            if rule.config:
+                # Check keywords array first (new format), fallback to single keyword (old format)
+                keywords_list = []
+                if rule.config.get("keywords") and isinstance(rule.config.get("keywords"), list):
+                    keywords_list = [str(k).strip().lower() for k in rule.config.get("keywords") if k and str(k).strip()]
+                elif rule.config.get("keyword"):
+                    # Fallback to single keyword for backward compatibility
+                    keywords_list = [str(rule.config.get("keyword", "")).strip().lower()]
+                
+                if keywords_list:
+                    message_text_lower = message_text.strip().lower()
+                    # Check if message is EXACTLY any of the keywords (case-insensitive)
+                    matched_keyword = None
+                    for keyword in keywords_list:
+                        if keyword == message_text_lower:
+                            matched_keyword = keyword
+                            break
+                    
+                    if matched_keyword:
+                        keyword_rule_matched = True
+                        print(f"✅ Keyword '{matched_keyword}' exactly matches message, triggering keyword rule!")
+                        # Check if this rule is already being processed for this message
+                        processing_key = f"{message_id}_{rule.id}"
+                        if processing_key in _processing_rules:
+                            print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
+                            break
+                        # Mark as processing
+                        _processing_rules[processing_key] = True
+                        # Clean cache if too large
+                        if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                            _processing_rules.clear()
+                        # Run in background task to avoid blocking webhook handler
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="keyword",
+                            message_id=message_id
+                        ))
+                        break  # Only trigger first matching keyword rule
         
         # Process new_message rules ONLY if no keyword rule matched
         if not keyword_rule_matched:
@@ -410,33 +424,47 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         # If keyword rule matches, ONLY trigger that rule, skip post_comment rules
         keyword_rule_matched = False
         for rule in keyword_rules:
-            if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").strip().lower()
-                comment_text_lower = comment_text.strip().lower()
-                # Check if comment is EXACTLY the keyword (case-insensitive)
-                if keyword == comment_text_lower:
-                    keyword_rule_matched = True
-                    print(f"✅ Keyword '{keyword}' exactly matches comment, triggering keyword rule!")
-                    # Check if this rule is already being processed for this comment
-                    processing_key = f"{comment_id}_{rule.id}"
-                    if processing_key in _processing_rules:
-                        print(f"🚫 Rule {rule.id} already processing for comment {comment_id}, skipping duplicate")
-                        break
-                    # Mark as processing
-                    _processing_rules[processing_key] = True
-                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
-                        _processing_rules.clear()
-                    # Run in background task
-                    asyncio.create_task(execute_automation_action(
-                        rule,
-                        commenter_id,
-                        account,
-                        db,
-                        trigger_type="keyword",
-                        comment_id=comment_id,
-                        message_id=comment_id  # Use comment_id as identifier
-                    ))
-                    break  # Only trigger first matching keyword rule
+            if rule.config:
+                # Check keywords array first (new format), fallback to single keyword (old format)
+                keywords_list = []
+                if rule.config.get("keywords") and isinstance(rule.config.get("keywords"), list):
+                    keywords_list = [str(k).strip().lower() for k in rule.config.get("keywords") if k and str(k).strip()]
+                elif rule.config.get("keyword"):
+                    # Fallback to single keyword for backward compatibility
+                    keywords_list = [str(rule.config.get("keyword", "")).strip().lower()]
+                
+                if keywords_list:
+                    comment_text_lower = comment_text.strip().lower()
+                    # Check if comment is EXACTLY any of the keywords (case-insensitive)
+                    matched_keyword = None
+                    for keyword in keywords_list:
+                        if keyword == comment_text_lower:
+                            matched_keyword = keyword
+                            break
+                    
+                    if matched_keyword:
+                        keyword_rule_matched = True
+                        print(f"✅ Keyword '{matched_keyword}' exactly matches comment, triggering keyword rule!")
+                        # Check if this rule is already being processed for this comment
+                        processing_key = f"{comment_id}_{rule.id}"
+                        if processing_key in _processing_rules:
+                            print(f"🚫 Rule {rule.id} already processing for comment {comment_id}, skipping duplicate")
+                            break
+                        # Mark as processing
+                        _processing_rules[processing_key] = True
+                        if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                            _processing_rules.clear()
+                        # Run in background task
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            commenter_id,
+                            account,
+                            db,
+                            trigger_type="keyword",
+                            comment_id=comment_id,
+                            message_id=comment_id  # Use comment_id as identifier
+                        ))
+                        break  # Only trigger first matching keyword rule
         
         # Process post_comment rules ONLY if no keyword rule matched
         if not keyword_rule_matched:
@@ -550,33 +578,47 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         # If keyword rule matches, ONLY trigger that rule, skip live_comment rules
         keyword_rule_matched = False
         for rule in keyword_rules:
-            if rule.config and rule.config.get("keyword"):
-                keyword = rule.config.get("keyword", "").strip().lower()
-                comment_text_lower = comment_text.strip().lower()
-                # Check if comment is EXACTLY the keyword (case-insensitive)
-                if keyword == comment_text_lower:
-                    keyword_rule_matched = True
-                    print(f"✅ Keyword '{keyword}' exactly matches live comment, triggering keyword rule!")
-                    # Check if this rule is already being processed for this comment
-                    processing_key = f"{comment_id}_{rule.id}"
-                    if processing_key in _processing_rules:
-                        print(f"🚫 Rule {rule.id} already processing for live comment {comment_id}, skipping duplicate")
-                        break
-                    # Mark as processing
-                    _processing_rules[processing_key] = True
-                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
-                        _processing_rules.clear()
-                    # Run in background task
-                    asyncio.create_task(execute_automation_action(
-                        rule,
-                        commenter_id,
-                        account,
-                        db,
-                        trigger_type="keyword",
-                        comment_id=comment_id,
-                        message_id=comment_id  # Use comment_id as identifier
-                    ))
-                    break  # Only trigger first matching keyword rule
+            if rule.config:
+                # Check keywords array first (new format), fallback to single keyword (old format)
+                keywords_list = []
+                if rule.config.get("keywords") and isinstance(rule.config.get("keywords"), list):
+                    keywords_list = [str(k).strip().lower() for k in rule.config.get("keywords") if k and str(k).strip()]
+                elif rule.config.get("keyword"):
+                    # Fallback to single keyword for backward compatibility
+                    keywords_list = [str(rule.config.get("keyword", "")).strip().lower()]
+                
+                if keywords_list:
+                    comment_text_lower = comment_text.strip().lower()
+                    # Check if comment is EXACTLY any of the keywords (case-insensitive)
+                    matched_keyword = None
+                    for keyword in keywords_list:
+                        if keyword == comment_text_lower:
+                            matched_keyword = keyword
+                            break
+                    
+                    if matched_keyword:
+                        keyword_rule_matched = True
+                        print(f"✅ Keyword '{matched_keyword}' exactly matches live comment, triggering keyword rule!")
+                        # Check if this rule is already being processed for this comment
+                        processing_key = f"{comment_id}_{rule.id}"
+                        if processing_key in _processing_rules:
+                            print(f"🚫 Rule {rule.id} already processing for live comment {comment_id}, skipping duplicate")
+                            break
+                        # Mark as processing
+                        _processing_rules[processing_key] = True
+                        if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                            _processing_rules.clear()
+                        # Run in background task
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            commenter_id,
+                            account,
+                            db,
+                            trigger_type="keyword",
+                            comment_id=comment_id,
+                            message_id=comment_id  # Use comment_id as identifier
+                        ))
+                        break  # Only trigger first matching keyword rule
         
         # Process live_comment rules ONLY if no keyword rule matched
         if not keyword_rule_matched:
