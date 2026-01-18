@@ -881,7 +881,7 @@ async def get_instagram_media(
             # For Instagram Graph API, we use the media edge
             url = f"https://graph.instagram.com/v21.0/{igsid}/media"
             params = {
-                "fields": "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,like_count,comments_count",
+                "fields": "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,like_count,comments_count,media_product_type",
                 "limit": limit,
                 "access_token": access_token
             }
@@ -901,11 +901,11 @@ async def get_instagram_media(
             
             # Filter by type if specified
             if media_type == "reels":
-                # Reels typically have CAROUSEL_ALBUM or VIDEO type
-                media_items = [item for item in media_items if item.get("media_type") in ["VIDEO", "CAROUSEL_ALBUM"]]
+                # Reels have media_product_type == "REELS"
+                media_items = [item for item in media_items if item.get("media_product_type") == "REELS"]
             elif media_type == "posts":
-                # Posts are typically IMAGE or CAROUSEL_ALBUM
-                media_items = [item for item in media_items if item.get("media_type") in ["IMAGE", "CAROUSEL_ALBUM"]]
+                # Posts have media_product_type == "FEED" or None (legacy posts)
+                media_items = [item for item in media_items if item.get("media_product_type") != "REELS" and item.get("media_product_type") != "STORY"]
         
         elif media_type == "stories":
             # Fetch stories (requires stories_read permission and different endpoint)
@@ -953,6 +953,7 @@ async def get_instagram_media(
             formatted_media.append({
                 "id": item.get("id"),
                 "media_type": item.get("media_type"),  # IMAGE, VIDEO, CAROUSEL_ALBUM
+                "media_product_type": item.get("media_product_type"),  # FEED, REELS, STORY, etc.
                 "caption": item.get("caption", ""),
                 "media_url": item.get("media_url"),
                 "thumbnail_url": item.get("thumbnail_url"),
