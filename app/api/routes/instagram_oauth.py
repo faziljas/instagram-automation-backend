@@ -772,47 +772,46 @@ async def exchange_instagram_code(
             print(f"⚠️ Failed to fetch user info: {error_detail}")
             # Continue anyway, we'll use the user_id from token
         
-        # Step 3.5: Get associated Facebook Page ID from Instagram Business Account
-        # Instagram Business Accounts are always connected to a Facebook Page
-        # We need the page_id to send messages via the Graph API
-        # Note: Instagram Business Account tokens can't directly query Facebook Pages
-        # We'll try to get it, but if it fails, the send functions will use me/messages as fallback
-        page_id = None
+        # Step 3.5: Subscribe Instagram Business Account to webhooks
+        # This is CRITICAL - without this, the bot cannot receive messages
+        # We subscribe the Instagram Business Account directly (not the Facebook Page)
+        webhook_subscribe_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
+        webhook_params = {
+            "subscribed_fields": "messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,comments,live_comments"
+        }
+        webhook_headers = {
+            "Authorization": f"Bearer {long_lived_token}"
+        }
+        
+        print(f"🔄 Step 3.5: Subscribing Instagram Business Account to webhooks...")
+        print(f"   Endpoint: {webhook_subscribe_url}")
+        print(f"   Fields: messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,comments,live_comments")
+        
         try:
-            # Try to get the connected Facebook Page using Instagram Graph API
-            # Query: GET /{ig-user-id}?fields=connected_facebook_page
-            instagram_page_url = f"https://graph.instagram.com/{user_id_from_token}"
-            instagram_page_params = {
-                "fields": "connected_facebook_page",
-                "access_token": long_lived_token
-            }
+            webhook_response = requests.post(webhook_subscribe_url, params=webhook_params, headers=webhook_headers)
             
-            print(f"🔄 Step 3.5: Fetching associated Facebook Page ID...")
-            page_response = requests.get(instagram_page_url, params=instagram_page_params)
-            
-            if page_response.status_code == 200:
-                page_data = page_response.json()
-                connected_page = page_data.get("connected_facebook_page")
-                if connected_page and isinstance(connected_page, dict):
-                    page_id = connected_page.get("id")
-                    if page_id:
-                        print(f"✅ Found associated Facebook Page ID: {page_id}")
-                    else:
-                        print(f"⚠️ Connected page data found but no ID: {connected_page}")
-                elif connected_page:
-                    # Sometimes it might be returned as a string ID directly
-                    page_id = str(connected_page)
-                    print(f"✅ Found associated Facebook Page ID (direct): {page_id}")
-                else:
-                    print(f"⚠️ No connected Facebook Page found for Instagram account {user_id_from_token}")
-                    print(f"   This is OK - messages will use me/messages endpoint")
+            if webhook_response.status_code == 200:
+                print(f"✅ Subscribed IG User {user_id_from_token} to Webhooks")
+                webhook_result = webhook_response.json()
+                print(f"   Response: {webhook_result}")
             else:
-                print(f"⚠️ Failed to fetch connected page (status {page_response.status_code}): {page_response.text}")
-                print(f"   This is OK - messages will use me/messages endpoint")
+                error_detail = webhook_response.text
+                print(f"❌ CRITICAL: Webhook subscription failed (status {webhook_response.status_code}): {error_detail}")
+                # Raise exception - without webhooks, the bot cannot receive messages
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to subscribe Instagram account to webhooks. This is required for the bot to receive messages. Error: {error_detail}"
+                )
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"⚠️ Error fetching page_id: {str(e)}")
-            print(f"   This is OK - messages will use me/messages endpoint")
-            # Continue without page_id - send functions will handle it
+            error_msg = str(e)
+            print(f"❌ CRITICAL: Webhook subscription error: {error_msg}")
+            # Raise exception - without webhooks, the bot cannot receive messages
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to subscribe Instagram account to webhooks. This is required for the bot to receive messages. Error: {error_msg}"
+            )
         
         # Step 4: Check account limit BEFORE connecting
         try:
@@ -836,10 +835,6 @@ async def exchange_instagram_code(
                 existing_account.username = instagram_username
             existing_account.igsid = str(user_id_from_token)
             existing_account.encrypted_page_token = encrypt_credentials(long_lived_token)
-            # Update page_id if we found it
-            if page_id:
-                existing_account.page_id = page_id
-                print(f"✅ Updated page_id: {page_id}")
             db.commit()
             account_id = existing_account.id
         else:
@@ -851,7 +846,7 @@ async def exchange_instagram_code(
                 username=username,
                 encrypted_credentials="",  # Legacy field, kept empty
                 encrypted_page_token=encrypt_credentials(long_lived_token),
-                page_id=page_id if page_id else "",  # Store page_id if found, otherwise empty
+                page_id="",  # Not needed for Instagram native OAuth - messages use me/messages endpoint
                 igsid=str(user_id_from_token)
             )
             db.add(new_account)
