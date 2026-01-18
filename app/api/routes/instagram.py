@@ -310,9 +310,9 @@ async def process_instagram_message(event: dict, db: Session):
                     trigger_type="new_message",
                     message_id=message_id
                 ))
-            else:
+        else:
             print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
-                
+        
     except Exception as e:
         print(f"❌ Error processing message: {str(e)}")
         import traceback
@@ -663,7 +663,7 @@ async def execute_automation_action(
                     access_token = decrypt_credentials(account.encrypted_page_token)
                     print(f"✅ Using OAuth page token for sending message")
                 elif account.encrypted_credentials:
-                access_token = decrypt_credentials(account.encrypted_credentials)
+                    access_token = decrypt_credentials(account.encrypted_credentials)
                     print(f"⚠️ Using legacy encrypted credentials")
                 else:
                     raise Exception("No access token found for account")
