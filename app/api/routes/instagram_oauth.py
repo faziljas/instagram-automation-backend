@@ -776,7 +776,10 @@ async def exchange_instagram_code(
         # This is CRITICAL - without this, the bot cannot receive messages
         # We subscribe the Instagram Business Account directly (not the Facebook Page)
         
-        # DEFINITION: A single clean string. No list brackets, no extra quotes.
+        # ------------------------------------------------------------------
+        # CORRECT FORMAT: A single string with comma-separated values.
+        # DO NOT put quotes around the individual words.
+        # ------------------------------------------------------------------
         subscribed_fields = "messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,comments,live_comments"
         
         webhook_subscribe_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
@@ -786,7 +789,7 @@ async def exchange_instagram_code(
         print(f"   Fields: {subscribed_fields}")
         
         try:
-            # API CALL: Pass it exactly like this
+            # Pass it to the API
             webhook_response = requests.post(
                 webhook_subscribe_url,
                 params={
