@@ -776,8 +776,12 @@ async def exchange_instagram_code(
         # This is CRITICAL - without this, the bot cannot receive messages
         # We subscribe the Instagram Business Account directly (not the Facebook Page)
         webhook_subscribe_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
+        
+        # The comma-separated string required by the Graph API
+        subscribed_fields = "messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,comments,live_comments"
+        
         webhook_params = {
-            "subscribed_fields": "messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,comments,live_comments"
+            "subscribed_fields": subscribed_fields
         }
         webhook_headers = {
             "Authorization": f"Bearer {long_lived_token}"
@@ -785,7 +789,7 @@ async def exchange_instagram_code(
         
         print(f"🔄 Step 3.5: Subscribing Instagram Business Account to webhooks...")
         print(f"   Endpoint: {webhook_subscribe_url}")
-        print(f"   Fields: messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,comments,live_comments")
+        print(f"   Fields: {subscribed_fields}")
         
         try:
             webhook_response = requests.post(webhook_subscribe_url, params=webhook_params, headers=webhook_headers)
