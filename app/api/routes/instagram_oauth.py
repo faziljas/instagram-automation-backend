@@ -805,6 +805,31 @@ async def exchange_instagram_code(
                 print(f"✅ Subscribed IG User {user_id_from_token} to Webhooks")
                 webhook_result = webhook_response.json()
                 print(f"   Response: {webhook_result}")
+                
+                # Verify subscription by checking what fields were actually subscribed
+                print(f"🔄 Verifying webhook subscription...")
+                verify_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
+                verify_params = {
+                    "access_token": long_lived_token
+                }
+                verify_response = requests.get(verify_url, params=verify_params)
+                
+                if verify_response.status_code == 200:
+                    verify_result = verify_response.json()
+                    subscribed = verify_result.get("data", [])
+                    if subscribed:
+                        for sub in subscribed:
+                            fields = sub.get("subscribed_fields", [])
+                            print(f"   ✅ Verified: Subscribed fields: {', '.join(fields)}")
+                            if "messages" not in fields:
+                                print(f"   ⚠️ WARNING: 'messages' field is NOT in subscribed fields!")
+                                print(f"   ⚠️ This means new message webhooks will NOT be received!")
+                            else:
+                                print(f"   ✅ 'messages' field is subscribed - new message webhooks should work!")
+                    else:
+                        print(f"   ⚠️ No subscription data found in verification response")
+                else:
+                    print(f"   ⚠️ Could not verify subscription: {verify_response.text}")
             else:
                 error_detail = webhook_response.text
                 print(f"❌ CRITICAL: Webhook subscription failed (status {webhook_response.status_code}): {error_detail}")
