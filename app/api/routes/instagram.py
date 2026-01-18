@@ -104,7 +104,22 @@ async def receive_webhook(
             for entry in body.get("entry", []):
                 # Process messaging events (DMs)
                 for messaging_event in entry.get("messaging", []):
-                    await process_instagram_message(messaging_event, db)
+                    # Check if this is a regular message event (not message_edit, message_reactions, etc.)
+                    # Only process events with a "message" field containing text
+                    if "message" in messaging_event:
+                        await process_instagram_message(messaging_event, db)
+                    else:
+                        # Log other event types (message_edit, message_reactions, etc.) but skip processing
+                        event_type = None
+                        if "message_edit" in messaging_event:
+                            event_type = "message_edit"
+                        elif "message_reactions" in messaging_event:
+                            event_type = "message_reactions"
+                        elif "standby" in messaging_event:
+                            event_type = "standby"
+                        else:
+                            event_type = "unknown"
+                        print(f"⏭️ Skipping {event_type} event (not a regular message)")
                 
                 # Process changes (comments, live comments, etc.)
                 for change in entry.get("changes", []):
@@ -128,6 +143,11 @@ async def receive_webhook(
 async def process_instagram_message(event: dict, db: Session):
     """Process incoming Instagram message and trigger automation rules."""
     try:
+        # Validate that this is a regular message event (not message_edit, etc.)
+        if "message" not in event:
+            print(f"⚠️ Skipping event - no 'message' field found. Event keys: {list(event.keys())}")
+            return
+        
         sender_id = event.get("sender", {}).get("id")
         recipient_id = event.get("recipient", {}).get("id")
         message = event.get("message", {})
@@ -173,9 +193,9 @@ async def process_instagram_message(event: dict, db: Session):
         # Fallback to first active account if IGSID matching fails
         if not account:
             print(f"⚠️ No account found by IGSID, trying fallback...")
-            account = db.query(InstagramAccount).filter(
-                InstagramAccount.is_active == True
-            ).first()
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.is_active == True
+        ).first()
         
         if not account:
             print(f"❌ No active Instagram accounts found")
@@ -290,7 +310,7 @@ async def process_instagram_message(event: dict, db: Session):
                     trigger_type="new_message",
                     message_id=message_id
                 ))
-        else:
+            else:
             print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
                 
     except Exception as e:
@@ -643,7 +663,7 @@ async def execute_automation_action(
                     access_token = decrypt_credentials(account.encrypted_page_token)
                     print(f"✅ Using OAuth page token for sending message")
                 elif account.encrypted_credentials:
-                    access_token = decrypt_credentials(account.encrypted_credentials)
+                access_token = decrypt_credentials(account.encrypted_credentials)
                     print(f"⚠️ Using legacy encrypted credentials")
                 else:
                     raise Exception("No access token found for account")
