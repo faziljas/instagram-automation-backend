@@ -682,10 +682,28 @@ async def execute_automation_action(
                 return  # Don't send DM if limit reached
             
             # Get message template from config
-            message_template = rule.config.get("message_template", "")
+            # Support message_variations for randomization, fallback to message_template
+            message_variations = rule.config.get("message_variations", [])
+            if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
+                # Randomly select one message from variations
+                import random
+                message_template = random.choice([m for m in message_variations if m and str(m).strip()])
+                print(f"🎲 Randomly selected message from {len(message_variations)} variations")
+            else:
+                message_template = rule.config.get("message_template", "")
+            
             if not message_template:
                 print("⚠️ No message template configured")
                 return
+            
+            # Prepend "Hi there!" to all DM messages
+            # Only add if not already present (case-insensitive check)
+            message_lower = str(message_template).lower().strip()
+            if not message_lower.startswith("hi there"):
+                message_template = f"Hi there!\n\n{message_template}"
+                print(f"✅ Prefixed 'Hi there!' to message")
+            else:
+                print(f"ℹ️ Message already starts with 'Hi there!' or similar, skipping prefix")
             
             # Apply delay if configured (delay is in minutes, convert to seconds)
             delay_minutes = rule.config.get("delay_minutes", 0)
