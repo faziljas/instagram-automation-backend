@@ -779,8 +779,11 @@ async def exchange_instagram_code(
         # ------------------------------------------------------------------
         # CORRECT FORMAT: A single string with comma-separated values.
         # DO NOT put quotes around the individual words.
+        # Valid fields: messages, messaging_postbacks, messaging_optins, 
+        # message_reactions, message_edit, standby, comments, live_comments, mentions
+        # NOTE: message_deliveries and message_reads are NOT valid fields!
         # ------------------------------------------------------------------
-        subscribed_fields = "messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,comments,live_comments"
+        subscribed_fields = "messages,messaging_postbacks,messaging_optins,message_reactions,message_edit,standby,comments,live_comments"
         
         webhook_subscribe_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
         
