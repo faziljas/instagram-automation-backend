@@ -696,15 +696,6 @@ async def execute_automation_action(
                 print("⚠️ No message template configured")
                 return
             
-            # Prepend "Hi there!" to all DM messages
-            # Only add if not already present (case-insensitive check)
-            message_lower = str(message_template).lower().strip()
-            if not message_lower.startswith("hi there"):
-                message_template = f"Hi there!\n\n{message_template}"
-                print(f"✅ Prefixed 'Hi there!' to message")
-            else:
-                print(f"ℹ️ Message already starts with 'Hi there!' or similar, skipping prefix")
-            
             # Apply delay if configured (delay is in minutes, convert to seconds)
             delay_minutes = rule.config.get("delay_minutes", 0)
             if delay_minutes and delay_minutes > 0:
