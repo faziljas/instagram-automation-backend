@@ -648,21 +648,25 @@ async def execute_automation_action(
                 else:
                     raise Exception("No access token found for account")
                 
-                if not account.page_id:
-                    raise Exception("Page ID not found. Account may not be properly connected via OAuth.")
-                
                 # Use appropriate endpoint based on trigger type
                 # For comments, use private_replies endpoint (no 24h window restriction)
                 # For messages/DMs, use standard messages endpoint
                 if trigger_type in ["post_comment", "live_comment"] and comment_id:
                     # Send private reply to comment using Instagram private reply format
+                    # send_private_reply supports page_id=None (uses me/messages)
                     print(f"💬 Sending private reply to comment: Comment ID={comment_id}")
-                    send_private_reply(comment_id, message_template, access_token, account.page_id)
+                    page_id_for_reply = account.page_id if account.page_id else None
+                    send_private_reply(comment_id, message_template, access_token, page_id_for_reply)
                     print(f"✅ Private reply sent to comment {comment_id}")
                 else:
                     # Send standard DM
-                    print(f"📤 Sending DM via Page API: Page ID={account.page_id}, Recipient={sender_id}")
-                    send_dm_api(sender_id, message_template, account.page_id, access_token)
+                    # send_dm now supports page_id=None (uses me/messages)
+                    page_id_for_dm = account.page_id if account.page_id else None
+                    if page_id_for_dm:
+                        print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
+                    else:
+                        print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
+                    send_dm_api(sender_id, message_template, access_token, page_id_for_dm)
                     print(f"✅ DM sent to {sender_id}")
                 
                 # Log the DM

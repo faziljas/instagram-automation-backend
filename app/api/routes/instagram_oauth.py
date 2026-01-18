@@ -743,7 +743,7 @@ async def exchange_instagram_code(
             else:
                 print(f"✅ Step 2 complete: Got long-lived token (expires in {expires_in} seconds ~{expires_in // 86400} days)")
         
-        # Step 3: Get Instagram user info
+        # Step 3: Get Instagram user info and associated Facebook Page
         user_info_url = f"https://graph.instagram.com/{user_id_from_token}"
         user_info_params = {
             "fields": "id,username,account_type",
@@ -772,6 +772,48 @@ async def exchange_instagram_code(
             print(f"⚠️ Failed to fetch user info: {error_detail}")
             # Continue anyway, we'll use the user_id from token
         
+        # Step 3.5: Get associated Facebook Page ID from Instagram Business Account
+        # Instagram Business Accounts are always connected to a Facebook Page
+        # We need the page_id to send messages via the Graph API
+        # Note: Instagram Business Account tokens can't directly query Facebook Pages
+        # We'll try to get it, but if it fails, the send functions will use me/messages as fallback
+        page_id = None
+        try:
+            # Try to get the connected Facebook Page using Instagram Graph API
+            # Query: GET /{ig-user-id}?fields=connected_facebook_page
+            instagram_page_url = f"https://graph.instagram.com/{user_id_from_token}"
+            instagram_page_params = {
+                "fields": "connected_facebook_page",
+                "access_token": long_lived_token
+            }
+            
+            print(f"🔄 Step 3.5: Fetching associated Facebook Page ID...")
+            page_response = requests.get(instagram_page_url, params=instagram_page_params)
+            
+            if page_response.status_code == 200:
+                page_data = page_response.json()
+                connected_page = page_data.get("connected_facebook_page")
+                if connected_page and isinstance(connected_page, dict):
+                    page_id = connected_page.get("id")
+                    if page_id:
+                        print(f"✅ Found associated Facebook Page ID: {page_id}")
+                    else:
+                        print(f"⚠️ Connected page data found but no ID: {connected_page}")
+                elif connected_page:
+                    # Sometimes it might be returned as a string ID directly
+                    page_id = str(connected_page)
+                    print(f"✅ Found associated Facebook Page ID (direct): {page_id}")
+                else:
+                    print(f"⚠️ No connected Facebook Page found for Instagram account {user_id_from_token}")
+                    print(f"   This is OK - messages will use me/messages endpoint")
+            else:
+                print(f"⚠️ Failed to fetch connected page (status {page_response.status_code}): {page_response.text}")
+                print(f"   This is OK - messages will use me/messages endpoint")
+        except Exception as e:
+            print(f"⚠️ Error fetching page_id: {str(e)}")
+            print(f"   This is OK - messages will use me/messages endpoint")
+            # Continue without page_id - send functions will handle it
+        
         # Step 4: Check account limit BEFORE connecting
         try:
             check_account_limit(user_id, db)
@@ -794,6 +836,10 @@ async def exchange_instagram_code(
                 existing_account.username = instagram_username
             existing_account.igsid = str(user_id_from_token)
             existing_account.encrypted_page_token = encrypt_credentials(long_lived_token)
+            # Update page_id if we found it
+            if page_id:
+                existing_account.page_id = page_id
+                print(f"✅ Updated page_id: {page_id}")
             db.commit()
             account_id = existing_account.id
         else:
@@ -805,7 +851,7 @@ async def exchange_instagram_code(
                 username=username,
                 encrypted_credentials="",  # Legacy field, kept empty
                 encrypted_page_token=encrypt_credentials(long_lived_token),
-                page_id="",  # Not applicable for native Instagram OAuth
+                page_id=page_id if page_id else "",  # Store page_id if found, otherwise empty
                 igsid=str(user_id_from_token)
             )
             db.add(new_account)
