@@ -913,51 +913,80 @@ async def exchange_instagram_code(
             print(f"❌ Account limit check failed: {e.detail}")
             raise
         
-        # Step 5: Save or update Instagram account
+        # Step 5: Check if account already exists and handle gracefully
         # Note: For Instagram native OAuth, we store the token directly
         # The user_id_from_token is the Instagram Business Account ID
-        existing_account = db.query(InstagramAccount).filter(
+        username = instagram_username or f"instagram_{user_id_from_token}"
+        
+        # Check if this Instagram account is already connected to the same user
+        existing_account_same_user = db.query(InstagramAccount).filter(
             InstagramAccount.user_id == user_id,
             InstagramAccount.igsid == str(user_id_from_token)
         ).first()
         
-        if existing_account:
-            # Update existing account
-            print(f"📝 Updating existing account: {instagram_username or user_id_from_token}")
+        if existing_account_same_user:
+            # Account already connected to this user - update token and return success message
+            print(f"📝 Account already connected to this user. Updating token...")
             if instagram_username:
-                existing_account.username = instagram_username
-            existing_account.igsid = str(user_id_from_token)
-            existing_account.encrypted_page_token = encrypt_credentials(long_lived_token)
+                existing_account_same_user.username = instagram_username
+            existing_account_same_user.encrypted_page_token = encrypt_credentials(long_lived_token)
+            existing_account_same_user.is_active = True  # Ensure it's active
             db.commit()
-            account_id = existing_account.id
-        else:
-            # Create new account
-            username = instagram_username or f"instagram_{user_id_from_token}"
-            print(f"✨ Creating new account: {username}")
-            new_account = InstagramAccount(
-                user_id=user_id,
-                username=username,
-                encrypted_credentials="",  # Legacy field, kept empty
-                encrypted_page_token=encrypt_credentials(long_lived_token),
-                page_id="",  # Not needed for Instagram native OAuth - messages use me/messages endpoint
-                igsid=str(user_id_from_token)
-            )
-            db.add(new_account)
-            db.commit()
-            db.refresh(new_account)
-            account_id = new_account.id
-            username = new_account.username
+            
+            print(f"✅ Instagram account {existing_account_same_user.username} reconnected successfully for user {user_id}!")
+            
+            return {
+                "success": True,
+                "already_connected": True,
+                "account": {
+                    "id": existing_account_same_user.id,
+                    "username": existing_account_same_user.username,
+                    "igsid": str(user_id_from_token),
+                    "is_active": True
+                },
+                "message": f"Instagram account @{existing_account_same_user.username} is already connected. Token has been refreshed."
+            }
         
-        print(f"✅ Instagram account {username} connected successfully for user {user_id}!")
+        # Check if this Instagram account is already connected to a different user
+        existing_account_other_user = db.query(InstagramAccount).filter(
+            InstagramAccount.igsid == str(user_id_from_token),
+            InstagramAccount.user_id != user_id
+        ).first()
+        
+        if existing_account_other_user:
+            # Account already connected to a different user - return graceful error
+            print(f"⚠️ Instagram account {user_id_from_token} is already connected to a different user")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"This Instagram account is already connected to another user. Please disconnect it from the other account first, or use a different Instagram account."
+            )
+        
+        # Account doesn't exist - create new account
+        print(f"✨ Creating new account: {username}")
+        new_account = InstagramAccount(
+            user_id=user_id,
+            username=username,
+            encrypted_credentials="",  # Legacy field, kept empty
+            encrypted_page_token=encrypt_credentials(long_lived_token),
+            page_id="",  # Not needed for Instagram native OAuth - messages use me/messages endpoint
+            igsid=str(user_id_from_token)
+        )
+        db.add(new_account)
+        db.commit()
+        db.refresh(new_account)
+        
+        print(f"✅ Instagram account {new_account.username} connected successfully for user {user_id}!")
         
         return {
             "success": True,
+            "already_connected": False,
             "account": {
-                "id": account_id,
-                "username": instagram_username or f"instagram_{user_id_from_token}",
+                "id": new_account.id,
+                "username": new_account.username,
                 "igsid": str(user_id_from_token),
                 "is_active": True
-            }
+            },
+            "message": f"Instagram account @{new_account.username} connected successfully!"
         }
         
     except HTTPException:
