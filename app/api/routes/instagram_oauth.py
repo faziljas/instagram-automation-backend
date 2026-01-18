@@ -853,6 +853,7 @@ async def exchange_instagram_code(
             db.commit()
             db.refresh(new_account)
             account_id = new_account.id
+            username = new_account.username
         
         print(f"✅ Instagram account {username} connected successfully for user {user_id}!")
         
