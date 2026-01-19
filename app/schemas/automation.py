@@ -26,6 +26,7 @@ class AutomationRuleResponse(BaseModel):
     trigger_type: str
     action_type: str
     config: Dict[str, Any]
+    media_id: str | None = None  # Instagram media ID (post/reel/story) this rule is tied to
     is_active: bool
     created_at: datetime
 
