@@ -253,7 +253,10 @@ async def process_instagram_message(event: dict, db: Session):
             AutomationRule.is_active == True
         ).all()
         
-        # Filter keyword rules - if story_id is present, only match rules for that story
+        # Filter keyword rules for DMs
+        # For story DMs: match rules specifically for that story OR global rules (no media_id)
+        # For regular DMs: only match global rules (no media_id)
+        from sqlalchemy import or_
         keyword_rules_query = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
             AutomationRule.trigger_type == "keyword",
@@ -261,11 +264,14 @@ async def process_instagram_message(event: dict, db: Session):
         )
         
         if story_id:
-            # For story DMs, only match keyword rules set up for this specific story
+            # For story DMs, match rules set up for this specific story OR global rules (no media_id)
             keyword_rules_query = keyword_rules_query.filter(
-                AutomationRule.media_id == story_id
+                or_(
+                    AutomationRule.media_id == story_id,
+                    AutomationRule.media_id.is_(None)  # Also include global keyword rules
+                )
             )
-            print(f"🔍 Filtering keyword rules by story_id: {story_id}")
+            print(f"🔍 Filtering keyword rules for story_id: {story_id} (including global rules)")
         else:
             # For regular DMs, only match keyword rules without media_id (global DM rules)
             keyword_rules_query = keyword_rules_query.filter(
