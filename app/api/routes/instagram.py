@@ -428,18 +428,49 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         # We need to check BOTH:
         # 1. Rules with trigger_type='post_comment' (with optional keyword filtering)
         # 2. Rules with trigger_type='keyword' (if keyword matches comment text)
+        # CRITICAL: Filter by media_id to only trigger rules for the specific post/reel
         from app.models.automation_rule import AutomationRule
-        post_comment_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id == account.id,
-            AutomationRule.trigger_type == "post_comment",
-            AutomationRule.is_active == True
-        ).all()
+        from sqlalchemy import or_
         
-        keyword_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id == account.id,
-            AutomationRule.trigger_type == "keyword",
-            AutomationRule.is_active == True
-        ).all()
+        # Convert media_id to string for comparison (both stored and incoming are strings)
+        media_id_str = str(media_id) if media_id else None
+        
+        print(f"🔍 Filtering rules by media_id: {media_id_str}")
+        
+        # CRITICAL: Only trigger rules that match the specific media_id
+        # Rules with media_id set should ONLY work on that specific post/reel
+        # For strict matching: only include rules where media_id exactly matches
+        if media_id_str:
+            post_comment_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "post_comment",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id == media_id_str  # Strict match: only rules for this specific media
+            ).all()
+            
+            keyword_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "keyword",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id == media_id_str  # Strict match: only rules for this specific media
+            ).all()
+        else:
+            # If media_id is not provided in webhook, fallback to rules without media_id (backward compatibility)
+            post_comment_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "post_comment",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id.is_(None)
+            ).all()
+            
+            keyword_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "keyword",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id.is_(None)
+            ).all()
+        
+        print(f"📋 After media_id filtering: Found {len(post_comment_rules)} 'post_comment' rules and {len(keyword_rules)} 'keyword' rules for media_id {media_id_str}")
         
         print(f"📋 Found {len(post_comment_rules)} 'post_comment' rules and {len(keyword_rules)} 'keyword' rules for account '{account.username}' (ID: {account.id})")
         
@@ -453,7 +484,8 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
             ).all()
             print(f"   - Account: {acc.username} (ID: {acc.id})")
             for rule in acc_rules:
-                print(f"     Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}")
+                media_info = f" | Media ID: {rule.media_id}" if rule.media_id else " | Media ID: None (global)"
+                print(f"     Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}{media_info}")
         
         # First, check if any keyword rule matches (exact match only)
         # If keyword rule matches, ONLY trigger that rule, skip post_comment rules
@@ -629,18 +661,46 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         # We need to check BOTH:
         # 1. Rules with trigger_type='live_comment' (with optional keyword filtering)
         # 2. Rules with trigger_type='keyword' (if keyword matches comment text)
+        # CRITICAL: Filter by live_video_id to only trigger rules for the specific live video
         from app.models.automation_rule import AutomationRule
-        live_comment_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id == account.id,
-            AutomationRule.trigger_type == "live_comment",
-            AutomationRule.is_active == True
-        ).all()
         
-        keyword_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id == account.id,
-            AutomationRule.trigger_type == "keyword",
-            AutomationRule.is_active == True
-        ).all()
+        # Use live_video_id as media_id for filtering (live videos are also media)
+        live_video_id_str = str(live_video_id) if live_video_id else None
+        
+        print(f"🔍 Filtering live comment rules by live_video_id: {live_video_id_str}")
+        
+        # CRITICAL: Only trigger rules that match the specific live_video_id
+        if live_video_id_str:
+            live_comment_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "live_comment",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id == live_video_id_str  # Strict match: only rules for this specific live video
+            ).all()
+            
+            keyword_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "keyword",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id == live_video_id_str  # Strict match: only rules for this specific live video
+            ).all()
+        else:
+            # If live_video_id is not provided, fallback to rules without media_id (backward compatibility)
+            live_comment_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "live_comment",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id.is_(None)
+            ).all()
+            
+            keyword_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "keyword",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id.is_(None)
+            ).all()
+        
+        print(f"📋 After live_video_id filtering: Found {len(live_comment_rules)} 'live_comment' rules and {len(keyword_rules)} 'keyword' rules for live_video_id {live_video_id_str}")
         
         print(f"📋 Found {len(live_comment_rules)} 'live_comment' rules and {len(keyword_rules)} 'keyword' rules for this account")
         
