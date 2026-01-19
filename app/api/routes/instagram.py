@@ -732,10 +732,10 @@ async def execute_automation_action(
                             # Randomly select one comment reply
                             import random
                             selected_reply = random.choice(valid_replies)
-                            print(f"💬 Auto-reply enabled: Sending comment reply (selected from {len(valid_replies)} variations)")
-                            page_id_for_reply = account.page_id if account.page_id else None
-                            send_private_reply(comment_id, selected_reply, access_token, page_id_for_reply)
-                            print(f"✅ Comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
+                            print(f"💬 Auto-reply enabled: Sending PUBLIC comment reply (selected from {len(valid_replies)} variations)")
+                            from app.utils.instagram_api import send_public_comment_reply
+                            send_public_comment_reply(comment_id, selected_reply, access_token)
+                            print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
                     
                     # Always send DM for post_comment/live_comment triggers (if message is configured)
                     if message_template:
