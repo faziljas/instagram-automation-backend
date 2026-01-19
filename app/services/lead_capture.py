@@ -119,7 +119,7 @@ def process_lead_capture_step(
                     email=lead_data.get("email"),
                     phone=lead_data.get("phone"),
                     custom_fields=lead_data.get("custom_fields"),
-                    metadata={
+                    extra_metadata={
                         "sender_id": sender_id,
                         "captured_via": "dm_automation",
                         "timestamp": datetime.utcnow().isoformat()

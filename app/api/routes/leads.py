@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.captured_lead import CapturedLead
 from app.models.automation_rule import AutomationRule
 from app.models.instagram_account import InstagramAccount
-from app.utils.auth import get_current_user_id
+from app.api.routes.automation import get_current_user_id
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -24,7 +24,7 @@ class CapturedLeadResponse(BaseModel):
     phone: str | None
     name: str | None
     custom_fields: dict | None
-    metadata: dict | None
+    extra_metadata: dict | None
     captured_at: datetime
     notified: bool
     exported: bool

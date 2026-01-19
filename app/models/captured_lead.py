@@ -19,7 +19,7 @@ class CapturedLead(Base):
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
     custom_fields = Column(JSON, nullable=True)  # For custom field data (e.g., {"company": "Acme Inc"})
-    metadata = Column(JSON, nullable=True)  # Additional data (IP, user agent, conversation context, etc.)
+    extra_metadata = Column(JSON, nullable=True)  # Additional data (IP, user agent, conversation context, etc.) - renamed from 'metadata' to avoid SQLAlchemy conflict
     
     # Status flags
     captured_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

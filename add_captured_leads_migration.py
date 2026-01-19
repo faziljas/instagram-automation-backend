@@ -20,7 +20,7 @@ class CapturedLead(Base):
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
     custom_fields = Column(JSON, nullable=True)  # For custom field data
-    metadata = Column(JSON, nullable=True)  # Additional data (IP, user agent, etc.)
+    extra_metadata = Column(JSON, nullable=True)  # Additional data (IP, user agent, etc.) - renamed from 'metadata' to avoid SQLAlchemy conflict
     captured_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     notified = Column(Boolean, default=False)
     exported = Column(Boolean, default=False)
