@@ -527,7 +527,8 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                             db,
                             trigger_type="keyword",
                             comment_id=comment_id,
-                            message_id=comment_id  # Use comment_id as identifier
+                            message_id=comment_id,  # Use comment_id as identifier
+                            media_id=media_id_str
                         ))
                         break  # Only trigger first matching keyword rule
         
@@ -553,7 +554,8 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                     db,
                     trigger_type="post_comment",
                     comment_id=comment_id,
-                    message_id=comment_id  # Use comment_id as identifier
+                    message_id=comment_id,  # Use comment_id as identifier
+                    media_id=media_id_str
                 ))
         else:
             print(f"⏭️ Skipping 'post_comment' rules because keyword rule matched")
@@ -787,7 +789,8 @@ async def execute_automation_action(
     db: Session,
     trigger_type: str = None,
     comment_id: str = None,
-        message_id: str = None
+    message_id: str = None,
+    media_id: str = None
 ):
     """
     Execute the automation action defined in the rule.
@@ -853,6 +856,14 @@ async def execute_automation_action(
                 auto_reply_to_comments = rule.config.get("auto_reply_to_comments", False)
                 comment_replies = rule.config.get("comment_replies", [])
                 
+                # Check if this is a story comment (if media_id matches a story)
+                is_story_comment = False
+                if media_id and rule.media_id:
+                    # Try to determine if this is a story by checking the media
+                    # Stories have media_product_type == "STORY" but we might not have that info here
+                    # For now, we'll attempt the reply and catch any errors
+                    print(f"📝 Media ID: {media_id}, Rule Media ID: {rule.media_id}")
+                
                 # If we have a comment_id and auto-reply is enabled, send public comment reply
                 if comment_id and auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
                     # Filter out empty replies
@@ -862,17 +873,24 @@ async def execute_automation_action(
                         import random
                         selected_reply = random.choice(valid_replies)
                         print(f"💬 Auto-reply enabled: Sending PUBLIC comment reply (selected from {len(valid_replies)} variations)")
-                        print(f"   Trigger type: {trigger_type}, Comment ID: {comment_id}")
+                        print(f"   Trigger type: {trigger_type}, Comment ID: {comment_id}, Media ID: {media_id}")
                         try:
                             from app.utils.instagram_api import send_public_comment_reply
                             # Use Instagram Business Account token (already have it as access_token)
-                            # Instagram Graph API supports public comment replies on your own content
+                            # Note: Instagram Graph API may not support public comment replies on Stories yet
+                            # This will attempt to send and log errors if it fails
                             send_public_comment_reply(comment_id, selected_reply, access_token)
                             print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
                         except Exception as reply_error:
-                            print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
-                            print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
-                            print(f"   comment ID format, or the comment is not on your own content.")
+                            error_msg = str(reply_error)
+                            print(f"⚠️ Failed to send public comment reply: {error_msg}")
+                            # Check if this is specifically a story comment issue
+                            if "story" in error_msg.lower() or "unsupported" in error_msg.lower():
+                                print(f"   ⚠️ NOTE: Instagram Graph API may not support public comment replies on Stories yet.")
+                                print(f"   Story comments are a newer feature and API support may be limited.")
+                            else:
+                                print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
+                                print(f"   comment ID format, or the comment is not on your own content.")
                             print(f"   Continuing with DM send...")
                             # Continue to send DM even if public reply fails
                 
