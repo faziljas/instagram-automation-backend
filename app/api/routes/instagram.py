@@ -400,16 +400,29 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         
         # Check if commenter matches the account owner (by ID or username)
         is_bot_own_comment = False
-        if commenter_id_str and (commenter_id_str == account_igsid_str or commenter_id_str == igsid_str):
+        match_reason = None
+        
+        # Check by ID: commenter ID matches webhook entry ID (account's IGSID) or stored account IGSID
+        if commenter_id_str and commenter_id_str == igsid_str:
             is_bot_own_comment = True
-            print(f"🚫 Ignoring bot's own comment/reply: Commenter ID {commenter_id_str} matches account IGSID {account_igsid_str or igsid_str}")
+            match_reason = f"Commenter ID {commenter_id_str} matches webhook entry IGSID {igsid_str}"
+        elif commenter_id_str and account_igsid_str and commenter_id_str == account_igsid_str:
+            is_bot_own_comment = True
+            match_reason = f"Commenter ID {commenter_id_str} matches stored account IGSID {account_igsid_str}"
+        # Check by username (case-insensitive)
         elif commenter_username_lower and account_username_lower and commenter_username_lower == account_username_lower:
             is_bot_own_comment = True
-            print(f"🚫 Ignoring bot's own comment/reply: Commenter username @{commenter_username} matches account username @{account.username}")
+            match_reason = f"Commenter username @{commenter_username} matches account username @{account.username}"
         
         if is_bot_own_comment:
+            print(f"🚫 Ignoring bot's own comment/reply: {match_reason}")
             print(f"   This prevents infinite loops when the bot replies to comments")
             return
+        
+        # Debug: Show comparison values
+        print(f"✅ Processing comment from external user:")
+        print(f"   Commenter ID: {commenter_id_str}, Username: @{commenter_username}")
+        print(f"   Account IGSID (stored): {account_igsid_str}, Webhook IGSID: {igsid_str}, Username: @{account.username}")
         
         # Find active automation rules for comments
         # We need to check BOTH:
@@ -588,16 +601,29 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         
         # Check if commenter matches the account owner (by ID or username)
         is_bot_own_comment = False
-        if commenter_id_str and (commenter_id_str == account_igsid_str or commenter_id_str == igsid_str):
+        match_reason = None
+        
+        # Check by ID: commenter ID matches webhook entry ID (account's IGSID) or stored account IGSID
+        if commenter_id_str and commenter_id_str == igsid_str:
             is_bot_own_comment = True
-            print(f"🚫 Ignoring bot's own live comment/reply: Commenter ID {commenter_id_str} matches account IGSID {account_igsid_str or igsid_str}")
+            match_reason = f"Commenter ID {commenter_id_str} matches webhook entry IGSID {igsid_str}"
+        elif commenter_id_str and account_igsid_str and commenter_id_str == account_igsid_str:
+            is_bot_own_comment = True
+            match_reason = f"Commenter ID {commenter_id_str} matches stored account IGSID {account_igsid_str}"
+        # Check by username (case-insensitive)
         elif commenter_username_lower and account_username_lower and commenter_username_lower == account_username_lower:
             is_bot_own_comment = True
-            print(f"🚫 Ignoring bot's own live comment/reply: Commenter username @{commenter_username} matches account username @{account.username}")
+            match_reason = f"Commenter username @{commenter_username} matches account username @{account.username}"
         
         if is_bot_own_comment:
+            print(f"🚫 Ignoring bot's own live comment/reply: {match_reason}")
             print(f"   This prevents infinite loops when the bot replies to live comments")
             return
+        
+        # Debug: Show comparison values
+        print(f"✅ Processing live comment from external user:")
+        print(f"   Commenter ID: {commenter_id_str}, Username: @{commenter_username}")
+        print(f"   Account IGSID (stored): {account_igsid_str}, Webhook IGSID: {igsid_str}, Username: @{account.username}")
         
         # Find active automation rules for live comments
         # We need to check BOTH:
