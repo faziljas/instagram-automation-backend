@@ -472,8 +472,6 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         
         print(f"📋 After media_id filtering: Found {len(post_comment_rules)} 'post_comment' rules and {len(keyword_rules)} 'keyword' rules for media_id {media_id_str}")
         
-        print(f"📋 Found {len(post_comment_rules)} 'post_comment' rules and {len(keyword_rules)} 'keyword' rules for account '{account.username}' (ID: {account.id})")
-        
         # DEBUG: Show all accounts and all rules for troubleshooting
         all_accounts = db.query(InstagramAccount).filter(InstagramAccount.is_active == True).all()
         print(f"🔍 DEBUG: All active Instagram accounts:")
