@@ -3,7 +3,7 @@ Lead Capture Service
 Handles multi-step lead capture flows for automation rules.
 """
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models.automation_rule import AutomationRule
@@ -12,18 +12,103 @@ from app.models.automation_rule_stats import AutomationRuleStats
 from app.models.instagram_account import InstagramAccount
 
 
-def validate_email(email: str) -> bool:
-    """Validate email format"""
+def validate_email(email: str) -> Tuple[bool, str]:
+    """
+    Validate email format with strict rules.
+    Returns: (is_valid: bool, error_message: str)
+    """
+    if not email or not email.strip():
+        return False, "Email cannot be empty."
+    
+    email = email.strip().lower()
+    
+    # Basic format check
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return bool(re.match(pattern, email))
+    if not re.match(pattern, email):
+        return False, "Please enter a valid email address (e.g., example@domain.com)"
+    
+    # Check for common mistakes
+    if email.startswith('.') or email.startswith('@'):
+        return False, "Email cannot start with a dot or @ symbol."
+    
+    if email.count('@') != 1:
+        return False, "Email must contain exactly one @ symbol."
+    
+    if '..' in email:
+        return False, "Email cannot contain consecutive dots."
+    
+    # Check domain part
+    local_part, domain = email.split('@')
+    if len(local_part) < 1:
+        return False, "Email must have a local part before @."
+    
+    if len(domain) < 4:  # x.co (minimum)
+        return False, "Email domain is too short."
+    
+    if not '.' in domain:
+        return False, "Email domain must contain a dot (e.g., gmail.com)."
+    
+    # Check TLD (top-level domain)
+    tld = domain.split('.')[-1]
+    if len(tld) < 2:
+        return False, "Email must have a valid domain extension (e.g., .com, .org)."
+    
+    # Reject obviously fake emails
+    fake_patterns = [
+        r'test@test\.com',
+        r'abc@abc\.com',
+        r'123@123\.com',
+        r'fake@fake\.com',
+        r'example@example\.com',
+    ]
+    for pattern in fake_patterns:
+        if re.match(pattern, email):
+            return False, "Please enter a real email address."
+    
+    return True, ""
 
 
-def validate_phone(phone: str) -> bool:
-    """Validate phone format (basic validation)"""
-    # Remove common characters
-    cleaned = re.sub(r'[\s\-\(\)\+]', '', phone)
-    # Check if it's all digits and has reasonable length
-    return cleaned.isdigit() and 10 <= len(cleaned) <= 15
+def validate_phone(phone: str) -> Tuple[bool, str]:
+    """
+    Validate phone number format (international support).
+    Returns: (is_valid: bool, error_message: str)
+    """
+    if not phone or not phone.strip():
+        return False, "Phone number cannot be empty."
+    
+    # Remove common formatting characters
+    cleaned = re.sub(r'[\s\-\(\)\+\.]', '', phone.strip())
+    
+    # Must contain only digits (after cleaning)
+    if not cleaned.isdigit():
+        return False, "Phone number can only contain digits, spaces, dashes, and parentheses."
+    
+    # Length validation (international: 10-15 digits)
+    if len(cleaned) < 10:
+        return False, "Phone number is too short. Please include area code (minimum 10 digits)."
+    
+    if len(cleaned) > 15:
+        return False, "Phone number is too long (maximum 15 digits)."
+    
+    # Reject obviously fake numbers
+    # All same digits (e.g., 1111111111, 0000000000)
+    if len(set(cleaned)) <= 2:
+        return False, "This doesn't look like a valid phone number. Please check and try again."
+    
+    # Sequential patterns (e.g., 1234567890, 9876543210)
+    if cleaned in ['1234567890', '9876543210', '0123456789']:
+        return False, "Please enter a real phone number."
+    
+    # Check for common invalid patterns
+    invalid_patterns = [
+        '123456789', '987654321', '000000000', '111111111',
+        '222222222', '333333333', '444444444', '555555555',
+        '666666666', '777777777', '888888888', '999999999'
+    ]
+    if cleaned in invalid_patterns:
+        return False, "Please enter a real phone number."
+    
+    return True, ""
 
 
 def get_current_flow_step(rule: AutomationRule, user_id: str) -> Optional[Dict[str, Any]]:
@@ -75,20 +160,31 @@ def process_lead_capture_step(
         
         # Validate user input
         is_valid = False
+        error_message = ""
+        
         if field_type == "email" or validation == "email":
-            is_valid = validate_email(user_message.strip())
+            is_valid, error_message = validate_email(user_message.strip())
         elif field_type == "phone" or validation == "phone":
-            is_valid = validate_phone(user_message.strip())
+            is_valid, error_message = validate_phone(user_message.strip())
         else:
             # For text/custom fields, accept any non-empty input
-            is_valid = len(user_message.strip()) > 0
+            if len(user_message.strip()) > 0:
+                is_valid = True
+            else:
+                is_valid = False
+                error_message = "Please provide a response."
         
         if not is_valid:
-            # Return error message asking for valid input
+            # Return helpful error message asking for valid input
+            # Combine the original question with validation error
+            original_question = ask_step.get("text", "Please provide your information.")
+            error_response = f"{error_message}\n\n{original_question}"
+            
             return {
                 "action": "ask",
-                "message": ask_step.get("text", "Please provide a valid response."),
-                "saved_lead": None
+                "message": error_response,
+                "saved_lead": None,
+                "validation_failed": True
             }
         
         # Input is valid, proceed to save step
