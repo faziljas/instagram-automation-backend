@@ -1044,8 +1044,15 @@ async def get_instagram_media(
     """
     Fetch Instagram media (posts/reels/stories) for a specific account.
     Returns list of media items with metadata.
+    
+    Note: Stories, DMs, and IG Live require Pro plan or higher.
     """
     try:
+        # Check Pro plan access for Stories, DMs, and IG Live
+        if media_type in ["stories", "live"]:
+            from app.utils.plan_enforcement import check_pro_plan_access
+            check_pro_plan_access(user_id, db)
+        
         # Verify account belongs to user
         account = db.query(InstagramAccount).filter(
             InstagramAccount.id == account_id,

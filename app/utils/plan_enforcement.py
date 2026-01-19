@@ -132,3 +132,36 @@ def get_remaining_dms(user_id: int, db: Session) -> int:
     ).count()
 
     return max(0, max_dms - dms_this_month)
+
+
+def check_pro_plan_access(user_id: int, db: Session) -> bool:
+    """
+    Check if user has Pro plan or higher (Pro/Enterprise) to access Stories, DMs, and IG Live features.
+    Raises HTTPException if user doesn't have Pro plan.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Pro features require Pro or Enterprise plan
+    if user.plan_tier not in ["pro", "enterprise"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Stories, DMs, and IG Live automation are Pro features. Your current plan ({user.plan_tier}) doesn't include these features. Please upgrade to Pro to access them."
+        )
+
+    return True
+
+
+def has_pro_plan(user_id: int, db: Session) -> bool:
+    """
+    Check if user has Pro plan or higher (returns True/False, doesn't raise exception).
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False
+    
+    return user.plan_tier in ["pro", "enterprise"]
