@@ -1318,6 +1318,91 @@ async def get_instagram_media(
             detail=f"Failed to fetch Instagram media: {str(e)}"
         )
 
+
+@router.get("/conversations")
+async def get_instagram_conversations(
+    account_id: int = Query(..., description="Instagram account ID"),
+    limit: int = Query(25, description="Number of conversations to fetch"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch recent Instagram DM conversations for a specific account.
+    
+    Note: Instagram Graph API doesn't provide a direct conversations endpoint,
+    so we return recent conversations based on DM logs (outgoing messages we've sent).
+    For incoming messages, they come through webhooks and can be seen in automation rules.
+    
+    This endpoint requires Pro plan or higher.
+    """
+    try:
+        # Check Pro plan access for DMs
+        from app.utils.plan_enforcement import check_pro_plan_access
+        check_pro_plan_access(user_id, db)
+        
+        # Verify account belongs to user
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == account_id,
+            InstagramAccount.user_id == user_id
+        ).first()
+        
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instagram account not found"
+            )
+        
+        # Get recent conversations from DM logs (grouped by recipient)
+        from app.models.dm_log import DmLog
+        from sqlalchemy import func, distinct
+        
+        # Get distinct recipients and their latest message info
+        recent_conversations = db.query(
+            DmLog.recipient_username,
+            func.max(DmLog.sent_at).label('last_message_at'),
+            func.count(DmLog.id).label('message_count')
+        ).filter(
+            DmLog.instagram_account_id == account_id,
+            DmLog.user_id == user_id
+        ).group_by(
+            DmLog.recipient_username
+        ).order_by(
+            func.max(DmLog.sent_at).desc()
+        ).limit(limit).all()
+        
+        # Format conversations
+        conversations = []
+        for conv in recent_conversations:
+            # Get the latest message for each conversation
+            latest_message = db.query(DmLog).filter(
+                DmLog.instagram_account_id == account_id,
+                DmLog.recipient_username == conv.recipient_username
+            ).order_by(DmLog.sent_at.desc()).first()
+            
+            conversations.append({
+                "id": conv.recipient_username,  # Use username as ID (IG API doesn't provide conversation IDs)
+                "recipient_username": conv.recipient_username,
+                "last_message_at": latest_message.sent_at.isoformat() if latest_message else None,
+                "last_message": latest_message.message if latest_message else "",
+                "message_count": conv.message_count,
+                "type": "dm_conversation"  # To differentiate from media
+            })
+        
+        return {
+            "success": True,
+            "conversations": conversations,
+            "count": len(conversations)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching conversations: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch conversations: {str(e)}"
+        )
+
 # @router.get("/test-api")
 # async def test_instagram_api():
 #     token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
