@@ -154,6 +154,12 @@ async def process_instagram_message(event: dict, db: Session):
         message_text = message.get("text", "")
         message_id = message.get("mid")  # Message ID for deduplication
         
+        # Check if this is a story reply (DMs replying to stories)
+        story_id = None
+        if message.get("reply_to", {}).get("story", {}).get("id"):
+            story_id = str(message.get("reply_to", {}).get("story", {}).get("id"))
+            print(f"📖 Story reply detected - Story ID: {story_id}")
+        
         # Deduplication: Skip if we've already processed this message
         if message_id and message_id in _processed_message_ids:
             print(f"🚫 Ignoring duplicate message (already processed): mid={message_id}")
@@ -239,6 +245,7 @@ async def process_instagram_message(event: dict, db: Session):
         # 1. Rules with trigger_type='new_message' (trigger on all DMs)
         # 2. Rules with trigger_type='keyword' (trigger if keyword matches message text)
         # Note: We exclude 'post_comment' and 'live_comment' rules as they don't apply to DMs
+        # For story DMs, filter keyword rules by story media_id
         from app.models.automation_rule import AutomationRule
         new_message_rules = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
@@ -246,11 +253,26 @@ async def process_instagram_message(event: dict, db: Session):
             AutomationRule.is_active == True
         ).all()
         
-        keyword_rules = db.query(AutomationRule).filter(
+        # Filter keyword rules - if story_id is present, only match rules for that story
+        keyword_rules_query = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
             AutomationRule.trigger_type == "keyword",
             AutomationRule.is_active == True
-        ).all()
+        )
+        
+        if story_id:
+            # For story DMs, only match keyword rules set up for this specific story
+            keyword_rules_query = keyword_rules_query.filter(
+                AutomationRule.media_id == story_id
+            )
+            print(f"🔍 Filtering keyword rules by story_id: {story_id}")
+        else:
+            # For regular DMs, only match keyword rules without media_id (global DM rules)
+            keyword_rules_query = keyword_rules_query.filter(
+                AutomationRule.media_id.is_(None)
+            )
+        
+        keyword_rules = keyword_rules_query.all()
         
         print(f"📋 Found {len(new_message_rules)} 'new_message' rules and {len(keyword_rules)} 'keyword' rules for this account")
         
@@ -324,8 +346,8 @@ async def process_instagram_message(event: dict, db: Session):
                     trigger_type="new_message",
                     message_id=message_id
                 ))
-            else:
-                print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
+        else:
+            print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
                 
     except Exception as e:
         print(f"❌ Error processing message: {str(e)}")
@@ -853,14 +875,6 @@ async def execute_automation_action(
                 auto_reply_to_comments = rule.config.get("auto_reply_to_comments", False)
                 comment_replies = rule.config.get("comment_replies", [])
                 
-                # Check if this is a story comment (if media_id matches a story)
-                is_story_comment = False
-                if media_id and rule.media_id:
-                    # Try to determine if this is a story by checking the media
-                    # Stories have media_product_type == "STORY" but we might not have that info here
-                    # For now, we'll attempt the reply and catch any errors
-                    print(f"📝 Media ID: {media_id}, Rule Media ID: {rule.media_id}")
-                
                 # If we have a comment_id and auto-reply is enabled, send public comment reply
                 if comment_id and auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
                     # Filter out empty replies
@@ -870,24 +884,17 @@ async def execute_automation_action(
                         import random
                         selected_reply = random.choice(valid_replies)
                         print(f"💬 Auto-reply enabled: Sending PUBLIC comment reply (selected from {len(valid_replies)} variations)")
-                        print(f"   Trigger type: {trigger_type}, Comment ID: {comment_id}, Media ID: {media_id}")
+                        print(f"   Trigger type: {trigger_type}, Comment ID: {comment_id}")
                         try:
                             from app.utils.instagram_api import send_public_comment_reply
                             # Use Instagram Business Account token (already have it as access_token)
-                            # Note: Instagram Graph API may not support public comment replies on Stories yet
-                            # This will attempt to send and log errors if it fails
+                            # Instagram Graph API supports public comment replies on your own content
                             send_public_comment_reply(comment_id, selected_reply, access_token)
                             print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
                         except Exception as reply_error:
-                            error_msg = str(reply_error)
-                            print(f"⚠️ Failed to send public comment reply: {error_msg}")
-                            # Check if this is specifically a story comment issue
-                            if "story" in error_msg.lower() or "unsupported" in error_msg.lower():
-                                print(f"   ⚠️ NOTE: Instagram Graph API may not support public comment replies on Stories yet.")
-                                print(f"   Story comments are a newer feature and API support may be limited.")
-                            else:
-                                print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
-                                print(f"   comment ID format, or the comment is not on your own content.")
+                            print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
+                            print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
+                            print(f"   comment ID format, or the comment is not on your own content.")
                             print(f"   Continuing with DM send...")
                             # Continue to send DM even if public reply fails
                 
