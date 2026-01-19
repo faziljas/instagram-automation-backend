@@ -107,7 +107,7 @@ async def receive_webhook(
                     # Check if this is a regular message event (not message_edit, message_reactions, etc.)
                     # Only process events with a "message" field containing text
                     if "message" in messaging_event:
-                        await process_instagram_message(messaging_event, db)
+                    await process_instagram_message(messaging_event, db)
                     else:
                         # Log other event types (message_edit, message_reactions, etc.) but skip processing
                         event_type = None
@@ -324,9 +324,9 @@ async def process_instagram_message(event: dict, db: Session):
                     trigger_type="new_message",
                     message_id=message_id
                 ))
-        else:
+            else:
             print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
-        
+                
     except Exception as e:
         print(f"❌ Error processing message: {str(e)}")
         import traceback
@@ -719,6 +719,17 @@ async def execute_automation_action(
                 else:
                     raise Exception("No access token found for account")
                 
+                # For public comment replies, we need Facebook Page token (not Instagram Business Account token)
+                # Instagram Business Login accounts might not have page_id/page_token, so we check
+                page_token_for_comments = None
+                if account.page_id and account.encrypted_page_token:
+                    # If we have page_id, the encrypted_page_token should be the Facebook Page token
+                    page_token_for_comments = access_token
+                    print(f"✅ Using Facebook Page token for public comment replies (Page ID: {account.page_id})")
+                else:
+                    print(f"⚠️ No Facebook Page token available - public comment replies may not work")
+                    print(f"   Page ID: {account.page_id or 'None'}, Has token: {bool(account.encrypted_page_token)}")
+                
                 # Check if auto-reply to comments is enabled for post_comment/live_comment triggers
                 if trigger_type in ["post_comment", "live_comment"] and comment_id:
                     # Check if auto-reply to comments is enabled
@@ -733,9 +744,22 @@ async def execute_automation_action(
                             import random
                             selected_reply = random.choice(valid_replies)
                             print(f"💬 Auto-reply enabled: Sending PUBLIC comment reply (selected from {len(valid_replies)} variations)")
-                            from app.utils.instagram_api import send_public_comment_reply
-                            send_public_comment_reply(comment_id, selected_reply, access_token)
-                            print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
+                            
+                            # Only attempt public comment reply if we have a Facebook Page token
+                            if page_token_for_comments and account.page_id:
+                                try:
+                                    from app.utils.instagram_api import send_public_comment_reply
+                                    send_public_comment_reply(comment_id, selected_reply, page_token_for_comments, account.page_id)
+                                    print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
+                                except Exception as reply_error:
+                                    print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
+                                    print(f"   This might be due to missing permissions, API limitations, or comment ID format.")
+                                    print(f"   Continuing with DM send...")
+                                    # Continue to send DM even if public reply fails
+                            else:
+                                print(f"⚠️ Cannot send public comment reply: Missing Facebook Page token or Page ID")
+                                print(f"   Public comment replies require Facebook Page access token.")
+                                print(f"   Continuing with DM send...")
                     
                     # Always send DM for post_comment/live_comment triggers (if message is configured)
                     if message_template:

@@ -4,19 +4,21 @@ Instagram Graph API utility functions for sending messages and replies.
 import requests
 
 
-def send_public_comment_reply(comment_id: str, message: str, page_access_token: str) -> dict:
+def send_public_comment_reply(comment_id: str, message: str, page_access_token: str, page_id: str = None) -> dict:
     """
     Send a PUBLIC reply to an Instagram comment (visible on the post/reel).
     
     This endpoint creates a public comment reply that appears on the post/reel,
     not a private DM. This is different from send_private_reply which sends a DM.
     
-    For Instagram Business Login flow, we use Instagram Graph API (graph.instagram.com).
+    IMPORTANT: Instagram Graph API (graph.instagram.com) does NOT support public comment replies.
+    We must use Facebook Graph API (graph.facebook.com) with the Facebook Page token instead.
     
     Args:
         comment_id: The Instagram comment ID (e.g., "17890603191406594")
         message: The message text to send as a public comment reply
-        page_access_token: The Instagram Business Account access token (Instagram-native)
+        page_access_token: The Facebook Page access token (required for public replies)
+        page_id: Optional page ID (not required for this endpoint)
         
     Returns:
         dict: API response with reply ID
@@ -24,27 +26,28 @@ def send_public_comment_reply(comment_id: str, message: str, page_access_token: 
     Raises:
         Exception: If the API request fails
     """
-    # For Instagram Graph API, use the replies endpoint
-    url = f"https://graph.instagram.com/v21.0/{comment_id}/replies"
+    # Instagram public comment replies MUST use Facebook Graph API, not Instagram Graph API
+    # The endpoint is: POST /{comment_id}/replies on graph.facebook.com
+    url = f"https://graph.facebook.com/v21.0/{comment_id}/replies"
     
     # Debug logging
     token_preview = page_access_token[:10] + "..." if page_access_token else "None"
-    print(f"💬 Sending PUBLIC comment reply via Instagram Graph API:")
+    print(f"💬 Sending PUBLIC comment reply via Facebook Graph API:")
     print(f"   URL: {url}")
     print(f"   Using Token: {token_preview}")
     print(f"   Comment ID: {comment_id}")
     print(f"   Message: {message[:50]}..." if len(message) > 50 else f"   Message: {message}")
     
-    # Instagram public comment reply format
+    # Facebook Graph API public comment reply format
     payload = {
         "message": message
     }
     
-    headers = {
-        "Authorization": f"Bearer {page_access_token}"
+    params = {
+        "access_token": page_access_token
     }
     
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(url, json=payload, params=params)
     
     if response.status_code != 200:
         error_detail = response.text
