@@ -1120,9 +1120,10 @@ async def get_instagram_media(
         
         elif media_type == "stories":
             # Fetch stories (requires stories_read permission and different endpoint)
+            # Note: Stories are only available for 24 hours after posting
             url = f"https://graph.instagram.com/v21.0/{igsid}/stories"
             params = {
-                "fields": "id,media_type,media_url,timestamp",
+                "fields": "id,media_type,media_url,timestamp,media_product_type",
                 "limit": limit,
                 "access_token": access_token
             }
@@ -1132,11 +1133,15 @@ async def get_instagram_media(
             if response.status_code != 200:
                 error_detail = response.text
                 print(f"⚠️ Stories may not be available: {error_detail}")
-                # Stories might not be available, return empty list
+                # Stories might not be available (no active stories, or missing permissions)
                 media_items = []
             else:
                 data = response.json()
                 media_items = data.get("data", [])
+                # Ensure all stories have media_product_type set to STORY
+                for item in media_items:
+                    if "media_product_type" not in item:
+                        item["media_product_type"] = "STORY"
         
         elif media_type == "live":
             # For live videos, we'd need to check live_media endpoint
