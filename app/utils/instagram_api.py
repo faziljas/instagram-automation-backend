@@ -54,7 +54,11 @@ def send_public_comment_reply(comment_id: str, message: str, instagram_access_to
         raise Exception(f"Failed to send public comment reply: {error_detail}")
     
     result = response.json()
-    print(f"✅ Public comment reply sent successfully: {result}")
+    reply_id = result.get("id", "unknown")
+    print(f"✅ Public comment reply sent successfully!")
+    print(f"   Reply ID: {reply_id}")
+    print(f"   This reply should now be visible on Instagram under the comment")
+    print(f"   Full API response: {result}")
     return result
 
 
