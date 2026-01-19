@@ -199,9 +199,9 @@ async def process_instagram_message(event: dict, db: Session):
         # Fallback to first active account if IGSID matching fails
         if not account:
             print(f"⚠️ No account found by IGSID, trying fallback...")
-        account = db.query(InstagramAccount).filter(
-            InstagramAccount.is_active == True
-        ).first()
+            account = db.query(InstagramAccount).filter(
+                InstagramAccount.is_active == True
+            ).first()
         
         if not account:
             print(f"❌ No active Instagram accounts found")
@@ -281,6 +281,22 @@ async def process_instagram_message(event: dict, db: Session):
         keyword_rules = keyword_rules_query.all()
         
         print(f"📋 Found {len(new_message_rules)} 'new_message' rules and {len(keyword_rules)} 'keyword' rules for this account")
+        
+        # Debug: List all rules for this account to help troubleshoot
+        all_rules = db.query(AutomationRule).filter(
+            AutomationRule.instagram_account_id == account.id,
+            AutomationRule.is_active == True
+        ).all()
+        print(f"🔍 DEBUG: All active rules for account '{account.username}' (ID: {account.id}):")
+        for rule in all_rules:
+            media_info = f" | Media ID: {rule.media_id}" if rule.media_id else " | Media ID: None (global)"
+            keywords_info = ""
+            if rule.config:
+                if rule.config.get("keywords"):
+                    keywords_info = f" | Keywords: {rule.config.get('keywords')}"
+                elif rule.config.get("keyword"):
+                    keywords_info = f" | Keyword: {rule.config.get('keyword')}"
+            print(f"   - Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}{media_info}{keywords_info}")
         
         # First, check if any keyword rule matches (exact match only)
         # If keyword rule matches, ONLY trigger that rule, skip new_message rules
