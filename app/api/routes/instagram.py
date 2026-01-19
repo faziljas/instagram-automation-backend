@@ -389,6 +389,28 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         
         print(f"✅ Found account: {account.username} (ID: {account.id})")
         
+        # CRITICAL: Check if commenter is the bot itself (to prevent infinite loops)
+        # When the bot replies to a comment, Instagram sends a webhook for that reply
+        # We need to skip processing the bot's own comments
+        commenter_id_str = str(commenter_id) if commenter_id else None
+        commenter_username_lower = commenter_username.lower() if commenter_username else None
+        account_igsid_str = str(account.igsid) if account.igsid else None
+        account_username_lower = account.username.lower() if account.username else None
+        igsid_str = str(igsid) if igsid else None
+        
+        # Check if commenter matches the account owner (by ID or username)
+        is_bot_own_comment = False
+        if commenter_id_str and (commenter_id_str == account_igsid_str or commenter_id_str == igsid_str):
+            is_bot_own_comment = True
+            print(f"🚫 Ignoring bot's own comment/reply: Commenter ID {commenter_id_str} matches account IGSID {account_igsid_str or igsid_str}")
+        elif commenter_username_lower and account_username_lower and commenter_username_lower == account_username_lower:
+            is_bot_own_comment = True
+            print(f"🚫 Ignoring bot's own comment/reply: Commenter username @{commenter_username} matches account username @{account.username}")
+        
+        if is_bot_own_comment:
+            print(f"   This prevents infinite loops when the bot replies to comments")
+            return
+        
         # Find active automation rules for comments
         # We need to check BOTH:
         # 1. Rules with trigger_type='post_comment' (with optional keyword filtering)
@@ -554,6 +576,28 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
             return
         
         print(f"✅ Found account: {account.username} (ID: {account.id})")
+        
+        # CRITICAL: Check if commenter is the bot itself (to prevent infinite loops)
+        # When the bot replies to a live comment, Instagram sends a webhook for that reply
+        # We need to skip processing the bot's own comments
+        commenter_id_str = str(commenter_id) if commenter_id else None
+        commenter_username_lower = commenter_username.lower() if commenter_username else None
+        account_igsid_str = str(account.igsid) if account.igsid else None
+        account_username_lower = account.username.lower() if account.username else None
+        igsid_str = str(igsid) if igsid else None
+        
+        # Check if commenter matches the account owner (by ID or username)
+        is_bot_own_comment = False
+        if commenter_id_str and (commenter_id_str == account_igsid_str or commenter_id_str == igsid_str):
+            is_bot_own_comment = True
+            print(f"🚫 Ignoring bot's own live comment/reply: Commenter ID {commenter_id_str} matches account IGSID {account_igsid_str or igsid_str}")
+        elif commenter_username_lower and account_username_lower and commenter_username_lower == account_username_lower:
+            is_bot_own_comment = True
+            print(f"🚫 Ignoring bot's own live comment/reply: Commenter username @{commenter_username} matches account username @{account.username}")
+        
+        if is_bot_own_comment:
+            print(f"   This prevents infinite loops when the bot replies to live comments")
+            return
         
         # Find active automation rules for live comments
         # We need to check BOTH:
