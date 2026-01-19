@@ -127,10 +127,14 @@ async def receive_webhook(
         if body.get("object") == "instagram":
             for entry in body.get("entry", []):
                 # Process messaging events (DMs)
-                for messaging_event in entry.get("messaging", []):
+                messaging_events = entry.get("messaging", [])
+                log_print(f"📬 Found {len(messaging_events)} messaging event(s) in webhook entry")
+                
+                for messaging_event in messaging_events:
                     # Check if this is a regular message event (not message_edit, message_reactions, etc.)
                     # Only process events with a "message" field containing text
                     if "message" in messaging_event:
+                        log_print(f"✅ Processing message event with 'message' field")
                         await process_instagram_message(messaging_event, db)
                     else:
                         # Log other event types (message_edit, message_reactions, etc.) but skip processing
@@ -143,6 +147,8 @@ async def receive_webhook(
                             event_type = "standby"
                         else:
                             event_type = "unknown"
+                            # Log unknown event structure for debugging
+                            log_print(f"⚠️ Unknown messaging event type. Event keys: {list(messaging_event.keys())}", "WARNING")
                         log_print(f"⏭️ Skipping {event_type} event (not a regular message)")
                 
                 # Process changes (comments, live comments, etc.)
