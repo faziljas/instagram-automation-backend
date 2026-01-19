@@ -4,6 +4,8 @@ from app.models.instagram_account import InstagramAccount
 from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.models.follower import Follower
+from app.models.captured_lead import CapturedLead
+from app.models.automation_rule_stats import AutomationRuleStats
 
 __all__ = [
     "User",
@@ -11,5 +13,7 @@ __all__ = [
     "InstagramAccount",
     "AutomationRule",
     "DmLog",
-    "Follower"
+    "Follower",
+    "CapturedLead",
+    "AutomationRuleStats"
 ]

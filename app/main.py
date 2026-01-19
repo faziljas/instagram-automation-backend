@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router
+from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router, leads
 from app.db.session import engine
 from app.db.base import Base
 from sqlalchemy import text
 # Import all models to ensure they're registered with Base
-from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower
+from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats
 
 app = FastAPI(title="Instagram Automation SaaS")
 
@@ -95,7 +95,10 @@ async def startup_event():
                 print("✅ Auto-migration complete: media_id column added", file=sys.stderr)
             else:
                 print("✅ media_id column already exists", file=sys.stderr)
-                
+            
+            # Note: captured_leads and automation_rule_stats tables are created via Base.metadata.create_all()
+            # No need for manual column additions as they're new tables
+            
     except Exception as e:
         print(f"⚠️ Auto-migration warning: {str(e)}", file=sys.stderr)
 
@@ -117,3 +120,4 @@ app.include_router(instagram_oauth.router, prefix="/api/instagram", tags=["Insta
 app.include_router(automation.router, prefix="/automation", tags=["Automation"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 app.include_router(stripe_router.router, prefix="/api/stripe", tags=["Stripe"])
+app.include_router(leads.router, prefix="/api", tags=["Leads"])

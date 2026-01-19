@@ -951,20 +951,55 @@ async def execute_automation_action(
                 print(f"⚠️ Monthly DM limit reached for user {account.user_id}. Skipping DM send.")
                 return  # Don't send DM if limit reached
             
-            # Get message template from config
-            # Support message_variations for randomization, fallback to message_template
-            message_variations = rule.config.get("message_variations", [])
-            if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
-                # Randomly select one message from variations
-                import random
-                message_template = random.choice([m for m in message_variations if m and str(m).strip()])
-                print(f"🎲 Randomly selected message from {len(message_variations)} variations")
+            # Check if this is a lead capture flow
+            is_lead_capture = rule.config.get("is_lead_capture", False)
+            
+            if is_lead_capture:
+                # Process lead capture flow
+                from app.services.lead_capture import process_lead_capture_step, update_automation_stats
+                
+                # Get user message from event (for DMs, this would be in the message text)
+                # For comments, we'd need to extract from comment text
+                user_message = ""
+                if trigger_type in ["new_message", "keyword"]:
+                    # For DMs, we need to get the message text from the webhook event
+                    # This is a simplified version - in production, you'd track conversation state
+                    user_message = ""  # Will be extracted from webhook context
+                
+                # Process lead capture step
+                lead_result = process_lead_capture_step(rule, user_message, sender_id, db)
+                
+                if lead_result["action"] == "ask":
+                    # Send the ask message
+                    message_template = lead_result["message"]
+                elif lead_result["action"] == "send":
+                    # Send the final message
+                    message_template = lead_result["message"]
+                    if lead_result["saved_lead"]:
+                        print(f"✅ Lead captured: {lead_result['saved_lead'].email or lead_result['saved_lead'].phone}")
+                else:
+                    # Skip lead capture for now (fallback to regular DM)
+                    message_template = rule.config.get("message_template", "")
             else:
-                message_template = rule.config.get("message_template", "")
+                # Regular DM flow
+                # Get message template from config
+                # Support message_variations for randomization, fallback to message_template
+                message_variations = rule.config.get("message_variations", [])
+                if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
+                    # Randomly select one message from variations
+                    import random
+                    message_template = random.choice([m for m in message_variations if m and str(m).strip()])
+                    print(f"🎲 Randomly selected message from {len(message_variations)} variations")
+                else:
+                    message_template = rule.config.get("message_template", "")
             
             if not message_template:
                 print("⚠️ No message template configured")
                 return
+            
+            # Update stats
+            from app.services.lead_capture import update_automation_stats
+            update_automation_stats(rule.id, "triggered", db)
             
             # Apply delay if configured (delay is in minutes, convert to seconds)
             delay_minutes = rule.config.get("delay_minutes", 0)
@@ -1011,6 +1046,10 @@ async def execute_automation_action(
                             # Instagram Graph API supports public comment replies on your own content
                             send_public_comment_reply(comment_id, selected_reply, access_token)
                             print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
+                            
+                            # Update stats
+                            from app.services.lead_capture import update_automation_stats
+                            update_automation_stats(rule.id, "comment_replied", db)
                         except Exception as reply_error:
                             print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
                             print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
@@ -1033,6 +1072,10 @@ async def execute_automation_action(
                         print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
                     send_dm_api(sender_id, message_template, access_token, page_id_for_dm, buttons)
                     print(f"✅ DM sent to {sender_id}")
+                    
+                    # Update stats
+                    from app.services.lead_capture import update_automation_stats
+                    update_automation_stats(rule.id, "dm_sent", db)
                 
                 # Log the DM
                 from app.models.dm_log import DmLog
