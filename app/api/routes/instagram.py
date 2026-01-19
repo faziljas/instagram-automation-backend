@@ -241,12 +241,27 @@ async def process_instagram_message(event: dict, db: Session):
                 _processed_message_ids.clear()
         
         # Find active automation rules for DMs
-        # We need to check BOTH:
-        # 1. Rules with trigger_type='new_message' (trigger on all DMs)
-        # 2. Rules with trigger_type='keyword' (trigger if keyword matches message text)
-        # Note: We exclude 'post_comment' and 'live_comment' rules as they don't apply to DMs
-        # For story DMs, filter keyword rules by story media_id
+        # For story DMs: We need to check rules set up for stories (which may have trigger_type='post_comment' or 'keyword')
+        # For regular DMs: Only check 'new_message' and global 'keyword' rules
         from app.models.automation_rule import AutomationRule
+        from sqlalchemy import or_
+        
+        # For story DMs, also check post_comment rules with matching media_id (stories set up via Posts/Reels tab)
+        story_post_comment_rules = []
+        story_keyword_rules = []
+        
+        if story_id:
+            # For story DMs, check post_comment rules set up for this specific story
+            # (When user sets up automation for a story, it might be created as 'post_comment' type)
+            story_post_comment_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.trigger_type == "post_comment",
+                AutomationRule.is_active == True,
+                AutomationRule.media_id == story_id
+            ).all()
+            print(f"🔍 Found {len(story_post_comment_rules)} 'post_comment' rules for story_id: {story_id}")
+        
+        # new_message rules (work for all DMs including stories)
         new_message_rules = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
             AutomationRule.trigger_type == "new_message",
@@ -256,7 +271,6 @@ async def process_instagram_message(event: dict, db: Session):
         # Filter keyword rules for DMs
         # For story DMs: match rules specifically for that story OR global rules (no media_id)
         # For regular DMs: only match global rules (no media_id)
-        from sqlalchemy import or_
         keyword_rules_query = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
             AutomationRule.trigger_type == "keyword",
@@ -344,8 +358,8 @@ async def process_instagram_message(event: dict, db: Session):
                         ))
                         break  # Only trigger first matching keyword rule
         
-        # Process new_message rules ONLY if no keyword rule matched
-        if not keyword_rule_matched:
+        # Process new_message rules ONLY if no keyword rule matched AND no story rule matched
+        if not keyword_rule_matched and not story_rule_matched:
             for rule in new_message_rules:
                 print(f"🔄 Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
                 print(f"✅ 'new_message' rule triggered (no keyword match)!")
