@@ -96,8 +96,13 @@ async def receive_webhook(
     Processes incoming messages, followers, and other events.
     """
     try:
+        # Log request headers for debugging
+        headers_dict = dict(request.headers)
+        print(f"📥 Received webhook request:")
+        print(f"   Headers: {json.dumps({k: v for k, v in headers_dict.items() if k.lower() in ['content-type', 'x-hub-signature', 'x-hub-signature-256']}, indent=2)}")
+        
         body = await request.json()
-        print(f"📥 Received webhook: {json.dumps(body, indent=2)}")
+        print(f"📥 Received webhook body: {json.dumps(body, indent=2)}")
         
         # Process webhook event
         if body.get("object") == "instagram":
