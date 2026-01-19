@@ -161,36 +161,60 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
     print(f"   Message: {message[:50]}..." if len(message) > 50 else f"   Message: {message}")
     
     # Build message payload
-    message_payload = {
-        "text": message
-    }
-    
-    # Add quick replies (buttons) if provided
-    # Instagram supports URL buttons using content_type "web_url"
+    # Instagram quick_replies only support text buttons (content_type: "text")
+    # For URL buttons, we need to use a generic template format instead
     if buttons and isinstance(buttons, list) and len(buttons) > 0:
         # Filter valid buttons (must have text and url)
         valid_buttons = [b for b in buttons if b.get("text") and b.get("url")]
         if valid_buttons:
-            # Limit to 13 buttons (Instagram's max for quick replies, but URL buttons are typically limited to 3)
-            valid_buttons = valid_buttons[:13]
-            quick_replies = []
+            # Limit to 3 buttons (Instagram's max for generic template)
+            valid_buttons = valid_buttons[:3]
+            
+            # Build button array for generic template
+            template_buttons = []
             for button in valid_buttons:
                 # Truncate button text to 20 characters (Instagram's max)
                 button_text = str(button["text"])[:20]
                 button_url = str(button["url"])
                 
-                # For URL buttons, use content_type "web_url" - this will open the URL when clicked
-                quick_replies.append({
-                    "content_type": "web_url",
-                    "title": button_text,
-                    "url": button_url  # Use "url" field for web_url content type
+                template_buttons.append({
+                    "type": "web_url",
+                    "url": button_url,
+                    "title": button_text
                 })
             
-            if quick_replies:
-                message_payload["quick_replies"] = quick_replies
-                print(f"   Adding {len(quick_replies)} URL button(s) to DM")
-                for i, btn in enumerate(quick_replies, 1):
-                    print(f"      Button {i}: {btn['title']} -> {btn.get('url', btn.get('payload', 'N/A'))}")
+            if template_buttons:
+                # Use generic template format for messages with URL buttons
+                # Generic template allows combining text with URL buttons
+                message_payload = {
+                    "attachment": {
+                        "type": "template",
+                        "payload": {
+                            "template_type": "generic",
+                            "elements": [
+                                {
+                                    "title": message[:80] if len(message) > 80 else message,  # Title is required
+                                    "subtitle": message if len(message) > 80 else "",  # Optional subtitle
+                                    "buttons": template_buttons
+                                }
+                            ]
+                        }
+                    }
+                }
+                print(f"   Using generic template with {len(template_buttons)} URL button(s)")
+                for i, btn in enumerate(template_buttons, 1):
+                    print(f"      Button {i}: {btn['title']} -> {btn['url']}")
+            else:
+                # Fallback to plain text if no valid buttons
+                message_payload = {"text": message}
+        else:
+            # No valid buttons, use plain text
+            message_payload = {"text": message}
+    else:
+        # No buttons, use plain text message
+        message_payload = {
+            "text": message
+        }
     
     payload = {
         "recipient": {"id": recipient_id},
