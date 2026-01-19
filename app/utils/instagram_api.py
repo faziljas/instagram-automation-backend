@@ -123,9 +123,9 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
     return result
 
 
-def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None) -> dict:
+def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None) -> dict:
     """
-    Send a direct message to an Instagram user.
+    Send a direct message to an Instagram user with optional buttons/quick replies.
     
     Note: This requires the recipient to have messaged you first, or you need
     to be within the 24-hour messaging window for standard messaging.
@@ -138,6 +138,8 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
         message: The message text
         page_access_token: The Instagram Business Account access token (Instagram-native)
         page_id: Optional page ID. For Instagram-native tokens, this is typically None (uses me/messages)
+        buttons: Optional list of button objects with format: [{"text": "Button Text", "url": "https://..."}]
+                 Maximum 13 buttons, text max 20 characters
         
     Returns:
         dict: API response
@@ -158,9 +160,44 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
     print(f"   Recipient ID: {recipient_id}")
     print(f"   Message: {message[:50]}..." if len(message) > 50 else f"   Message: {message}")
     
+    # Build message payload
+    message_payload = {
+        "text": message
+    }
+    
+    # Add quick replies (buttons) if provided
+    # Note: Instagram quick replies support text buttons that send payloads back
+    # For URL buttons, we'll use the text format and include the URL in the payload
+    if buttons and isinstance(buttons, list) and len(buttons) > 0:
+        # Filter valid buttons (must have text and url)
+        valid_buttons = [b for b in buttons if b.get("text") and b.get("url")]
+        if valid_buttons:
+            # Limit to 13 buttons (Instagram's max)
+            valid_buttons = valid_buttons[:13]
+            quick_replies = []
+            for button in valid_buttons:
+                # Truncate button text to 20 characters (Instagram's max)
+                button_text = str(button["text"])[:20]
+                button_url = str(button["url"])
+                
+                # For URL buttons, we can try two approaches:
+                # 1. Use content_type "text" with URL as payload (Instagram may open it)
+                # 2. Alternatively, Instagram might require a different format for URL buttons
+                quick_replies.append({
+                    "content_type": "text",
+                    "title": button_text,
+                    "payload": button_url  # Store URL in payload
+                })
+            
+            if quick_replies:
+                message_payload["quick_replies"] = quick_replies
+                print(f"   Adding {len(quick_replies)} button(s) to DM")
+                for i, btn in enumerate(quick_replies, 1):
+                    print(f"      Button {i}: {btn['title']} -> {btn['payload']}")
+    
     payload = {
         "recipient": {"id": recipient_id},
-        "message": {"text": message}
+        "message": message_payload
     }
     
     headers = {

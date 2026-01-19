@@ -818,22 +818,34 @@ async def execute_automation_action(
                     
                     # Always send DM for post_comment/live_comment triggers (if message is configured)
                     if message_template:
+                        # Get buttons from rule config if DM type is text_button
+                        buttons = None
+                        if rule.config.get("buttons") and isinstance(rule.config.get("buttons"), list):
+                            buttons = rule.config.get("buttons")
+                            print(f"📎 Found {len(buttons)} button(s) in rule config")
+                        
                         page_id_for_dm = account.page_id if account.page_id else None
                         if page_id_for_dm:
                             print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
                         else:
                             print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
-                        send_dm_api(sender_id, message_template, access_token, page_id_for_dm)
+                        send_dm_api(sender_id, message_template, access_token, page_id_for_dm, buttons)
                         print(f"✅ DM sent to {sender_id}")
                 else:
                     # Send standard DM for new_message/keyword triggers
+                    # Get buttons from rule config if DM type is text_button
+                    buttons = None
+                    if rule.config.get("buttons") and isinstance(rule.config.get("buttons"), list):
+                        buttons = rule.config.get("buttons")
+                        print(f"📎 Found {len(buttons)} button(s) in rule config")
+                    
                     # send_dm now supports page_id=None (uses me/messages)
                     page_id_for_dm = account.page_id if account.page_id else None
                     if page_id_for_dm:
                         print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
                     else:
                         print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
-                    send_dm_api(sender_id, message_template, access_token, page_id_for_dm)
+                    send_dm_api(sender_id, message_template, access_token, page_id_for_dm, buttons)
                     print(f"✅ DM sent to {sender_id}")
                 
                 # Log the DM
