@@ -107,7 +107,7 @@ async def receive_webhook(
                     # Check if this is a regular message event (not message_edit, message_reactions, etc.)
                     # Only process events with a "message" field containing text
                     if "message" in messaging_event:
-                    await process_instagram_message(messaging_event, db)
+                        await process_instagram_message(messaging_event, db)
                     else:
                         # Log other event types (message_edit, message_reactions, etc.) but skip processing
                         event_type = None
