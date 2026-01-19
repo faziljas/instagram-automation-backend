@@ -789,57 +789,43 @@ async def execute_automation_action(
                 else:
                     raise Exception("No access token found for account")
                 
-                # Check if auto-reply to comments is enabled for post_comment/live_comment triggers
-                if trigger_type in ["post_comment", "live_comment"] and comment_id:
-                    # Check if auto-reply to comments is enabled
-                    auto_reply_to_comments = rule.config.get("auto_reply_to_comments", False)
-                    comment_replies = rule.config.get("comment_replies", [])
-                    
-                    if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
-                        # Filter out empty replies
-                        valid_replies = [r for r in comment_replies if r and str(r).strip()]
-                        if valid_replies:
-                            # Randomly select one comment reply
-                            import random
-                            selected_reply = random.choice(valid_replies)
-                            print(f"💬 Auto-reply enabled: Sending PUBLIC comment reply (selected from {len(valid_replies)} variations)")
-                            try:
-                                from app.utils.instagram_api import send_public_comment_reply
-                                # Use Instagram Business Account token (already have it as access_token)
-                                # Instagram Graph API supports public comment replies on your own content
-                                send_public_comment_reply(comment_id, selected_reply, access_token)
-                                print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
-                            except Exception as reply_error:
-                                print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
-                                print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
-                                print(f"   comment ID format, or the comment is not on your own content.")
-                                print(f"   Continuing with DM send...")
-                                # Continue to send DM even if public reply fails
-                    
-                    # Always send DM for post_comment/live_comment triggers (if message is configured)
-                    if message_template:
-                        # Get buttons from rule config if DM type is text_button
-                        buttons = None
-                        if rule.config.get("buttons") and isinstance(rule.config.get("buttons"), list):
-                            buttons = rule.config.get("buttons")
-                            print(f"📎 Found {len(buttons)} button(s) in rule config")
-                        
-                        page_id_for_dm = account.page_id if account.page_id else None
-                        if page_id_for_dm:
-                            print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
-                        else:
-                            print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
-                        send_dm_api(sender_id, message_template, access_token, page_id_for_dm, buttons)
-                        print(f"✅ DM sent to {sender_id}")
-                else:
-                    # Send standard DM for new_message/keyword triggers
+                # Check if auto-reply to comments is enabled
+                # This applies to post_comment, live_comment, AND keyword triggers when comment_id is present
+                # (keyword triggers can come from comments if the rule has keywords configured)
+                auto_reply_to_comments = rule.config.get("auto_reply_to_comments", False)
+                comment_replies = rule.config.get("comment_replies", [])
+                
+                # If we have a comment_id and auto-reply is enabled, send public comment reply
+                if comment_id and auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
+                    # Filter out empty replies
+                    valid_replies = [r for r in comment_replies if r and str(r).strip()]
+                    if valid_replies:
+                        # Randomly select one comment reply
+                        import random
+                        selected_reply = random.choice(valid_replies)
+                        print(f"💬 Auto-reply enabled: Sending PUBLIC comment reply (selected from {len(valid_replies)} variations)")
+                        print(f"   Trigger type: {trigger_type}, Comment ID: {comment_id}")
+                        try:
+                            from app.utils.instagram_api import send_public_comment_reply
+                            # Use Instagram Business Account token (already have it as access_token)
+                            # Instagram Graph API supports public comment replies on your own content
+                            send_public_comment_reply(comment_id, selected_reply, access_token)
+                            print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
+                        except Exception as reply_error:
+                            print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
+                            print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
+                            print(f"   comment ID format, or the comment is not on your own content.")
+                            print(f"   Continuing with DM send...")
+                            # Continue to send DM even if public reply fails
+                
+                # Always send DM if message is configured (for all trigger types)
+                if message_template:
                     # Get buttons from rule config if DM type is text_button
                     buttons = None
                     if rule.config.get("buttons") and isinstance(rule.config.get("buttons"), list):
                         buttons = rule.config.get("buttons")
                         print(f"📎 Found {len(buttons)} button(s) in rule config")
                     
-                    # send_dm now supports page_id=None (uses me/messages)
                     page_id_for_dm = account.page_id if account.page_id else None
                     if page_id_for_dm:
                         print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
