@@ -527,8 +527,7 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                             db,
                             trigger_type="keyword",
                             comment_id=comment_id,
-                            message_id=comment_id,  # Use comment_id as identifier
-                            media_id=media_id_str
+                            message_id=comment_id  # Use comment_id as identifier
                         ))
                         break  # Only trigger first matching keyword rule
         
@@ -554,8 +553,7 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                     db,
                     trigger_type="post_comment",
                     comment_id=comment_id,
-                    message_id=comment_id,  # Use comment_id as identifier
-                    media_id=media_id_str
+                    message_id=comment_id  # Use comment_id as identifier
                 ))
         else:
             print(f"⏭️ Skipping 'post_comment' rules because keyword rule matched")
@@ -789,8 +787,7 @@ async def execute_automation_action(
     db: Session,
     trigger_type: str = None,
     comment_id: str = None,
-    message_id: str = None,
-    media_id: str = None
+    message_id: str = None
 ):
     """
     Execute the automation action defined in the rule.
