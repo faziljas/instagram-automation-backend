@@ -166,13 +166,12 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
     }
     
     # Add quick replies (buttons) if provided
-    # Note: Instagram quick replies support text buttons that send payloads back
-    # For URL buttons, we'll use the text format and include the URL in the payload
+    # Instagram supports URL buttons using content_type "web_url"
     if buttons and isinstance(buttons, list) and len(buttons) > 0:
         # Filter valid buttons (must have text and url)
         valid_buttons = [b for b in buttons if b.get("text") and b.get("url")]
         if valid_buttons:
-            # Limit to 13 buttons (Instagram's max)
+            # Limit to 13 buttons (Instagram's max for quick replies, but URL buttons are typically limited to 3)
             valid_buttons = valid_buttons[:13]
             quick_replies = []
             for button in valid_buttons:
@@ -180,20 +179,18 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                 button_text = str(button["text"])[:20]
                 button_url = str(button["url"])
                 
-                # For URL buttons, we can try two approaches:
-                # 1. Use content_type "text" with URL as payload (Instagram may open it)
-                # 2. Alternatively, Instagram might require a different format for URL buttons
+                # For URL buttons, use content_type "web_url" - this will open the URL when clicked
                 quick_replies.append({
-                    "content_type": "text",
+                    "content_type": "web_url",
                     "title": button_text,
-                    "payload": button_url  # Store URL in payload
+                    "url": button_url  # Use "url" field for web_url content type
                 })
             
             if quick_replies:
                 message_payload["quick_replies"] = quick_replies
-                print(f"   Adding {len(quick_replies)} button(s) to DM")
+                print(f"   Adding {len(quick_replies)} URL button(s) to DM")
                 for i, btn in enumerate(quick_replies, 1):
-                    print(f"      Button {i}: {btn['title']} -> {btn['payload']}")
+                    print(f"      Button {i}: {btn['title']} -> {btn.get('url', btn.get('payload', 'N/A'))}")
     
     payload = {
         "recipient": {"id": recipient_id},
