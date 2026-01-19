@@ -1123,7 +1123,7 @@ async def get_instagram_media(
             # Note: Stories are only available for 24 hours after posting
             url = f"https://graph.instagram.com/v21.0/{igsid}/stories"
             params = {
-                "fields": "id,media_type,media_url,timestamp,media_product_type",
+                "fields": "id,media_type,media_url,thumbnail_url,timestamp,media_product_type",
                 "limit": limit,
                 "access_token": access_token
             }
