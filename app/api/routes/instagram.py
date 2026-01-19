@@ -203,16 +203,16 @@ async def process_instagram_message(event: dict, db: Session):
         
         # Skip if no text (reactions, stickers, etc.)
         if not message_text or not message_text.strip():
-            print(f"🚫 Ignoring message with no text content (mid: {message_id})")
+            log_print(f"🚫 Ignoring message with no text content (mid: {message_id})")
             if message_id:
                 _processed_message_ids.add(message_id)
             return
         
-        print(f"📨 Message from {sender_id} (type: {type(sender_id).__name__}) to {recipient_id}: {message_text} (mid: {message_id})")
+        log_print(f"📨 [DM] Message from {sender_id} (type: {type(sender_id).__name__}) to {recipient_id}: {message_text} (mid: {message_id})")
         
         # Match Instagram account by IGSID (recipient_id should be the bot's IGSID)
         from app.models.instagram_account import InstagramAccount
-        print(f"🔍 Looking for Instagram account (IGSID: {recipient_id})")
+        log_print(f"🔍 [DM] Looking for Instagram account (IGSID: {recipient_id})")
         
         # First try to match by IGSID (most accurate)
         account = db.query(InstagramAccount).filter(
@@ -222,13 +222,13 @@ async def process_instagram_message(event: dict, db: Session):
         
         # Fallback to first active account if IGSID matching fails
         if not account:
-            print(f"⚠️ No account found by IGSID, trying fallback...")
+            log_print(f"⚠️ [DM] No account found by IGSID, trying fallback...", "WARNING")
             account = db.query(InstagramAccount).filter(
                 InstagramAccount.is_active == True
             ).first()
         
         if not account:
-            print(f"❌ No active Instagram accounts found")
+            log_print(f"❌ [DM] No active Instagram accounts found", "ERROR")
             return
         
         # CRITICAL: Check if sender is the bot itself
@@ -248,14 +248,14 @@ async def process_instagram_message(event: dict, db: Session):
             print(f"🚫 Sender ID {sender_id_str} matches account Page ID {account_page_id_str}")
         
         if sender_matches_bot:
-            print(f"🚫 IGNORING message from bot's own account!")
-            print(f"   sender_id={sender_id_str}, IGSID={account_igsid_str}, PageID={account_page_id_str}")
+            log_print(f"🚫 [DM] IGNORING message from bot's own account!")
+            log_print(f"   sender_id={sender_id_str}, IGSID={account_igsid_str}, PageID={account_page_id_str}")
             # Mark as processed to prevent retry
             if message_id:
                 _processed_message_ids.add(message_id)
             return
         
-        print(f"✅ Found account: {account.username} (ID: {account.id}, IGSID: {account.igsid}, PageID: {account.page_id})")
+        log_print(f"✅ [DM] Found account: {account.username} (ID: {account.id}, IGSID: {account.igsid}, PageID: {account.page_id})")
         
         # Mark message as processed BEFORE triggering actions (prevents loops if action triggers webhook)
         if message_id:
@@ -303,6 +303,8 @@ async def process_instagram_message(event: dict, db: Session):
             AutomationRule.is_active == True
         ).all()
         
+        log_print(f"📋 [DM] Found {len(new_message_rules)} 'new_message' rules for account '{account.username}'")
+        
         # Filter keyword rules for DMs
         # For story DMs: match rules specifically for that story OR global rules (no media_id)
         # For regular DMs: only match global rules (no media_id)
@@ -320,16 +322,21 @@ async def process_instagram_message(event: dict, db: Session):
                     AutomationRule.media_id.is_(None)  # Also include global keyword rules
                 )
             )
-            print(f"🔍 Filtering keyword rules for story_id: {story_id} (including global rules)")
+            log_print(f"🔍 [STORY DM] Filtering keyword rules for story_id: {story_id} (including global rules)")
         else:
             # For regular DMs, only match keyword rules without media_id (global DM rules)
             keyword_rules_query = keyword_rules_query.filter(
                 AutomationRule.media_id.is_(None)
             )
+            log_print(f"🔍 [DM] Filtering keyword rules for regular DM (only global rules, no media_id)")
         
         keyword_rules = keyword_rules_query.all()
         
-        print(f"📋 Found {len(new_message_rules)} 'new_message' rules, {len(keyword_rules)} 'keyword' rules, and {len(story_post_comment_rules)} 'post_comment' rules for story")
+        log_print(f"📋 [DM] Found {len(new_message_rules)} 'new_message' rules, {len(keyword_rules)} 'keyword' rules (global), and {len(story_post_comment_rules)} 'post_comment' rules for story")
+        
+        # Log all rules found for debugging
+        if len(new_message_rules) == 0 and len(keyword_rules) == 0 and len(story_post_comment_rules) == 0:
+            log_print(f"⚠️ [DM] NO automation rules found for this account! Check rule configuration.", "WARNING")
         
         # Debug: List all rules for this account to help troubleshoot
         all_rules = db.query(AutomationRule).filter(
@@ -422,32 +429,39 @@ async def process_instagram_message(event: dict, db: Session):
                         ))
                         break  # Only trigger first matching keyword rule
         
+        if not keyword_rule_matched and len(keyword_rules) > 0:
+            log_print(f"❌ [DM] No keyword rules matched the message: '{message_text}'")
+                
         # Process new_message rules ONLY if no keyword rule matched AND no story rule matched
         if not keyword_rule_matched and not story_rule_matched:
-            for rule in new_message_rules:
-                print(f"🔄 Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
-                print(f"✅ 'new_message' rule triggered (no keyword match)!")
-                # Check if this rule is already being processed for this message
-                processing_key = f"{message_id}_{rule.id}"
-                if processing_key in _processing_rules:
-                    print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
-                    continue
-                # Mark as processing
-                _processing_rules[processing_key] = True
-                # Clean cache if too large
-                if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
-                    _processing_rules.clear()
-                # Run in background task to avoid blocking webhook handler
-                asyncio.create_task(execute_automation_action(
-                    rule, 
-                    sender_id, 
-                    account, 
-                    db,
-                    trigger_type="new_message",
-                    message_id=message_id
-                ))
+            if len(new_message_rules) > 0:
+                log_print(f"🎯 [DM] Processing {len(new_message_rules)} 'new_message' rule(s)...")
+                for rule in new_message_rules:
+                    log_print(f"🔄 [DM] Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
+                    log_print(f"✅ [DM] 'new_message' rule triggered (no keyword match)!")
+                    # Check if this rule is already being processed for this message
+                    processing_key = f"{message_id}_{rule.id}"
+                    if processing_key in _processing_rules:
+                        log_print(f"🚫 [DM] Rule {rule.id} already processing for message {message_id}, skipping duplicate")
+                        continue
+                    # Mark as processing
+                    _processing_rules[processing_key] = True
+                    # Clean cache if too large
+                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                        _processing_rules.clear()
+                    # Run in background task to avoid blocking webhook handler
+                    asyncio.create_task(execute_automation_action(
+                        rule, 
+                        sender_id, 
+                        account, 
+                        db,
+                        trigger_type="new_message",
+                        message_id=message_id
+                    ))
+            else:
+                log_print(f"⚠️ [DM] No 'new_message' rules found to process. Keyword/story rule matched or no rules configured.", "WARNING")
         else:
-            print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
+            log_print(f"⏭️ [DM] Skipping 'new_message' rules because keyword/story rule matched")
                 
     except Exception as e:
         print(f"❌ Error processing message: {str(e)}")
