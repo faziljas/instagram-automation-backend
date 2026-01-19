@@ -719,18 +719,35 @@ async def execute_automation_action(
                 else:
                     raise Exception("No access token found for account")
                 
-                # Use appropriate endpoint based on trigger type
-                # For comments, use private_replies endpoint (no 24h window restriction)
-                # For messages/DMs, use standard messages endpoint
+                # Check if auto-reply to comments is enabled for post_comment/live_comment triggers
                 if trigger_type in ["post_comment", "live_comment"] and comment_id:
-                    # Send private reply to comment using Instagram private reply format
-                    # send_private_reply supports page_id=None (uses me/messages)
-                    print(f"💬 Sending private reply to comment: Comment ID={comment_id}")
-                    page_id_for_reply = account.page_id if account.page_id else None
-                    send_private_reply(comment_id, message_template, access_token, page_id_for_reply)
-                    print(f"✅ Private reply sent to comment {comment_id}")
+                    # Check if auto-reply to comments is enabled
+                    auto_reply_to_comments = rule.config.get("auto_reply_to_comments", False)
+                    comment_replies = rule.config.get("comment_replies", [])
+                    
+                    if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
+                        # Filter out empty replies
+                        valid_replies = [r for r in comment_replies if r and str(r).strip()]
+                        if valid_replies:
+                            # Randomly select one comment reply
+                            import random
+                            selected_reply = random.choice(valid_replies)
+                            print(f"💬 Auto-reply enabled: Sending comment reply (selected from {len(valid_replies)} variations)")
+                            page_id_for_reply = account.page_id if account.page_id else None
+                            send_private_reply(comment_id, selected_reply, access_token, page_id_for_reply)
+                            print(f"✅ Comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
+                    
+                    # Always send DM for post_comment/live_comment triggers (if message is configured)
+                    if message_template:
+                        page_id_for_dm = account.page_id if account.page_id else None
+                        if page_id_for_dm:
+                            print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
+                        else:
+                            print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
+                        send_dm_api(sender_id, message_template, access_token, page_id_for_dm)
+                        print(f"✅ DM sent to {sender_id}")
                 else:
-                    # Send standard DM
+                    # Send standard DM for new_message/keyword triggers
                     # send_dm now supports page_id=None (uses me/messages)
                     page_id_for_dm = account.page_id if account.page_id else None
                     if page_id_for_dm:
