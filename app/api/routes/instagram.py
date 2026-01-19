@@ -1231,9 +1231,11 @@ async def get_instagram_media(
         elif media_type == "stories":
             # Fetch stories (requires stories_read permission and different endpoint)
             # Note: Stories are only available for 24 hours after posting
+            # Note: Stories don't have public comments in the traditional sense - interactions are via DMs (replies)
+            # But we'll request comments_count anyway in case Instagram API provides it
             url = f"https://graph.instagram.com/v21.0/{igsid}/stories"
             params = {
-                "fields": "id,media_type,media_url,thumbnail_url,timestamp,media_product_type",
+                "fields": "id,media_type,media_url,thumbnail_url,timestamp,media_product_type,comments_count",
                 "limit": limit,
                 "access_token": access_token
             }
