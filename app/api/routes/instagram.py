@@ -294,7 +294,7 @@ async def process_instagram_message(event: dict, db: Session):
         
         keyword_rules = keyword_rules_query.all()
         
-        print(f"📋 Found {len(new_message_rules)} 'new_message' rules and {len(keyword_rules)} 'keyword' rules for this account")
+        print(f"📋 Found {len(new_message_rules)} 'new_message' rules, {len(keyword_rules)} 'keyword' rules, and {len(story_post_comment_rules)} 'post_comment' rules for story")
         
         # Debug: List all rules for this account to help troubleshoot
         all_rules = db.query(AutomationRule).filter(
@@ -312,7 +312,35 @@ async def process_instagram_message(event: dict, db: Session):
                     keywords_info = f" | Keyword: {rule.config.get('keyword')}"
             print(f"   - Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}{media_info}{keywords_info}")
         
-        # First, check if any keyword rule matches (exact match only)
+        # For story DMs, first check if any story-specific post_comment rule should trigger (any comment/DM on that story)
+        story_rule_matched = False
+        if story_id and story_post_comment_rules:
+            for rule in story_post_comment_rules:
+                print(f"🔄 Processing story 'post_comment' rule: {rule.name or 'Story Rule'} → {rule.action_type}")
+                print(f"✅ Story 'post_comment' rule triggered for story {story_id}!")
+                # Check if this rule is already being processed for this message
+                processing_key = f"{message_id}_{rule.id}"
+                if processing_key in _processing_rules:
+                    print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
+                    continue
+                # Mark as processing
+                _processing_rules[processing_key] = True
+                # Clean cache if too large
+                if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                    _processing_rules.clear()
+                # Run in background task to avoid blocking webhook handler
+                asyncio.create_task(execute_automation_action(
+                    rule, 
+                    sender_id, 
+                    account, 
+                    db,
+                    trigger_type="post_comment",  # Keep original trigger type
+                    message_id=message_id
+                ))
+                story_rule_matched = True
+                break  # Only trigger first matching story rule
+        
+        # Then check if any keyword rule matches (exact match only)
         # If keyword rule matches, ONLY trigger that rule, skip new_message rules
         keyword_rule_matched = False
         for rule in keyword_rules:
