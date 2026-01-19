@@ -325,7 +325,7 @@ async def process_instagram_message(event: dict, db: Session):
                     message_id=message_id
                 ))
             else:
-            print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
+                print(f"⏭️ Skipping 'new_message' rules because keyword rule matched")
                 
     except Exception as e:
         print(f"❌ Error processing message: {str(e)}")
