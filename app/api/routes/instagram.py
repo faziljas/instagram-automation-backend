@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import sys
+import logging
 import requests
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -15,6 +17,23 @@ from app.utils.auth import verify_token
 from app.utils.plan_enforcement import check_account_limit
 
 router = APIRouter()
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
+
+# Helper function to log to both logger and print (for backward compatibility)
+def log_print(message: str, level: str = "INFO"):
+    """Log message using logging module and also print for immediate visibility"""
+    if level == "INFO":
+        logger.info(message)
+    elif level == "WARNING":
+        logger.warning(message)
+    elif level == "ERROR":
+        logger.error(message)
+    elif level == "DEBUG":
+        logger.debug(message)
+    # Also print with flush for immediate output (Render compatibility)
+    print(message, file=sys.stderr, flush=True)
 
 # In-memory cache to track recently processed message IDs (prevents duplicate processing)
 # Note: This is cleared on restart, but should prevent short-term loops
@@ -72,18 +91,18 @@ async def verify_webhook(
     """
     verify_token = os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", "my_verify_token_123")
      
-    print(f"🔔 Webhook verification request:")
-    print(f"   mode={hub_mode}, challenge={hub_challenge}, token={hub_verify_token}")
-    print(f"   Expected token: {verify_token}")
+    log_print(f"🔔 Webhook verification request:")
+    log_print(f"   mode={hub_mode}, challenge={hub_challenge}, token={hub_verify_token}")
+    log_print(f"   Expected token: {verify_token}")
 
     if hub_mode == "subscribe" and hub_verify_token == verify_token:
         # Meta expects plain text response, not JSON
         # Return challenge as plain text string
         from fastapi.responses import Response
-        print(f"✅ Verification successful! Returning challenge: {hub_challenge}")
+        log_print(f"✅ Verification successful! Returning challenge: {hub_challenge}")
         return Response(content=hub_challenge, media_type="text/plain")
     
-    print(f"❌ Verification failed! Token mismatch or invalid mode")
+    log_print(f"❌ Verification failed! Token mismatch or invalid mode", "ERROR")
     raise HTTPException(status_code=403, detail="Invalid verify token")
 
 @router.post("/webhook")
@@ -98,11 +117,11 @@ async def receive_webhook(
     try:
         # Log request headers for debugging
         headers_dict = dict(request.headers)
-        print(f"📥 Received webhook request:")
-        print(f"   Headers: {json.dumps({k: v for k, v in headers_dict.items() if k.lower() in ['content-type', 'x-hub-signature', 'x-hub-signature-256']}, indent=2)}")
+        log_print(f"📥 Received webhook request:")
+        log_print(f"   Headers: {json.dumps({k: v for k, v in headers_dict.items() if k.lower() in ['content-type', 'x-hub-signature', 'x-hub-signature-256']}, indent=2)}")
         
         body = await request.json()
-        print(f"📥 Received webhook body: {json.dumps(body, indent=2)}")
+        log_print(f"📥 Received webhook body: {json.dumps(body, indent=2)}")
         
         # Process webhook event
         if body.get("object") == "instagram":
@@ -124,7 +143,7 @@ async def receive_webhook(
                             event_type = "standby"
                         else:
                             event_type = "unknown"
-                        print(f"⏭️ Skipping {event_type} event (not a regular message)")
+                        log_print(f"⏭️ Skipping {event_type} event (not a regular message)")
                 
                 # Process changes (comments, live comments, etc.)
                 for change in entry.get("changes", []):
@@ -139,9 +158,9 @@ async def receive_webhook(
         
         return {"status": "success"}
     except Exception as e:
-        print(f"❌ Webhook error: {str(e)}")
+        log_print(f"❌ Webhook error: {str(e)}", "ERROR")
         import traceback
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stderr)
         # Always return 200 to Meta to prevent retries
         return {"status": "error", "message": str(e)}
 
@@ -150,7 +169,7 @@ async def process_instagram_message(event: dict, db: Session):
     try:
         # Validate that this is a regular message event (not message_edit, etc.)
         if "message" not in event:
-            print(f"⚠️ Skipping event - no 'message' field found. Event keys: {list(event.keys())}")
+            log_print(f"⚠️ Skipping event - no 'message' field found. Event keys: {list(event.keys())}", "WARNING")
             return
         
         sender_id = event.get("sender", {}).get("id")
@@ -163,18 +182,18 @@ async def process_instagram_message(event: dict, db: Session):
         story_id = None
         if message.get("reply_to", {}).get("story", {}).get("id"):
             story_id = str(message.get("reply_to", {}).get("story", {}).get("id"))
-            print(f"📖 Story reply detected - Story ID: {story_id}")
+            log_print(f"📖 Story reply detected - Story ID: {story_id}")
         
         # Deduplication: Skip if we've already processed this message
         if message_id and message_id in _processed_message_ids:
-            print(f"🚫 Ignoring duplicate message (already processed): mid={message_id}")
+            log_print(f"🚫 Ignoring duplicate message (already processed): mid={message_id}")
             return
         
         # Check for echo messages (messages sent by the bot itself)
         # Echo can be at message level or event level
         is_echo = message.get("is_echo", False) or event.get("is_echo", False)
         if is_echo:
-            print(f"🚫 Ignoring bot's own message (echo flag): {message_text}")
+            log_print(f"🚫 Ignoring bot's own message (echo flag): {message_text}")
             if message_id:
                 _processed_message_ids.add(message_id)
                 # Clean cache if it gets too large

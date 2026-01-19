@@ -1,6 +1,23 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import logging
+import sys
+
+# Configure logging for Render compatibility
+# Render captures stdout/stderr, but logging module is more reliable
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),  # Use stdout for Render
+        logging.StreamHandler(sys.stderr)   # Also use stderr as backup
+    ],
+    force=True  # Override any existing configuration
+)
+
+logger = logging.getLogger(__name__)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router
