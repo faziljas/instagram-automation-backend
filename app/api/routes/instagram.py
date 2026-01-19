@@ -283,7 +283,18 @@ async def process_instagram_message(event: dict, db: Session):
                 AutomationRule.is_active == True,
                 AutomationRule.media_id == story_id
             ).all()
-            print(f"🔍 Found {len(story_post_comment_rules)} 'post_comment' rules for story_id: {story_id}")
+            log_print(f"🔍 [STORY DM] Looking for rules with story_id: {story_id}")
+            log_print(f"📋 [STORY DM] Found {len(story_post_comment_rules)} 'post_comment' rules for story_id: {story_id}")
+            
+            # If no rules found, list all rules to help debug
+            if len(story_post_comment_rules) == 0:
+                all_story_rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
+                log_print(f"⚠️ [STORY DM] NO rules found for story {story_id}! Available rules:", "WARNING")
+                for rule in all_story_rules:
+                    log_print(f"   - {rule.name}: trigger={rule.trigger_type}, media_id={rule.media_id}")
         
         # new_message rules (work for all DMs including stories)
         new_message_rules = db.query(AutomationRule).filter(
@@ -339,9 +350,10 @@ async def process_instagram_message(event: dict, db: Session):
         # For story DMs, first check if any story-specific post_comment rule should trigger (any comment/DM on that story)
         story_rule_matched = False
         if story_id and story_post_comment_rules:
+            log_print(f"🎯 [STORY DM] Processing {len(story_post_comment_rules)} story rule(s) for story {story_id}")
             for rule in story_post_comment_rules:
-                print(f"🔄 Processing story 'post_comment' rule: {rule.name or 'Story Rule'} → {rule.action_type}")
-                print(f"✅ Story 'post_comment' rule triggered for story {story_id}!")
+                log_print(f"🔄 [STORY DM] Processing story 'post_comment' rule: {rule.name or 'Story Rule'} → {rule.action_type}")
+                log_print(f"✅ [STORY DM] Story 'post_comment' rule triggered for story {story_id}!")
                 # Check if this rule is already being processed for this message
                 processing_key = f"{message_id}_{rule.id}"
                 if processing_key in _processing_rules:
