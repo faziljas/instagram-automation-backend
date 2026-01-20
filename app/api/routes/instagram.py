@@ -1457,7 +1457,7 @@ async def execute_automation_action(
                     try:
                         if 'account_page_id' in locals():
                             page_id_for_dm = account_page_id
-                else:
+                        else:
                             page_id_for_dm = account.page_id if account.page_id else None
                     except Exception:
                         # If detached, use None (not critical for DM sending)
