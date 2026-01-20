@@ -1188,9 +1188,10 @@ async def execute_automation_action(
                     print(f"📧 Sending email request DM to {sender_id} with Quick Reply buttons")
                     
                     # Schedule primary DM after 5 seconds (if email not provided)
-                    # Store user_id and rule_id before background task
+                    # Store user_id, rule_id, and account_id before background task
                     user_id_for_dm = account.user_id
                     rule_id_for_dm = rule.id
+                    account_id_for_dm = account.id
                     
                     async def delayed_primary_dm():
                         # Create a new DB session for the background task
@@ -1200,7 +1201,7 @@ async def execute_automation_action(
                             await asyncio.sleep(5)  # Wait 5 seconds
                             # Re-fetch rule and account in the new session
                             rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
-                            account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.user_id == user_id_for_dm, InstagramAccount.id == account.id).first()
+                            account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.user_id == user_id_for_dm, InstagramAccount.id == account_id_for_dm).first()
                             
                             if not rule_refresh or not account_refresh:
                                 print(f"⚠️ Rule or account not found in delayed primary DM")
