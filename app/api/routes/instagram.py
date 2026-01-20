@@ -188,14 +188,30 @@ async def process_instagram_message(event: dict, db: Session):
         message_text = message.get("text", "")
         message_id = message.get("mid")  # Message ID for deduplication
         
+        # Check for echo messages (messages sent by the bot itself) FIRST before processing
+        is_echo = message.get("is_echo", False) or event.get("is_echo", False)
+        if is_echo:
+            log_print(f"🚫 Ignoring bot's own message (echo flag)")
+            if message_id:
+                _processed_message_ids.add(message_id)
+                # Clean cache if it gets too large
+                if len(_processed_message_ids) > _MAX_CACHE_SIZE:
+                    _processed_message_ids.clear()
+            return
+        
         # Get account first (before checking pre-DM responses)
-        account = db.query(InstagramAccount).filter(InstagramAccount.igsid == recipient_id).first()
+        from app.models.instagram_account import InstagramAccount
+        account = db.query(InstagramAccount).filter(InstagramAccount.igsid == str(recipient_id)).first()
         if not account:
             # Fallback to username matching
             account = db.query(InstagramAccount).filter(InstagramAccount.username == event.get("recipient", {}).get("username", "")).first()
         
+        if not account:
+            log_print(f"❌ No Instagram account found for recipient {recipient_id}", "ERROR")
+            return
+        
         # Check if this is a quick reply button click (e.g., "Share Email" or "Skip for Now")
-        if account and "message" in event and "quick_reply" in event.get("message", {}):
+        if "message" in event and "quick_reply" in event.get("message", {}):
             quick_reply_payload = event["message"]["quick_reply"].get("payload", "")
             log_print(f"🔘 Quick reply clicked: Payload='{quick_reply_payload}' from {sender_id}")
             
@@ -1145,6 +1161,50 @@ async def execute_automation_action(
                     ]
                     pre_dm_result["quick_replies"] = quick_replies
                     print(f"📧 Sending email request DM to {sender_id} with Quick Reply buttons")
+                    
+                    # Schedule primary DM after 5 seconds (if email not provided)
+                    # Store user_id and rule_id before background task
+                    user_id_for_dm = account.user_id
+                    rule_id_for_dm = rule.id
+                    
+                    async def delayed_primary_dm():
+                        # Create a new DB session for the background task
+                        from app.db.session import SessionLocal
+                        db_session = SessionLocal()
+                        try:
+                            await asyncio.sleep(5)  # Wait 5 seconds
+                            # Re-fetch rule and account in the new session
+                            rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
+                            account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.user_id == user_id_for_dm, InstagramAccount.id == account.id).first()
+                            
+                            if not rule_refresh or not account_refresh:
+                                print(f"⚠️ Rule or account not found in delayed primary DM")
+                                return
+                            
+                            # Check if primary DM hasn't been sent yet and email wasn't provided
+                            from app.services.pre_dm_handler import get_pre_dm_state
+                            current_state = get_pre_dm_state(sender_id, rule_id_for_dm)
+                            if not current_state.get("primary_dm_sent") and not current_state.get("email_received"):
+                                # Proceed to primary DM (skip email collection)
+                                pre_dm_result_for_primary = await process_pre_dm_actions(
+                                    rule_refresh, sender_id, account_refresh, db_session,
+                                    trigger_type="email_timeout"  # Use different trigger type
+                                )
+                                if pre_dm_result_for_primary["action"] == "send_primary":
+                                    await execute_automation_action(
+                                        rule_refresh, sender_id, account_refresh, db_session,
+                                        trigger_type="email_timeout",
+                                        message_id=None
+                                    )
+                        except Exception as e:
+                            print(f"❌ Error in delayed primary DM: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                        finally:
+                            db_session.close()
+                    
+                    # Start the delayed primary DM
+                    asyncio.create_task(delayed_primary_dm())
                 elif pre_dm_result["action"] == "wait_for_email":
                     # Still waiting for email response, don't send anything yet
                     print(f"⏳ Waiting for email response from {sender_id}")

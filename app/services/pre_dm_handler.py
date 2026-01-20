@@ -247,8 +247,9 @@ async def process_pre_dm_actions(
             }
     
     # Initial trigger - start pre-DM sequence
-    # Also handle timeout trigger (20 seconds after follow button sent)
-    if trigger_type in ["post_comment", "keyword", "new_message", "timeout"] and not state.get("primary_dm_sent"):
+    # Also handle timeout trigger (5 seconds after follow button sent)
+    # Handle email_timeout trigger (5 seconds after email request sent)
+    if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout"] and not state.get("primary_dm_sent"):
         # Step 1: Send Follow Request (if enabled and not sent yet)
         if ask_to_follow and not state.get("follow_request_sent"):
             update_pre_dm_state(sender_id, rule.id, {
