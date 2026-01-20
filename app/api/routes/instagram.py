@@ -1132,8 +1132,8 @@ async def execute_automation_action(
                 if pre_dm_result["action"] == "send_follow_request":
                     # Send follow request message with Follow button
                     message_template = pre_dm_result["message"]
-                    # Get profile URL for follow button
-                    profile_url = f"https://www.instagram.com/{account.username}/"
+                    # Get profile URL for follow button (use stored username to avoid DetachedInstanceError)
+                    profile_url = f"https://www.instagram.com/{username}/"
                     # Create Follow button
                     buttons = [{
                         "text": "Follow Me",
@@ -1143,10 +1143,10 @@ async def execute_automation_action(
                     print(f"📩 Sending follow request DM to {sender_id} with Follow button")
                     
                     # Schedule email request after 5 seconds (regardless of button click)
-                    # Store user_id and rule_id before background task to avoid DetachedInstanceError
-                    user_id_email = account.user_id
-                    rule_id_email = rule.id
-                    account_id_email = account.id
+                    # Use already-stored values to avoid DetachedInstanceError
+                    user_id_email = user_id
+                    rule_id_email = rule_id
+                    account_id_email = account_id
                     
                     import asyncio
                     async def delayed_email_request():
@@ -1207,10 +1207,10 @@ async def execute_automation_action(
                     print(f"📧 Sending email request DM to {sender_id} with Quick Reply buttons")
                     
                     # Schedule primary DM after 5 seconds (if email not provided)
-                    # Store user_id, rule_id, and account_id before background task
-                    user_id_for_dm = account.user_id
-                    rule_id_for_dm = rule.id
-                    account_id_for_dm = account.id
+                    # Use already-stored values to avoid DetachedInstanceError
+                    user_id_for_dm = user_id
+                    rule_id_for_dm = rule_id
+                    account_id_for_dm = account_id
                     
                     async def delayed_primary_dm():
                         # Create a new DB session for the background task
