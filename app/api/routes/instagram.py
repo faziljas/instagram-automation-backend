@@ -346,7 +346,7 @@ async def process_instagram_message(event: dict, db: Session):
         
         log_print(f"📨 [DM] Message from {sender_id} (type: {type(sender_id).__name__}) to {recipient_id}: {message_text} (mid: {message_id})")
         
-        # Match Instagram account by IGSID (recipient_id should be the bot's IGSID)
+        # Find account using Smart Fallback (same as comment webhook logic)
         from app.models.instagram_account import InstagramAccount
         log_print(f"🔍 [DM] Looking for Instagram account (IGSID: {recipient_id})")
         
@@ -356,16 +356,68 @@ async def process_instagram_message(event: dict, db: Session):
             InstagramAccount.is_active == True
         ).first()
         
-        # Fallback to first active account if IGSID matching fails
-        if not account:
-            log_print(f"⚠️ [DM] No account found by IGSID, trying fallback...", "WARNING")
-            account = db.query(InstagramAccount).filter(
-                InstagramAccount.is_active == True
-            ).first()
+        if account:
+            log_print(f"✅ [DM] Found account by IGSID: {account.username} (ID: {account.id}, User ID: {account.user_id})")
+        else:
+            # Smart Fallback: If IGSID not stored, find account that has rules for this trigger
+            log_print(f"⚠️ [DM] No account found by IGSID, trying smart fallback matching...", "WARNING")
+            from app.models.automation_rule import AutomationRule
+            
+            # Find account that has active rules for DM triggers (new_message or keyword)
+            accounts_with_rules = db.query(InstagramAccount).join(AutomationRule).filter(
+                InstagramAccount.is_active == True,
+                AutomationRule.trigger_type.in_(["new_message", "keyword"]),
+                AutomationRule.is_active == True
+            ).all()
+            
+            if accounts_with_rules:
+                account = accounts_with_rules[0]
+                log_print(f"✅ [DM] Found account with matching rules: {account.username} (ID: {account.id})")
+                log_print(f"   NOTE: Re-connect via OAuth to store IGSID ({recipient_id}) for accurate matching")
+            else:
+                # Last resort: use first active account
+                account = db.query(InstagramAccount).filter(
+                    InstagramAccount.is_active == True
+                ).first()
+                if account:
+                    log_print(f"⚠️ [DM] Using first active account: {account.username} (ID: {account.id})")
+                    log_print(f"   NOTE: Re-connect Instagram account via OAuth to store IGSID ({recipient_id})")
         
         if not account:
             log_print(f"❌ [DM] No active Instagram accounts found", "ERROR")
             return
+        
+        # Now handle quick reply skip if needed (account is now available)
+        if "message" in event and "quick_reply" in event.get("message", {}):
+            quick_reply_payload = event["message"]["quick_reply"].get("payload", "")
+            if quick_reply_payload == "email_skip":
+                # User clicked "Skip for Now" - proceed to primary DM
+                log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
+                # Find active rules and proceed to primary DM
+        from app.models.automation_rule import AutomationRule
+        rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True,
+                    AutomationRule.action_type == "send_dm"
+                ).all()
+                for rule in rules:
+                    if rule.config.get("ask_for_email", False):
+                        # Update state to skip email
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "email_skipped": True,
+                            "email_request_sent": True  # Mark as sent to prevent re-asking
+                        })
+                        # Proceed to primary DM
+                        asyncio.create_task(execute_automation_action(
+                            rule, sender_id, account, db,
+                            trigger_type="email_skip",
+                            message_id=message_id
+                        ))
+                return  # Don't process as regular message
+        
+        # Now check pre-DM responses (account is now available)
+        if account and message_text:
         
         # CRITICAL: Check if sender is the bot itself
         # Compare sender_id with account IGSID AND page_id (both can be the bot)
@@ -578,13 +630,14 @@ async def process_instagram_message(event: dict, db: Session):
                     # Check if this rule is already being processed for this message
                     processing_key = f"{message_id}_{rule.id}"
                     if processing_key in _processing_rules:
-                        log_print(f"🚫 [DM] Rule {rule.id} already processing for message {message_id}, skipping duplicate")
+                        log_print(f"🚫 Skipping execution: Rule {rule.id} already processing for message {message_id} (User {sender_id} already received this DM)")
                         continue
                     # Mark as processing
                     _processing_rules[processing_key] = True
                     # Clean cache if too large
                     if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                         _processing_rules.clear()
+                    log_print(f"🚀 Executing automation action for new_message rule '{rule.name}' (Rule ID: {rule.id}, Sender: {sender_id})")
                     # Run in background task to avoid blocking webhook handler
                     asyncio.create_task(execute_automation_action(
                         rule, 
@@ -815,12 +868,13 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                 # Check if this rule is already being processed for this comment
                 processing_key = f"{comment_id}_{rule.id}"
                 if processing_key in _processing_rules:
-                    print(f"🚫 Rule {rule.id} already processing for comment {comment_id}, skipping duplicate")
+                    print(f"🚫 Skipping execution: Rule {rule.id} already processing for comment {comment_id} (User {commenter_id} already received this DM)")
                     continue
                 # Mark as processing
                 _processing_rules[processing_key] = True
                 if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                     _processing_rules.clear()
+                print(f"🚀 Executing automation action for post_comment rule '{rule.name}' (Rule ID: {rule.id}, Commenter: {commenter_id})")
                 # Run in background task
                 asyncio.create_task(execute_automation_action(
                     rule, 
@@ -1006,12 +1060,13 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                         # Check if this rule is already being processed for this comment
                         processing_key = f"{comment_id}_{rule.id}"
                         if processing_key in _processing_rules:
-                            print(f"🚫 Rule {rule.id} already processing for live comment {comment_id}, skipping duplicate")
+                            print(f"🚫 Skipping execution: Rule {rule.id} already processing for live comment {comment_id} (User {commenter_id} already received this DM)")
                             break
                         # Mark as processing
                         _processing_rules[processing_key] = True
                         if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                             _processing_rules.clear()
+                        print(f"🚀 Executing automation action for live keyword rule '{rule.name}' (Rule ID: {rule.id}, Commenter: {commenter_id})")
                         # Run in background task
                         asyncio.create_task(execute_automation_action(
                             rule,
