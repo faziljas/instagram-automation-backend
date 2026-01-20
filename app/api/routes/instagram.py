@@ -1629,7 +1629,35 @@ def delete_instagram_account(
             detail="Instagram account not found or you don't have permission to delete it"
         )
     
-    # Delete associated automation rules
+    # Get all automation rules for this account
+    from app.models.automation_rule import AutomationRule
+    automation_rules = db.query(AutomationRule).filter(
+        AutomationRule.instagram_account_id == account_id
+    ).all()
+    
+    # For each rule, delete associated stats and leads first (to avoid foreign key constraint violation)
+    from app.models.automation_rule_stats import AutomationRuleStats
+    from app.models.captured_lead import CapturedLead
+    
+    for rule in automation_rules:
+        # Delete automation rule stats
+        stats = db.query(AutomationRuleStats).filter(
+            AutomationRuleStats.automation_rule_id == rule.id
+        ).all()
+        for stat in stats:
+            db.delete(stat)
+        
+        # Delete captured leads
+        leads = db.query(CapturedLead).filter(
+            CapturedLead.automation_rule_id == rule.id
+        ).all()
+        for lead in leads:
+            db.delete(lead)
+    
+    # Flush to ensure deletions are processed before deleting rules
+    db.flush()
+    
+    # Now delete the automation rules
     db.query(AutomationRule).filter(
         AutomationRule.instagram_account_id == account_id
     ).delete()
