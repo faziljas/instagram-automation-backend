@@ -839,16 +839,23 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                 if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                     _processing_rules.clear()
                 print(f"🚀 Executing automation action for post_comment rule '{rule.name}' (Rule ID: {rule.id}, Commenter: {commenter_id})")
-                # Run in background task
-                asyncio.create_task(execute_automation_action(
-                    rule, 
-                    commenter_id, 
-                    account, 
-                    db,
-                    trigger_type="post_comment",
-                    comment_id=comment_id,
-                    message_id=comment_id  # Use comment_id as identifier
-                ))
+                # Run in background task with error handling
+                async def run_with_error_handling():
+                    try:
+                        await execute_automation_action(
+                            rule, 
+                            commenter_id, 
+                            account, 
+                            db,
+                            trigger_type="post_comment",
+                            comment_id=comment_id,
+                            message_id=comment_id  # Use comment_id as identifier
+                        )
+                    except Exception as e:
+                        print(f"❌ [TASK ERROR] Error in execute_automation_action task: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                asyncio.create_task(run_with_error_handling())
         else:
             print(f"⏭️ Skipping 'post_comment' rules because keyword rule matched")
                 
@@ -1826,9 +1833,11 @@ async def execute_automation_action(
             # TODO: Implement list management
             
     except Exception as e:
-        print(f"❌ Error executing action: {str(e)}")
+        print(f"❌ [EXECUTE] CRITICAL ERROR in execute_automation_action: {str(e)}")
+        print(f"❌ [EXECUTE] Rule ID: {rule.id if rule else 'None'}, Sender: {sender_id}")
         import traceback
         traceback.print_exc()
+        raise  # Re-raise to be caught by task wrapper
     finally:
         # Clean up processing cache after completion (whether success or failure)
         # Use comment_id if available (for comments), otherwise message_id (for DMs)
