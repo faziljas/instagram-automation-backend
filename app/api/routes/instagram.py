@@ -1086,9 +1086,11 @@ async def execute_automation_action(
     try:
         if rule.action_type == "send_dm":
             # Check monthly DM limit BEFORE sending
+            # Store user_id first to avoid DetachedInstanceError in background tasks
+            user_id = account.user_id
             from app.utils.plan_enforcement import check_dm_limit
-            if not check_dm_limit(account.user_id, db):
-                print(f"⚠️ Monthly DM limit reached for user {account.user_id}. Skipping DM send.")
+            if not check_dm_limit(user_id, db):
+                print(f"⚠️ Monthly DM limit reached for user {user_id}. Skipping DM send.")
                 return  # Don't send DM if limit reached
             
             # Initialize message_template
