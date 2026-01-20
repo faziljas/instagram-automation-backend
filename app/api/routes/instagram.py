@@ -1148,46 +1148,59 @@ async def execute_automation_action(
                     rule_id_email = rule_id
                     account_id_email = account_id
                     
-                    import asyncio
-                    async def delayed_email_request():
+                    # Schedule email request after 5 seconds using asyncio task
+                    # Store all IDs to avoid DetachedInstanceError
+                    sender_id_for_task = str(sender_id)
+                    rule_id_for_task = int(rule_id_email)
+                    user_id_for_task = int(user_id_email)
+                    account_id_for_task = int(account_id_email)
+                    
+                    async def delayed_email_request_task():
+                        """Background task to send email request after 5 seconds."""
                         # Create a new DB session for the background task
                         from app.db.session import SessionLocal
+                        from app.models.automation_rule import AutomationRule
+                        from app.models.instagram_account import InstagramAccount
+                        
                         db_session = SessionLocal()
                         try:
-                            print(f"⏰ [DELAYED EMAIL] Starting 5-second delay for sender {sender_id}, rule {rule_id_email}")
+                            print(f"⏰ [DELAYED EMAIL] Starting 5-second delay for sender {sender_id_for_task}, rule {rule_id_for_task}")
                             await asyncio.sleep(5)  # Wait 5 seconds
-                            print(f"⏰ [DELAYED EMAIL] 5 seconds elapsed, checking state for sender {sender_id}, rule {rule_id_email}")
+                            print(f"⏰ [DELAYED EMAIL] 5 seconds elapsed, checking state for sender {sender_id_for_task}, rule {rule_id_for_task}")
                             
-                            # Re-fetch rule and account in the new session
-                            rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_email).first()
-                            account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.user_id == user_id_email, InstagramAccount.id == account_id_email).first()
+                            # Re-fetch rule and account in the new session using IDs
+                            rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_task).first()
+                            account_refresh = db_session.query(InstagramAccount).filter(
+                                InstagramAccount.user_id == user_id_for_task,
+                                InstagramAccount.id == account_id_for_task
+                            ).first()
                             
                             if not rule_refresh:
-                                print(f"⚠️ [DELAYED EMAIL] Rule {rule_id_email} not found in delayed email request")
+                                print(f"⚠️ [DELAYED EMAIL] Rule {rule_id_for_task} not found in delayed email request")
                                 return
                             if not account_refresh:
-                                print(f"⚠️ [DELAYED EMAIL] Account not found in delayed email request")
+                                print(f"⚠️ [DELAYED EMAIL] Account {account_id_for_task} not found for user {user_id_for_task}")
                                 return
                             
                             print(f"✅ [DELAYED EMAIL] Found rule and account, checking pre-DM state")
                             
                             # Check if email request hasn't been sent yet
                             from app.services.pre_dm_handler import get_pre_dm_state
-                            current_state = get_pre_dm_state(sender_id, rule_id_email)
+                            current_state = get_pre_dm_state(sender_id_for_task, rule_id_for_task)
                             print(f"📊 [DELAYED EMAIL] Current state: email_request_sent={current_state.get('email_request_sent')}, primary_dm_sent={current_state.get('primary_dm_sent')}")
                             
                             if not current_state.get("email_request_sent") and not current_state.get("primary_dm_sent"):
                                 print(f"✅ [DELAYED EMAIL] Proceeding to send email request")
                                 # Proceed to email request
                                 pre_dm_result_after_delay = await process_pre_dm_actions(
-                                    rule_refresh, sender_id, account_refresh, db_session,
+                                    rule_refresh, sender_id_for_task, account_refresh, db_session,
                                     trigger_type="timeout"  # Use "timeout" to distinguish from user interaction
                                 )
                                 print(f"📋 [DELAYED EMAIL] Pre-DM result action: {pre_dm_result_after_delay.get('action')}")
                                 if pre_dm_result_after_delay["action"] == "send_email_request":
                                     print(f"✅ [DELAYED EMAIL] Executing automation action to send email request")
                                     await execute_automation_action(
-                                        rule_refresh, sender_id, account_refresh, db_session,
+                                        rule_refresh, sender_id_for_task, account_refresh, db_session,
                                         trigger_type="timeout",
                                         message_id=None
                                     )
@@ -1202,10 +1215,14 @@ async def execute_automation_action(
                             traceback.print_exc()
                         finally:
                             db_session.close()
+                            print(f"🔒 [DELAYED EMAIL] Database session closed")
                     
-                    # Start the delayed email request
-                    print(f"🚀 [DELAYED EMAIL] Scheduling delayed email request task for sender {sender_id}, rule {rule_id_email}")
-                    asyncio.create_task(delayed_email_request())
+                    # Start the delayed email request task
+                    import asyncio
+                    print(f"🚀 [DELAYED EMAIL] Scheduling delayed email request task for sender {sender_id_for_task}, rule {rule_id_for_task}")
+                    task = asyncio.create_task(delayed_email_request_task())
+                    # Store task reference to prevent garbage collection (optional but recommended)
+                    # Note: In production, you might want to track these tasks in a set
                 elif pre_dm_result["action"] == "send_email_request":
                     # Send email request message with Quick Reply buttons
                     message_template = pre_dm_result["message"]
