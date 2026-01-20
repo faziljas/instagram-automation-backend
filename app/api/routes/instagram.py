@@ -194,6 +194,42 @@ async def process_instagram_message(event: dict, db: Session):
             # Fallback to username matching
             account = db.query(InstagramAccount).filter(InstagramAccount.username == event.get("recipient", {}).get("username", "")).first()
         
+        # Check if this is a quick reply button click (e.g., "Share Email" or "Skip for Now")
+        if account and "message" in event and "quick_reply" in event.get("message", {}):
+            quick_reply_payload = event["message"]["quick_reply"].get("payload", "")
+            log_print(f"🔘 Quick reply clicked: Payload='{quick_reply_payload}' from {sender_id}")
+            
+            # Handle email quick reply
+            if quick_reply_payload == "email_shared":
+                # User clicked "Share Email" - treat as intent to share email, wait for their message
+                log_print(f"✅ User clicked 'Share Email' button, waiting for email input from {sender_id}")
+                # Continue processing as a regular message (they'll type their email next)
+            elif quick_reply_payload == "email_skip":
+                # User clicked "Skip for Now" - proceed to primary DM
+                log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
+                # Find active rules and proceed to primary DM
+                from app.models.automation_rule import AutomationRule
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True,
+                    AutomationRule.action_type == "send_dm"
+                ).all()
+                for rule in rules:
+                    if rule.config.get("ask_for_email", False):
+                        # Update state to skip email
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "email_skipped": True,
+                            "email_request_sent": True  # Mark as sent to prevent re-asking
+                        })
+                        # Proceed to primary DM
+                        asyncio.create_task(execute_automation_action(
+                            rule, sender_id, account, db,
+                            trigger_type="email_skip",
+                            message_id=message_id
+                        ))
+                return  # Don't process as regular message
+        
         # Check if this might be a response to a pre-DM follow/email request
         if account and message_text:
             from app.models.automation_rule import AutomationRule
@@ -1064,15 +1100,51 @@ async def execute_automation_action(
                     # Create Follow button
                     buttons = [{
                         "text": "Follow Me",
-                        "url": profile_url,
-                        "payload": "follow_clicked"  # For tracking button clicks
+                        "url": profile_url
                     }]
                     pre_dm_result["buttons"] = buttons
                     print(f"📩 Sending follow request DM to {sender_id} with Follow button")
+                    
+                    # Schedule email request after 20 seconds (regardless of button click)
+                    import asyncio
+                    async def delayed_email_request():
+                        await asyncio.sleep(20)  # Wait 20 seconds
+                        # Check if email request hasn't been sent yet
+                        from app.services.pre_dm_handler import get_pre_dm_state
+                        current_state = get_pre_dm_state(sender_id, rule.id)
+                        if not current_state.get("email_request_sent") and not current_state.get("primary_dm_sent"):
+                            # Proceed to email request
+                            pre_dm_result_after_delay = await process_pre_dm_actions(
+                                rule, sender_id, account, db,
+                                trigger_type="timeout"  # Use "timeout" to distinguish from user interaction
+                            )
+                            if pre_dm_result_after_delay["action"] == "send_email_request":
+                                asyncio.create_task(execute_automation_action(
+                                    rule, sender_id, account, db,
+                                    trigger_type="timeout",
+                                    message_id=message_id
+                                ))
+                    
+                    # Start the delayed email request
+                    asyncio.create_task(delayed_email_request())
                 elif pre_dm_result["action"] == "send_email_request":
-                    # Send email request message
+                    # Send email request message with Quick Reply buttons
                     message_template = pre_dm_result["message"]
-                    print(f"📧 Sending email request DM to {sender_id}")
+                    # Create Quick Reply buttons for email collection (similar to Follow button UX)
+                    quick_replies = [
+                        {
+                            "content_type": "text",
+                            "title": "Share Email",
+                            "payload": "email_shared"
+                        },
+                        {
+                            "content_type": "text",
+                            "title": "Skip for Now",
+                            "payload": "email_skip"
+                        }
+                    ]
+                    pre_dm_result["quick_replies"] = quick_replies
+                    print(f"📧 Sending email request DM to {sender_id} with Quick Reply buttons")
                 elif pre_dm_result["action"] == "wait_for_email":
                     # Still waiting for email response, don't send anything yet
                     print(f"⏳ Waiting for email response from {sender_id}")
@@ -1202,12 +1274,20 @@ async def execute_automation_action(
                         buttons = rule.config.get("buttons")
                         print(f"📎 Found {len(buttons)} button(s) in rule config")
                     
+                    # Get quick replies from pre_dm_result (for email collection)
+                    quick_replies = None
+                    if pre_dm_result and pre_dm_result.get("quick_replies"):
+                        quick_replies = pre_dm_result.get("quick_replies")
+                        print(f"📎 Using {len(quick_replies)} quick reply button(s) from pre-DM result")
+                    
                     page_id_for_dm = account.page_id if account.page_id else None
                     if page_id_for_dm:
                         print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
                     else:
                         print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
-                    send_dm_api(sender_id, message_template, access_token, page_id_for_dm, buttons)
+                    # Import send_dm and call it with quick_replies
+                    from app.utils.instagram_api import send_dm
+                    send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
                     print(f"✅ DM sent to {sender_id}")
                     
                     # Update stats

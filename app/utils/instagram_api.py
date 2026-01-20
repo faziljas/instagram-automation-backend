@@ -123,7 +123,7 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
     return result
 
 
-def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None) -> dict:
+def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None, quick_replies: list = None) -> dict:
     """
     Send a direct message to an Instagram user with optional buttons/quick replies.
     
@@ -139,7 +139,9 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
         page_access_token: The Instagram Business Account access token (Instagram-native)
         page_id: Optional page ID. For Instagram-native tokens, this is typically None (uses me/messages)
         buttons: Optional list of button objects with format: [{"text": "Button Text", "url": "https://..."}]
-                 Maximum 13 buttons, text max 20 characters
+                 Maximum 3 buttons for generic template, text max 20 characters
+        quick_replies: Optional list of quick reply objects with format: [{"content_type": "text", "title": "Button Text", "payload": "PAYLOAD"}]
+                      Maximum 13 quick replies, title max 20 characters
         
     Returns:
         dict: API response
@@ -215,6 +217,37 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
         message_payload = {
             "text": message
         }
+    
+    # Add quick replies if provided (Quick Replies work with both text and template messages)
+    if quick_replies and isinstance(quick_replies, list) and len(quick_replies) > 0:
+        # Filter valid quick replies (must have content_type, title, and payload)
+        valid_quick_replies = [
+            qr for qr in quick_replies 
+            if qr.get("content_type") and qr.get("title") and qr.get("payload")
+        ]
+        if valid_quick_replies:
+            # Limit to 13 quick replies (Instagram's max)
+            valid_quick_replies = valid_quick_replies[:13]
+            
+            # Build quick reply array
+            quick_reply_buttons = []
+            for qr in valid_quick_replies:
+                # Truncate title to 20 characters (Instagram's max)
+                qr_title = str(qr["title"])[:20]
+                qr_payload = str(qr["payload"])
+                qr_content_type = str(qr["content_type"])
+                
+                quick_reply_buttons.append({
+                    "content_type": qr_content_type,
+                    "title": qr_title,
+                    "payload": qr_payload
+                })
+            
+            if quick_reply_buttons:
+                message_payload["quick_replies"] = quick_reply_buttons
+                print(f"   Added {len(quick_reply_buttons)} quick reply button(s)")
+                for i, qr in enumerate(quick_reply_buttons, 1):
+                    print(f"      Quick Reply {i}: {qr['title']} (payload: {qr['payload']})")
     
     payload = {
         "recipient": {"id": recipient_id},
