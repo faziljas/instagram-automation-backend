@@ -1193,13 +1193,23 @@ async def execute_automation_action(
                             "step": "email"
                         })
                         
+                        # Change action to prevent separate email processing
+                        pre_dm_result["action"] = "send_combined_pre_dm"
+                        
                         print(f"📩📧 Sending combined follow + email request DM to {sender_id} (with Follow button + Quick Replies)")
                         print(f"   Combined message: {combined_message[:100]}...")
                     else:
                         # Only follow request, no email
                         message_template = follow_message
+                        # Mark follow as sent in state
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(str(sender_id), rule_id, {
+                            "follow_request_sent": True,
+                            "step": "follow"
+                        })
                         print(f"📩 Sending follow request DM to {sender_id} with Follow button")
                     
+                    # Update pre_dm_result with final message and buttons
                     pre_dm_result["buttons"] = buttons
                     pre_dm_result["message"] = message_template
                     
