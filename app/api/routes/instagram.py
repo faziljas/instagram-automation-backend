@@ -1123,25 +1123,48 @@ async def execute_automation_action(
                     pre_dm_result["buttons"] = buttons
                     print(f"📩 Sending follow request DM to {sender_id} with Follow button")
                     
-                    # Schedule email request after 20 seconds (regardless of button click)
+                    # Schedule email request after 5 seconds (regardless of button click)
+                    # Store user_id and rule_id before background task to avoid DetachedInstanceError
+                    user_id_email = account.user_id
+                    rule_id_email = rule.id
+                    account_id_email = account.id
+                    
                     import asyncio
                     async def delayed_email_request():
-                        await asyncio.sleep(20)  # Wait 20 seconds
-                        # Check if email request hasn't been sent yet
-                        from app.services.pre_dm_handler import get_pre_dm_state
-                        current_state = get_pre_dm_state(sender_id, rule.id)
-                        if not current_state.get("email_request_sent") and not current_state.get("primary_dm_sent"):
-                            # Proceed to email request
-                            pre_dm_result_after_delay = await process_pre_dm_actions(
-                                rule, sender_id, account, db,
-                                trigger_type="timeout"  # Use "timeout" to distinguish from user interaction
-                            )
-                            if pre_dm_result_after_delay["action"] == "send_email_request":
-                                asyncio.create_task(execute_automation_action(
-                                    rule, sender_id, account, db,
-                                    trigger_type="timeout",
-                                    message_id=message_id
-                                ))
+                        # Create a new DB session for the background task
+                        from app.db.session import SessionLocal
+                        db_session = SessionLocal()
+                        try:
+                            await asyncio.sleep(5)  # Wait 5 seconds
+                            # Re-fetch rule and account in the new session
+                            rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_email).first()
+                            account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.user_id == user_id_email, InstagramAccount.id == account_id_email).first()
+                            
+                            if not rule_refresh or not account_refresh:
+                                print(f"⚠️ Rule or account not found in delayed email request")
+                                return
+                            
+                            # Check if email request hasn't been sent yet
+                            from app.services.pre_dm_handler import get_pre_dm_state
+                            current_state = get_pre_dm_state(sender_id, rule_id_email)
+                            if not current_state.get("email_request_sent") and not current_state.get("primary_dm_sent"):
+                                # Proceed to email request
+                                pre_dm_result_after_delay = await process_pre_dm_actions(
+                                    rule_refresh, sender_id, account_refresh, db_session,
+                                    trigger_type="timeout"  # Use "timeout" to distinguish from user interaction
+                                )
+                                if pre_dm_result_after_delay["action"] == "send_email_request":
+                                    await execute_automation_action(
+                                        rule_refresh, sender_id, account_refresh, db_session,
+                                        trigger_type="timeout",
+                                        message_id=None
+                                    )
+                        except Exception as e:
+                            print(f"❌ Error in delayed email request: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                        finally:
+                            db_session.close()
                     
                     # Start the delayed email request
                     asyncio.create_task(delayed_email_request())
