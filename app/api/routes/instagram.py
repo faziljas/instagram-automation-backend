@@ -139,7 +139,7 @@ async def receive_webhook(
                     # Only process events with a "message" field containing text
                     elif "message" in messaging_event:
                         log_print(f"✅ Processing message event with 'message' field")
-                        await process_instagram_message(messaging_event, db)
+                    await process_instagram_message(messaging_event, db)
                     else:
                         # Log other event types (message_edit, message_reactions, etc.) but skip processing
                         event_type = None
@@ -199,18 +199,8 @@ async def process_instagram_message(event: dict, db: Session):
                     _processed_message_ids.clear()
             return
         
-        # Get account first (before checking pre-DM responses)
-        from app.models.instagram_account import InstagramAccount
-        account = db.query(InstagramAccount).filter(InstagramAccount.igsid == str(recipient_id)).first()
-        if not account:
-            # Fallback to username matching
-            account = db.query(InstagramAccount).filter(InstagramAccount.username == event.get("recipient", {}).get("username", "")).first()
-        
-        if not account:
-            log_print(f"❌ No Instagram account found for recipient {recipient_id}", "ERROR")
-            return
-        
         # Check if this is a quick reply button click (e.g., "Share Email" or "Skip for Now")
+        # Note: Account lookup will happen later using Smart Fallback logic
         if "message" in event and "quick_reply" in event.get("message", {}):
             quick_reply_payload = event["message"]["quick_reply"].get("payload", "")
             log_print(f"🔘 Quick reply clicked: Payload='{quick_reply_payload}' from {sender_id}")
@@ -435,9 +425,9 @@ async def process_instagram_message(event: dict, db: Session):
             # If no rules found, list all rules to help debug
             if len(story_post_comment_rules) == 0:
                 all_story_rules = db.query(AutomationRule).filter(
-                    AutomationRule.instagram_account_id == account.id,
-                    AutomationRule.is_active == True
-                ).all()
+            AutomationRule.instagram_account_id == account.id,
+            AutomationRule.is_active == True
+        ).all()
                 log_print(f"⚠️ [STORY DM] NO rules found for story {story_id}! Available rules:", "WARNING")
                 for rule in all_story_rules:
                     log_print(f"   - {rule.name}: trigger={rule.trigger_type}, media_id={rule.media_id}")
@@ -724,12 +714,12 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         # For strict matching: only include rules where media_id exactly matches
         if media_id_str:
             post_comment_rules = db.query(AutomationRule).filter(
-                AutomationRule.instagram_account_id == account.id,
-                AutomationRule.trigger_type == "post_comment",
+            AutomationRule.instagram_account_id == account.id,
+            AutomationRule.trigger_type == "post_comment",
                 AutomationRule.is_active == True,
                 AutomationRule.media_id == media_id_str  # Strict match: only rules for this specific media
-            ).all()
-            
+        ).all()
+        
             keyword_rules = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id == account.id,
                 AutomationRule.trigger_type == "keyword",
@@ -795,12 +785,13 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                         # Check if this rule is already being processed for this comment
                         processing_key = f"{comment_id}_{rule.id}"
                         if processing_key in _processing_rules:
-                            print(f"🚫 Rule {rule.id} already processing for comment {comment_id}, skipping duplicate")
+                            print(f"🚫 Skipping execution: Rule {rule.id} already processing for comment {comment_id} (User {commenter_id} already received this DM)")
                             break
                         # Mark as processing
                         _processing_rules[processing_key] = True
                         if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                             _processing_rules.clear()
+                        print(f"🚀 Executing automation action for keyword rule '{rule.name}' (Rule ID: {rule.id}, Commenter: {commenter_id})")
                         # Run in background task
                         asyncio.create_task(execute_automation_action(
                             rule,
@@ -812,6 +803,9 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                             message_id=comment_id  # Use comment_id as identifier
                         ))
                         break  # Only trigger first matching keyword rule
+                    else:
+                        # Log when keyword doesn't match (for debugging)
+                        print(f"🔍 Keyword check: '{message_text_lower}' does not exactly match keyword '{keyword}' (Rule ID: {rule.id})")
         
         # Process post_comment rules ONLY if no keyword rule matched
         if not keyword_rule_matched:
@@ -952,12 +946,12 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         # CRITICAL: Only trigger rules that match the specific live_video_id
         if live_video_id_str:
             live_comment_rules = db.query(AutomationRule).filter(
-                AutomationRule.instagram_account_id == account.id,
-                AutomationRule.trigger_type == "live_comment",
+            AutomationRule.instagram_account_id == account.id,
+            AutomationRule.trigger_type == "live_comment",
                 AutomationRule.is_active == True,
                 AutomationRule.media_id == live_video_id_str  # Strict match: only rules for this specific live video
-            ).all()
-            
+        ).all()
+        
             keyword_rules = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id == account.id,
                 AutomationRule.trigger_type == "keyword",
@@ -1038,12 +1032,13 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                 # Check if this rule is already being processed for this comment
                 processing_key = f"{comment_id}_{rule.id}"
                 if processing_key in _processing_rules:
-                    print(f"🚫 Rule {rule.id} already processing for live comment {comment_id}, skipping duplicate")
+                    print(f"🚫 Skipping execution: Rule {rule.id} already processing for live comment {comment_id} (User {commenter_id} already received this DM)")
                     continue
                 # Mark as processing
                 _processing_rules[processing_key] = True
                 if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                     _processing_rules.clear()
+                print(f"🚀 Executing automation action for live_comment rule '{rule.name}' (Rule ID: {rule.id}, Commenter: {commenter_id})")
                 # Run in background task
                 asyncio.create_task(execute_automation_action(
                     rule,
@@ -1369,7 +1364,7 @@ async def execute_automation_action(
                         print(f"✅ Using OAuth page token for sending message")
                         account_page_id = account.page_id
                     elif account.encrypted_credentials:
-                        access_token = decrypt_credentials(account.encrypted_credentials)
+                access_token = decrypt_credentials(account.encrypted_credentials)
                         print(f"⚠️ Using legacy encrypted credentials")
                         account_page_id = account.page_id
                     else:
@@ -1446,7 +1441,7 @@ async def execute_automation_action(
                     try:
                         if 'account_page_id' in locals():
                             page_id_for_dm = account_page_id
-                        else:
+                else:
                             page_id_for_dm = account.page_id if account.page_id else None
                     except Exception:
                         # If detached, use None (not critical for DM sending)
