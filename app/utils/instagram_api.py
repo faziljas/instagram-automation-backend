@@ -186,6 +186,25 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                 })
             
             if template_buttons:
+                # When message contains two logical parts (follow + email),
+                # split on double newline so Instagram shows:
+                # - title: follow request (bold)
+                # - subtitle: email request (regular text)
+                title_text = message
+                subtitle_text = ""
+                if "\n\n" in message:
+                    first, rest = message.split("\n\n", 1)
+                    title_text = first.strip() or message
+                    subtitle_text = rest.strip()
+                else:
+                    # Fallback: truncate long text into title/subtitle
+                    if len(message) > 80:
+                        title_text = message[:80]
+                        subtitle_text = message
+                    else:
+                        title_text = message
+                        subtitle_text = ""
+
                 # Use generic template format for messages with URL buttons
                 # Generic template allows combining text with URL buttons
                 message_payload = {
@@ -195,8 +214,8 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                             "template_type": "generic",
                             "elements": [
                                 {
-                                    "title": message[:80] if len(message) > 80 else message,  # Title is required
-                                    "subtitle": message if len(message) > 80 else "",  # Optional subtitle
+                                    "title": title_text,  # Follow request or first line
+                                    "subtitle": subtitle_text,  # Email request (second line) or empty
                                     "buttons": template_buttons
                                 }
                             ]
