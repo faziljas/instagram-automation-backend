@@ -1431,12 +1431,49 @@ async def execute_automation_action(
                     # Send TWO separate messages: follow question first, then email question
                     # This ensures vertical (portrait) display instead of carousel (side-by-side)
                     from app.utils.instagram_api import send_dm as send_dm_api
+                    from app.utils.encryption import decrypt_credentials
+                    
+                    # Get access token and page_id BEFORE sending messages
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                            page_id_for_dm = account.page_id
+                            print(f"✅ Using OAuth page token for sending pre-DM messages")
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                            page_id_for_dm = account.page_id
+                            print(f"⚠️ Using legacy encrypted credentials for pre-DM messages")
+                        else:
+                            raise Exception("No access token found for account")
+                    except (AttributeError, Exception) as e:
+                        # If detached, refresh from DB
+                        try:
+                            db.refresh(account)
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                                page_id_for_dm = account.page_id
+                                print(f"✅ Using OAuth page token for sending pre-DM messages (refreshed)")
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                                page_id_for_dm = account.page_id
+                                print(f"⚠️ Using legacy encrypted credentials for pre-DM messages (refreshed)")
+                            else:
+                                raise Exception("No access token found for account")
+                        except Exception as refresh_error:
+                            print(f"❌ Failed to get access token for pre-DM messages: {str(refresh_error)}")
+                            return
                     
                     # Get stored values
                     follow_msg = pre_dm_result.get("follow_message", "")
                     follow_btns = pre_dm_result.get("follow_buttons", [])
                     email_msg = pre_dm_result.get("email_message", "")
                     email_qr = pre_dm_result.get("quick_replies", [])
+                    
+                    print(f"📤 Preparing to send 2 pre-DM messages to {sender_id}")
+                    print(f"   Follow message: {follow_msg[:50] if follow_msg else 'None'}...")
+                    print(f"   Email message: {email_msg[:50] if email_msg else 'None'}...")
+                    print(f"   Follow buttons: {len(follow_btns) if follow_btns else 0}")
+                    print(f"   Email quick replies: {len(email_qr) if email_qr else 0}")
                     
                     # Send first message: Follow question with Follow Me button
                     if follow_msg:
@@ -1464,13 +1501,15 @@ async def execute_automation_action(
                             db.commit()
                         except Exception as e:
                             print(f"❌ Failed to send follow request DM: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
                     
                     # Small delay to ensure messages are sent in order
                     await asyncio.sleep(0.5)
                     
                     # Send second message: Email question with Quick Reply buttons
                     if email_msg:
-                        print(f"📤 Sending email request DM (Message 2/2) with {len(email_qr)} quick reply button(s)")
+                        print(f"📤 Sending email request DM (Message 2/2) with {len(email_qr) if email_qr else 0} quick reply button(s)")
                         try:
                             send_dm_api(
                                 sender_id,
@@ -1499,6 +1538,10 @@ async def execute_automation_action(
                             update_automation_stats(rule.id, "dm_sent", db)  # Count as 2 DMs sent
                         except Exception as e:
                             print(f"❌ Failed to send email request DM: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        print(f"⚠️ Email message is empty, skipping email DM")
                     
                     # Don't send primary DM yet - wait for user response
                     print(f"✅ Both pre-DM messages sent vertically (portrait mode), skipping primary DM for now")
