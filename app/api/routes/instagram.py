@@ -1099,6 +1099,7 @@ async def execute_automation_action(
         message_id: The message or comment ID (used for deduplication cache cleanup)
     """
     try:
+        print(f"🔍 [EXECUTE] Starting execute_automation_action - Rule ID: {rule.id}, Action: {rule.action_type}, Sender: {sender_id}")
         if rule.action_type == "send_dm":
             # IMPORTANT: Store all needed attributes from account and rule BEFORE any async operations
             # This prevents DetachedInstanceError when objects are passed across async boundaries
