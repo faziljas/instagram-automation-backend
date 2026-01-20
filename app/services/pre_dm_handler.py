@@ -259,6 +259,7 @@ async def process_pre_dm_actions(
         if ask_to_follow and not state.get("follow_request_sent"):
             # If email is also enabled, the handler will combine both messages
             # We return send_follow_request action and let the handler combine them
+            # IMPORTANT: Don't update state here - let the handler update it after combining
             return {
                 "action": "send_follow_request",
                 "message": ask_to_follow_message,
@@ -267,9 +268,12 @@ async def process_pre_dm_actions(
             }
         
         # Step 2: Send Email Request (if enabled and follow request was already sent, or follow is disabled)
+        # NOTE: This should only trigger if follow is disabled OR if follow was sent separately (not combined)
         if ask_for_email and not state.get("email_request_sent"):
-            # Only send separate email request if follow was already sent separately, or follow is disabled
-            if not ask_to_follow or state.get("follow_request_sent"):
+            # Only send separate email request if:
+            # 1. Follow is disabled, OR
+            # 2. Follow was already sent separately (not combined)
+            if not ask_to_follow or (state.get("follow_request_sent") and not ask_to_follow):
                 update_pre_dm_state(sender_id, rule.id, {
                     "email_request_sent": True,
                     "step": "email"

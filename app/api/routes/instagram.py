@@ -1184,7 +1184,8 @@ async def execute_automation_action(
                         ]
                         pre_dm_result["quick_replies"] = quick_replies
                         
-                        # Mark both as sent in state
+                        # Mark both as sent in state BEFORE sending message
+                        # This prevents process_pre_dm_actions from returning send_email_request separately
                         from app.services.pre_dm_handler import update_pre_dm_state
                         update_pre_dm_state(str(sender_id), rule_id, {
                             "follow_request_sent": True,
@@ -1193,6 +1194,7 @@ async def execute_automation_action(
                         })
                         
                         print(f"📩📧 Sending combined follow + email request DM to {sender_id} (with Follow button + Quick Replies)")
+                        print(f"   Combined message: {combined_message[:100]}...")
                     else:
                         # Only follow request, no email
                         message_template = follow_message
@@ -1414,6 +1416,10 @@ async def execute_automation_action(
                         # For DM triggers, just wait
                         print(f"⏳ Waiting for email response from {sender_id}")
                         return
+                elif pre_dm_result and pre_dm_result["action"] == "send_combined_pre_dm":
+                    # Combined follow + email message already sent, proceed to primary DM logic
+                    print(f"✅ Combined pre-DM message sent, proceeding to primary DM")
+                    message_template = None  # Will be set below
                 elif pre_dm_result and pre_dm_result["action"] == "send_primary":
                     # Pre-DM actions complete, proceed to primary DM
                     if pre_dm_result.get("email"):
