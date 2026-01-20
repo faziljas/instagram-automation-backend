@@ -184,6 +184,51 @@ async def process_instagram_message(event: dict, db: Session):
         message_text = message.get("text", "")
         message_id = message.get("mid")  # Message ID for deduplication
         
+        # Check if this might be a response to a pre-DM email request
+        # First, find any active rules for this account that have pre-DM enabled
+        from app.models.automation_rule import AutomationRule
+        from app.services.pre_dm_handler import process_pre_dm_actions, check_if_email_response
+        
+        # Get account first
+        account = db.query(InstagramAccount).filter(InstagramAccount.igsid == recipient_id).first()
+        if not account:
+            # Fallback to username matching
+            account = db.query(InstagramAccount).filter(InstagramAccount.username == event.get("recipient", {}).get("username", "")).first()
+        
+        if account and message_text:
+            # Check if message looks like an email (response to email request)
+            is_email, email_address = check_if_email_response(message_text)
+            if is_email:
+                # Find rules with ask_for_email enabled that might be waiting for this response
+                pre_dm_rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True,
+                    AutomationRule.action_type == "send_dm"
+                ).all()
+                
+                for rule in pre_dm_rules:
+                    if rule.config.get("ask_for_email", False):
+                        # Check if this rule is waiting for email from this sender
+                        pre_dm_result = await process_pre_dm_actions(
+                            rule, sender_id, account, db,
+                            incoming_message=message_text,
+                            trigger_type="new_message"
+                        )
+                        
+                        if pre_dm_result["action"] == "send_primary":
+                            # Email was received and saved, now send primary DM
+                            log_print(f"✅ Pre-DM email received from {sender_id}, proceeding to primary DM")
+                            # Trigger primary DM sending
+                            asyncio.create_task(execute_automation_action(
+                                rule,
+                                sender_id,
+                                account,
+                                db,
+                                trigger_type="new_message",
+                                message_id=message_id
+                            ))
+                            return  # Don't process as new_message rule
+        
         # Check if this is a story reply (DMs replying to stories)
         story_id = None
         if message.get("reply_to", {}).get("story", {}).get("id"):
@@ -951,6 +996,39 @@ async def execute_automation_action(
                 print(f"⚠️ Monthly DM limit reached for user {account.user_id}. Skipping DM send.")
                 return  # Don't send DM if limit reached
             
+            # Check for pre-DM actions (Ask to Follow, Ask for Email)
+            ask_to_follow = rule.config.get("ask_to_follow", False)
+            ask_for_email = rule.config.get("ask_for_email", False)
+            pre_dm_result = None
+            
+            if ask_to_follow or ask_for_email:
+                # Process pre-DM actions
+                from app.services.pre_dm_handler import process_pre_dm_actions
+                
+                pre_dm_result = await process_pre_dm_actions(
+                    rule, sender_id, account, db,
+                    trigger_type=trigger_type
+                )
+                
+                if pre_dm_result["action"] == "send_follow_request":
+                    # Send follow request message
+                    message_template = pre_dm_result["message"]
+                    print(f"📩 Sending follow request DM to {sender_id}")
+                elif pre_dm_result["action"] == "send_email_request":
+                    # Send email request message
+                    message_template = pre_dm_result["message"]
+                    print(f"📧 Sending email request DM to {sender_id}")
+                elif pre_dm_result["action"] == "wait_for_email":
+                    # Still waiting for email response, don't send anything yet
+                    print(f"⏳ Waiting for email response from {sender_id}")
+                    return
+                elif pre_dm_result["action"] == "send_primary":
+                    # Pre-DM actions complete, proceed to primary DM
+                    if pre_dm_result.get("email"):
+                        print(f"✅ Pre-DM email received: {pre_dm_result['email']}, proceeding to primary DM")
+                    # Continue to primary DM logic below
+                    message_template = None  # Will be set below
+            
             # Check if this is a lead capture flow
             is_lead_capture = rule.config.get("is_lead_capture", False)
             
@@ -980,18 +1058,19 @@ async def execute_automation_action(
                 else:
                     # Skip lead capture for now (fallback to regular DM)
                     message_template = rule.config.get("message_template", "")
-            else:
-                # Regular DM flow
+            elif not pre_dm_result or pre_dm_result.get("action") == "send_primary":
+                # Regular DM flow (or primary DM after pre-DM actions)
                 # Get message template from config
                 # Support message_variations for randomization, fallback to message_template
-                message_variations = rule.config.get("message_variations", [])
-                if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
-                    # Randomly select one message from variations
-                    import random
-                    message_template = random.choice([m for m in message_variations if m and str(m).strip()])
-                    print(f"🎲 Randomly selected message from {len(message_variations)} variations")
-                else:
-                    message_template = rule.config.get("message_template", "")
+                if message_template is None:  # Only set if not already set by pre-DM
+                    message_variations = rule.config.get("message_variations", [])
+                    if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
+                        # Randomly select one message from variations
+                        import random
+                        message_template = random.choice([m for m in message_variations if m and str(m).strip()])
+                        print(f"🎲 Randomly selected message from {len(message_variations)} variations")
+                    else:
+                        message_template = rule.config.get("message_template", "")
             
             if not message_template:
                 print("⚠️ No message template configured")
