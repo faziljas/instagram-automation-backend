@@ -250,25 +250,25 @@ async def process_instagram_message(event: dict, db: Session):
                 # Find active rules and proceed to primary DM
         from app.models.automation_rule import AutomationRule
         rules = db.query(AutomationRule).filter(
-                    AutomationRule.instagram_account_id == account.id,
-                    AutomationRule.is_active == True,
-                    AutomationRule.action_type == "send_dm"
-                ).all()
-                for rule in rules:
-                    if rule.config.get("ask_for_email", False):
-                        # Update state to skip email
-                        from app.services.pre_dm_handler import update_pre_dm_state
-                        update_pre_dm_state(sender_id, rule.id, {
-                            "email_skipped": True,
-                            "email_request_sent": True  # Mark as sent to prevent re-asking
-                        })
-                        # Proceed to primary DM
-                        asyncio.create_task(execute_automation_action(
-                            rule, sender_id, account, db,
-                            trigger_type="email_skip",
-                            message_id=message_id
-                        ))
-                return  # Don't process as regular message
+            AutomationRule.instagram_account_id == account.id,
+            AutomationRule.is_active == True,
+            AutomationRule.action_type == "send_dm"
+        ).all()
+        for rule in rules:
+            if rule.config.get("ask_for_email", False):
+                # Update state to skip email
+                from app.services.pre_dm_handler import update_pre_dm_state
+                update_pre_dm_state(sender_id, rule.id, {
+                    "email_skipped": True,
+                    "email_request_sent": True  # Mark as sent to prevent re-asking
+                })
+                # Proceed to primary DM
+                asyncio.create_task(execute_automation_action(
+                    rule, sender_id, account, db,
+                    trigger_type="email_skip",
+                    message_id=message_id
+                ))
+        return  # Don't process as regular message
         
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
         # IMPORTANT: Check ALL rules with pre-DM actions, including those with media_id (for comment-based rules)
@@ -1441,125 +1441,125 @@ async def execute_automation_action(
                         # Start the delayed primary DM
                         asyncio.create_task(delayed_primary_dm_for_comment())
                         print(f"🚀 [PRIMARY DM] Scheduled primary DM after 15 seconds (user engaged via comment)")
-                else:
+                    else:
                         # For DM triggers, just wait
                         print(f"⏳ Waiting for email response from {sender_id}")
                         return
-                elif pre_dm_result and pre_dm_result["action"] == "send_combined_pre_dm":
-                    # Send TWO separate messages: follow question first, then email question
-                    # This ensures vertical (portrait) display instead of carousel (side-by-side)
-                    from app.utils.instagram_api import send_dm as send_dm_api
-                    from app.utils.encryption import decrypt_credentials
-                    
-                    # Get access token and page_id BEFORE sending messages
+            elif pre_dm_result and pre_dm_result["action"] == "send_combined_pre_dm":
+                # Send TWO separate messages: follow question first, then email question
+                # This ensures vertical (portrait) display instead of carousel (side-by-side)
+                from app.utils.instagram_api import send_dm as send_dm_api
+                from app.utils.encryption import decrypt_credentials
+                
+                # Get access token and page_id BEFORE sending messages
+                try:
+                    if account.encrypted_page_token:
+                        access_token = decrypt_credentials(account.encrypted_page_token)
+                        page_id_for_dm = account.page_id
+                        print(f"✅ Using OAuth page token for sending pre-DM messages")
+                    elif account.encrypted_credentials:
+                        access_token = decrypt_credentials(account.encrypted_credentials)
+                        page_id_for_dm = account.page_id
+                        print(f"⚠️ Using legacy encrypted credentials for pre-DM messages")
+                    else:
+                        raise Exception("No access token found for account")
+                except (AttributeError, Exception) as e:
+                    # If detached, refresh from DB
                     try:
+                        db.refresh(account)
                         if account.encrypted_page_token:
                             access_token = decrypt_credentials(account.encrypted_page_token)
                             page_id_for_dm = account.page_id
-                            print(f"✅ Using OAuth page token for sending pre-DM messages")
+                            print(f"✅ Using OAuth page token for sending pre-DM messages (refreshed)")
                         elif account.encrypted_credentials:
                             access_token = decrypt_credentials(account.encrypted_credentials)
                             page_id_for_dm = account.page_id
-                            print(f"⚠️ Using legacy encrypted credentials for pre-DM messages")
-                    else:
+                            print(f"⚠️ Using legacy encrypted credentials for pre-DM messages (refreshed)")
+                        else:
                             raise Exception("No access token found for account")
-                    except (AttributeError, Exception) as e:
-                        # If detached, refresh from DB
-                        try:
-                            db.refresh(account)
-                            if account.encrypted_page_token:
-                                access_token = decrypt_credentials(account.encrypted_page_token)
-                                page_id_for_dm = account.page_id
-                                print(f"✅ Using OAuth page token for sending pre-DM messages (refreshed)")
-                            elif account.encrypted_credentials:
-                                access_token = decrypt_credentials(account.encrypted_credentials)
-                                page_id_for_dm = account.page_id
-                                print(f"⚠️ Using legacy encrypted credentials for pre-DM messages (refreshed)")
-                            else:
-                                raise Exception("No access token found for account")
-                        except Exception as refresh_error:
-                            print(f"❌ Failed to get access token for pre-DM messages: {str(refresh_error)}")
-                            return
-                    
-                    # Get stored values
-                    follow_msg = pre_dm_result.get("follow_message", "")
-                    follow_btns = pre_dm_result.get("follow_buttons", [])
-                    email_msg = pre_dm_result.get("email_message", "")
-                    email_qr = pre_dm_result.get("quick_replies", [])
-                    
-                    print(f"📤 Preparing to send 2 pre-DM messages to {sender_id}")
-                    print(f"   Follow message: {follow_msg[:50] if follow_msg else 'None'}...")
-                    print(f"   Email message: {email_msg[:50] if email_msg else 'None'}...")
-                    print(f"   Follow buttons: {len(follow_btns) if follow_btns else 0}")
-                    print(f"   Email quick replies: {len(email_qr) if email_qr else 0}")
-                    
-                    # Send first message: Follow question with Follow Me button
-                    if follow_msg:
-                        print(f"📤 Sending follow request DM (Message 1/2)")
-                        try:
-                            send_dm_api(
-                                sender_id,
-                                follow_msg,
-                                access_token,
-                                page_id_for_dm,
-                                buttons=follow_btns,
-                                quick_replies=None
-                            )
-                            print(f"✅ Follow request DM sent successfully")
+                    except Exception as refresh_error:
+                        print(f"❌ Failed to get access token for pre-DM messages: {str(refresh_error)}")
+                        return
                 
-                # Log the DM
-                from app.models.dm_log import DmLog
-                dm_log = DmLog(
-                                user_id=user_id,
-                                instagram_account_id=account_id,
-                                recipient_username=str(sender_id),
-                                message=follow_msg
-                )
-                db.add(dm_log)
-                db.commit()
-                        except Exception as e:
-                            print(f"❌ Failed to send follow request DM: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-                    
-                    # Small delay to ensure messages are sent in order
-                    await asyncio.sleep(0.5)
-                    
-                    # Send second message: Email question with Quick Reply buttons
-                    if email_msg:
-                        print(f"📤 Sending email request DM (Message 2/2) with {len(email_qr) if email_qr else 0} quick reply button(s)")
-                        try:
-                            send_dm_api(
-                                sender_id,
-                                email_msg,
-                                access_token,
-                                page_id_for_dm,
-                                buttons=None,
-                                quick_replies=email_qr
-                            )
-                            print(f"✅ Email request DM sent successfully")
-                            
-                            # Log the DM
-                            from app.models.dm_log import DmLog
-                            dm_log = DmLog(
-                                user_id=user_id,
-                                instagram_account_id=account_id,
-                                recipient_username=str(sender_id),
-                                message=email_msg
-                            )
-                            db.add(dm_log)
-                            db.commit()
-                            
-                            # Update stats for both DMs
-                            from app.services.lead_capture import update_automation_stats
-                            update_automation_stats(rule.id, "dm_sent", db)
-                            update_automation_stats(rule.id, "dm_sent", db)  # Count as 2 DMs sent
-            except Exception as e:
-                            print(f"❌ Failed to send email request DM: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-                    else:
-                        print(f"⚠️ Email message is empty, skipping email DM")
+                # Get stored values
+                follow_msg = pre_dm_result.get("follow_message", "")
+                follow_btns = pre_dm_result.get("follow_buttons", [])
+                email_msg = pre_dm_result.get("email_message", "")
+                email_qr = pre_dm_result.get("quick_replies", [])
+                
+                print(f"📤 Preparing to send 2 pre-DM messages to {sender_id}")
+                print(f"   Follow message: {follow_msg[:50] if follow_msg else 'None'}...")
+                print(f"   Email message: {email_msg[:50] if email_msg else 'None'}...")
+                print(f"   Follow buttons: {len(follow_btns) if follow_btns else 0}")
+                print(f"   Email quick replies: {len(email_qr) if email_qr else 0}")
+                
+                # Send first message: Follow question with Follow Me button
+                if follow_msg:
+                    print(f"📤 Sending follow request DM (Message 1/2)")
+                    try:
+                        send_dm_api(
+                            sender_id,
+                            follow_msg,
+                            access_token,
+                            page_id_for_dm,
+                            buttons=follow_btns,
+                            quick_replies=None
+                        )
+                        print(f"✅ Follow request DM sent successfully")
+                        
+                        # Log the DM
+                        from app.models.dm_log import DmLog
+                        dm_log = DmLog(
+                            user_id=user_id,
+                            instagram_account_id=account_id,
+                            recipient_username=str(sender_id),
+                            message=follow_msg
+                        )
+                        db.add(dm_log)
+                        db.commit()
+                    except Exception as e:
+                        print(f"❌ Failed to send follow request DM: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # Small delay to ensure messages are sent in order
+                await asyncio.sleep(0.5)
+                
+                # Send second message: Email question with Quick Reply buttons
+                if email_msg:
+                    print(f"📤 Sending email request DM (Message 2/2) with {len(email_qr) if email_qr else 0} quick reply button(s)")
+                    try:
+                        send_dm_api(
+                            sender_id,
+                            email_msg,
+                            access_token,
+                            page_id_for_dm,
+                            buttons=None,
+                            quick_replies=email_qr
+                        )
+                        print(f"✅ Email request DM sent successfully")
+                        
+                        # Log the DM
+                        from app.models.dm_log import DmLog
+                        dm_log = DmLog(
+                            user_id=user_id,
+                            instagram_account_id=account_id,
+                            recipient_username=str(sender_id),
+                            message=email_msg
+                        )
+                        db.add(dm_log)
+                        db.commit()
+                        
+                        # Update stats for both DMs
+                        from app.services.lead_capture import update_automation_stats
+                        update_automation_stats(rule.id, "dm_sent", db)
+                        update_automation_stats(rule.id, "dm_sent", db)  # Count as 2 DMs sent
+                    except Exception as e:
+                        print(f"❌ Failed to send email request DM: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print(f"⚠️ Email message is empty, skipping email DM")
                     
                     # Schedule primary DM after 15 seconds (after both pre-DM messages sent)
                     sender_id_for_dm = str(sender_id)
@@ -1618,16 +1618,15 @@ async def execute_automation_action(
                             traceback.print_exc()
                         finally:
                             db_session.close()
+                
+                # Start the delayed primary DM task
+                print(f"🚀 [PRIMARY DM] Scheduling primary DM after 15 seconds for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
+                asyncio.create_task(delayed_primary_dm_simple())
                     
-                    # Start the delayed primary DM task
-                    print(f"🚀 [PRIMARY DM] Scheduling primary DM after 15 seconds for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
-                    asyncio.create_task(delayed_primary_dm_simple())
-                    
-                    # Don't send primary DM yet - wait for user response or timeout
-                    print(f"✅ Both pre-DM messages sent vertically (portrait mode), primary DM scheduled for 15 seconds")
-                    return
-                    # Don't set message_template = None - let it be sent with combined message
-                elif pre_dm_result and pre_dm_result["action"] == "send_primary":
+                # Don't send primary DM yet - wait for user response or timeout
+                print(f"✅ Both pre-DM messages sent vertically (portrait mode), primary DM scheduled for 15 seconds")
+                return
+            elif pre_dm_result and pre_dm_result["action"] == "send_primary":
                     # Pre-DM actions complete, proceed to primary DM
                     if pre_dm_result.get("email"):
                         print(f"✅ Pre-DM email received: {pre_dm_result['email']}, proceeding to primary DM")
