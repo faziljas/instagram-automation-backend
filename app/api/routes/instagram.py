@@ -1160,17 +1160,27 @@ async def execute_automation_action(
                         "url": profile_url
                     }]
                     
-                    # If email is also enabled, combine both messages and add quick replies
+                    # If email is also enabled, send TWO separate messages for vertical display
                     if ask_for_email:
                         # Get email request message
                         ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
                         
-                        # Combine both messages
-                        combined_message = f"{follow_message}\n\n{ask_for_email_message}"
-                        message_template = combined_message
+                        # Mark both as sent in state BEFORE sending messages
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(str(sender_id), rule_id, {
+                            "follow_request_sent": True,
+                            "email_request_sent": True,
+                            "step": "email"
+                        })
                         
-                        # Create Quick Replies for email collection
-                        quick_replies = [
+                        # Change action to signal we'll send two separate messages
+                        pre_dm_result["action"] = "send_combined_pre_dm"
+                        
+                        # Store both messages and buttons separately
+                        pre_dm_result["follow_message"] = follow_message
+                        pre_dm_result["follow_buttons"] = buttons
+                        pre_dm_result["email_message"] = ask_for_email_message
+                        pre_dm_result["quick_replies"] = [
                             {
                                 "content_type": "text",
                                 "title": "Share Email",
@@ -1182,22 +1192,13 @@ async def execute_automation_action(
                                 "payload": "email_skip"
                             }
                         ]
-                        pre_dm_result["quick_replies"] = quick_replies
                         
-                        # Mark both as sent in state BEFORE sending message
-                        # This prevents process_pre_dm_actions from returning send_email_request separately
-                        from app.services.pre_dm_handler import update_pre_dm_state
-                        update_pre_dm_state(str(sender_id), rule_id, {
-                            "follow_request_sent": True,
-                            "email_request_sent": True,
-                            "step": "email"
-                        })
+                        # Set message_template to None - we'll handle sending separately
+                        message_template = None
                         
-                        # Change action to prevent separate email processing
-                        pre_dm_result["action"] = "send_combined_pre_dm"
-                        
-                        print(f"📩📧 Sending combined follow + email request DM to {sender_id} (with Follow button + Quick Replies)")
-                        print(f"   Combined message: {combined_message[:100]}...")
+                        print(f"📩📧 Will send TWO separate DMs to {sender_id}:")
+                        print(f"   1. Follow question with Follow Me button")
+                        print(f"   2. Email question with Quick Reply buttons")
                     else:
                         # Only follow request, no email
                         message_template = follow_message
@@ -1427,9 +1428,81 @@ async def execute_automation_action(
                         print(f"⏳ Waiting for email response from {sender_id}")
                         return
                 elif pre_dm_result and pre_dm_result["action"] == "send_combined_pre_dm":
-                    # Combined follow + email message will be sent in "Always send DM" section below
-                    # message_template is already set to combined_message, so don't change it
-                    print(f"✅ Combined pre-DM message configured, will be sent below")
+                    # Send TWO separate messages: follow question first, then email question
+                    # This ensures vertical (portrait) display instead of carousel (side-by-side)
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    
+                    # Get stored values
+                    follow_msg = pre_dm_result.get("follow_message", "")
+                    follow_btns = pre_dm_result.get("follow_buttons", [])
+                    email_msg = pre_dm_result.get("email_message", "")
+                    email_qr = pre_dm_result.get("quick_replies", [])
+                    
+                    # Send first message: Follow question with Follow Me button
+                    if follow_msg:
+                        print(f"📤 Sending follow request DM (Message 1/2)")
+                        try:
+                            send_dm_api(
+                                sender_id,
+                                follow_msg,
+                                access_token,
+                                page_id_for_dm,
+                                buttons=follow_btns,
+                                quick_replies=None
+                            )
+                            print(f"✅ Follow request DM sent successfully")
+                            
+                            # Log the DM
+                            from app.models.dm_log import DmLog
+                            dm_log = DmLog(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=follow_msg
+                            )
+                            db.add(dm_log)
+                            db.commit()
+                        except Exception as e:
+                            print(f"❌ Failed to send follow request DM: {str(e)}")
+                    
+                    # Small delay to ensure messages are sent in order
+                    await asyncio.sleep(0.5)
+                    
+                    # Send second message: Email question with Quick Reply buttons
+                    if email_msg:
+                        print(f"📤 Sending email request DM (Message 2/2) with {len(email_qr)} quick reply button(s)")
+                        try:
+                            send_dm_api(
+                                sender_id,
+                                email_msg,
+                                access_token,
+                                page_id_for_dm,
+                                buttons=None,
+                                quick_replies=email_qr
+                            )
+                            print(f"✅ Email request DM sent successfully")
+                            
+                            # Log the DM
+                            from app.models.dm_log import DmLog
+                            dm_log = DmLog(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=email_msg
+                            )
+                            db.add(dm_log)
+                            db.commit()
+                            
+                            # Update stats for both DMs
+                            from app.services.lead_capture import update_automation_stats
+                            update_automation_stats(rule.id, "dm_sent", db)
+                            update_automation_stats(rule.id, "dm_sent", db)  # Count as 2 DMs sent
+                        except Exception as e:
+                            print(f"❌ Failed to send email request DM: {str(e)}")
+                    
+                    # Don't send primary DM yet - wait for user response
+                    print(f"✅ Both pre-DM messages sent vertically (portrait mode), skipping primary DM for now")
+                    return
                     # Don't set message_template = None - let it be sent with combined message
                 elif pre_dm_result and pre_dm_result["action"] == "send_primary":
                     # Pre-DM actions complete, proceed to primary DM
