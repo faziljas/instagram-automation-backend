@@ -996,6 +996,9 @@ async def execute_automation_action(
                 print(f"⚠️ Monthly DM limit reached for user {account.user_id}. Skipping DM send.")
                 return  # Don't send DM if limit reached
             
+            # Initialize message_template
+            message_template = None
+            
             # Check for pre-DM actions (Ask to Follow, Ask for Email)
             ask_to_follow = rule.config.get("ask_to_follow", False)
             ask_for_email = rule.config.get("ask_for_email", False)
