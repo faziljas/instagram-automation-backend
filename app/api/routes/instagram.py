@@ -184,30 +184,69 @@ async def process_instagram_message(event: dict, db: Session):
         message_text = message.get("text", "")
         message_id = message.get("mid")  # Message ID for deduplication
         
-        # Check if this might be a response to a pre-DM email request
-        # First, find any active rules for this account that have pre-DM enabled
-        from app.models.automation_rule import AutomationRule
-        from app.services.pre_dm_handler import process_pre_dm_actions, check_if_email_response
-        
-        # Get account first
+        # Get account first (before checking pre-DM responses)
         account = db.query(InstagramAccount).filter(InstagramAccount.igsid == recipient_id).first()
         if not account:
             # Fallback to username matching
             account = db.query(InstagramAccount).filter(InstagramAccount.username == event.get("recipient", {}).get("username", "")).first()
         
+        # Check if this might be a response to a pre-DM follow/email request
         if account and message_text:
-            # Check if message looks like an email (response to email request)
-            is_email, email_address = check_if_email_response(message_text)
-            if is_email:
-                # Find rules with ask_for_email enabled that might be waiting for this response
-                pre_dm_rules = db.query(AutomationRule).filter(
-                    AutomationRule.instagram_account_id == account.id,
-                    AutomationRule.is_active == True,
-                    AutomationRule.action_type == "send_dm"
-                ).all()
+            from app.models.automation_rule import AutomationRule
+            from app.services.pre_dm_handler import process_pre_dm_actions, check_if_email_response, check_if_follow_confirmation
+            
+            # Find rules with pre-DM actions enabled
+            pre_dm_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.is_active == True,
+                AutomationRule.action_type == "send_dm"
+            ).all()
+            
+            for rule in pre_dm_rules:
+                ask_to_follow = rule.config.get("ask_to_follow", False)
+                ask_for_email = rule.config.get("ask_for_email", False)
                 
-                for rule in pre_dm_rules:
-                    if rule.config.get("ask_for_email", False):
+                if not (ask_to_follow or ask_for_email):
+                    continue
+                
+                # Check if this is a follow confirmation
+                if ask_to_follow and check_if_follow_confirmation(message_text):
+                    # User confirmed they're following - mark as followed and proceed
+                    pre_dm_result = await process_pre_dm_actions(
+                        rule, sender_id, account, db,
+                        incoming_message=message_text,
+                        trigger_type="new_message"
+                    )
+                    
+                    if pre_dm_result["action"] == "send_email_request":
+                        # Send email request
+                        log_print(f"✅ Follow confirmed from {sender_id}, sending email request")
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="new_message",
+                            message_id=message_id
+                        ))
+                        return
+                    elif pre_dm_result["action"] == "send_primary":
+                        # Skip to primary DM
+                        log_print(f"✅ Follow confirmed from {sender_id}, proceeding to primary DM")
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="new_message",
+                            message_id=message_id
+                        ))
+                        return
+                
+                # Check if message looks like an email (response to email request)
+                if ask_for_email:
+                    is_email, email_address = check_if_email_response(message_text)
+                    if is_email:
                         # Check if this rule is waiting for email from this sender
                         pre_dm_result = await process_pre_dm_actions(
                             rule, sender_id, account, db,

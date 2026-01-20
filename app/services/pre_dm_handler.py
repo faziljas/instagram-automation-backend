@@ -57,6 +57,41 @@ def clear_pre_dm_state(sender_id: str, rule_id: int):
         del _pre_dm_states[key]
 
 
+def check_if_follow_confirmation(message_text: str) -> bool:
+    """
+    Check if a message text indicates the user is already following.
+    Returns: bool
+    """
+    if not message_text:
+        return False
+    
+    message_lower = message_text.strip().lower()
+    
+    # Common follow confirmation phrases
+    follow_confirmations = [
+        "already following",
+        "already follow",
+        "i'm following",
+        "im following",
+        "i am following",
+        "already followed",
+        "following you",
+        "follow you",
+        "i follow you",
+        "already following you",
+        "yes following",
+        "yes i'm following",
+        "yes im following",
+        "yes i am following",
+    ]
+    
+    for phrase in follow_confirmations:
+        if phrase in message_lower:
+            return True
+    
+    return False
+
+
 def check_if_email_response(message_text: str) -> Tuple[bool, Optional[str]]:
     """
     Check if a message text looks like an email address.
@@ -108,6 +143,35 @@ async def process_pre_dm_actions(
     ask_for_email = config.get("ask_for_email", False)
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
+    
+    # Check if this is a response to a follow request
+    if incoming_message and state.get("follow_request_sent") and not state.get("follow_confirmed"):
+        if check_if_follow_confirmation(incoming_message):
+            # User confirmed they're following - mark as confirmed and proceed to email request
+            update_pre_dm_state(sender_id, rule.id, {
+                "follow_confirmed": True
+            })
+            
+            # If email request is enabled, proceed to email request
+            if ask_for_email and not state.get("email_request_sent"):
+                update_pre_dm_state(sender_id, rule.id, {
+                    "email_request_sent": True,
+                    "step": "email"
+                })
+                return {
+                    "action": "send_email_request",
+                    "message": ask_for_email_message,
+                    "should_save_email": False,
+                    "email": None
+                }
+            else:
+                # No email request, proceed to primary DM
+                return {
+                    "action": "send_primary",
+                    "message": None,
+                    "should_save_email": False,
+                    "email": None
+                }
     
     # Check if this is a response to an email request
     if incoming_message and state.get("email_request_sent") and not state.get("email_received"):
