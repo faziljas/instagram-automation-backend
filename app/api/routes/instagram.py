@@ -248,8 +248,8 @@ async def process_instagram_message(event: dict, db: Session):
                 # User clicked "Skip for Now" - proceed to primary DM
                 log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
                 # Find active rules and proceed to primary DM
-        from app.models.automation_rule import AutomationRule
-        rules = db.query(AutomationRule).filter(
+                from app.models.automation_rule import AutomationRule
+                rules = db.query(AutomationRule).filter(
                     AutomationRule.instagram_account_id == account.id,
                     AutomationRule.is_active == True,
                     AutomationRule.action_type == "send_dm"
@@ -1530,7 +1530,7 @@ async def execute_automation_action(
                         print(f"✅ Using OAuth page token for sending message")
                         account_page_id = account.page_id
                     elif account.encrypted_credentials:
-                access_token = decrypt_credentials(account.encrypted_credentials)
+                        access_token = decrypt_credentials(account.encrypted_credentials)
                         print(f"⚠️ Using legacy encrypted credentials")
                         account_page_id = account.page_id
                     else:
@@ -1607,7 +1607,7 @@ async def execute_automation_action(
                     try:
                         if 'account_page_id' in locals():
                             page_id_for_dm = account_page_id
-                else:
+                        else:
                             page_id_for_dm = account.page_id if account.page_id else None
                     except Exception:
                         # If detached, use None (not critical for DM sending)
