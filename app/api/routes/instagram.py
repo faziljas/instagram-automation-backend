@@ -1380,7 +1380,7 @@ async def execute_automation_action(
                         print(f"✅ Using OAuth page token for sending message")
                         account_page_id = account.page_id
                     elif account.encrypted_credentials:
-                access_token = decrypt_credentials(account.encrypted_credentials)
+                        access_token = decrypt_credentials(account.encrypted_credentials)
                         print(f"⚠️ Using legacy encrypted credentials")
                         account_page_id = account.page_id
                     else:
