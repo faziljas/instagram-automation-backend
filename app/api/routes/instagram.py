@@ -1325,15 +1325,36 @@ async def execute_automation_action(
             from app.utils.instagram_api import send_private_reply, send_dm as send_dm_api
             
             try:
-                # Get access token - use encrypted_page_token for OAuth accounts, fallback to encrypted_credentials
-                if account.encrypted_page_token:
-                    access_token = decrypt_credentials(account.encrypted_page_token)
-                    print(f"✅ Using OAuth page token for sending message")
-                elif account.encrypted_credentials:
-                    access_token = decrypt_credentials(account.encrypted_credentials)
-                    print(f"⚠️ Using legacy encrypted credentials")
-                else:
-                    raise Exception("No access token found for account")
+                # Get access token - refresh account if needed to avoid DetachedInstanceError
+                try:
+                    # Try to access encrypted tokens directly
+                    if account.encrypted_page_token:
+                        access_token = decrypt_credentials(account.encrypted_page_token)
+                        print(f"✅ Using OAuth page token for sending message")
+                        account_page_id = account.page_id
+                    elif account.encrypted_credentials:
+                        access_token = decrypt_credentials(account.encrypted_credentials)
+                        print(f"⚠️ Using legacy encrypted credentials")
+                        account_page_id = account.page_id
+                    else:
+                        raise Exception("No access token found for account")
+                except (AttributeError, Exception) as e:
+                    # If detached, refresh from DB
+                    try:
+                        db.refresh(account)
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                            print(f"✅ Using OAuth page token for sending message (refreshed)")
+                            account_page_id = account.page_id
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                            print(f"⚠️ Using legacy encrypted credentials (refreshed)")
+                            account_page_id = account.page_id
+                        else:
+                            raise Exception("No access token found for account")
+                    except Exception as refresh_error:
+                        print(f"❌ Failed to refresh account and get access token: {str(refresh_error)}")
+                        raise Exception(f"Could not access account credentials: {str(refresh_error)}")
                 
                 # Check if auto-reply to comments is enabled
                 # This applies to post_comment, live_comment, AND keyword triggers when comment_id is present
