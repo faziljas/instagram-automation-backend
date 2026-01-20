@@ -1085,9 +1085,28 @@ async def execute_automation_action(
     """
     try:
         if rule.action_type == "send_dm":
+            # IMPORTANT: Store all needed attributes from account and rule BEFORE any async operations
+            # This prevents DetachedInstanceError when objects are passed across async boundaries
+            try:
+                user_id = account.user_id
+                account_id = account.id
+                username = account.username
+                rule_id = rule.id
+            except Exception as e:
+                print(f"❌ Error accessing account/rule attributes: {str(e)}")
+                # Try to refresh the objects
+                try:
+                    db.refresh(account)
+                    db.refresh(rule)
+                    user_id = account.user_id
+                    account_id = account.id
+                    username = account.username
+                    rule_id = rule.id
+                except Exception as refresh_error:
+                    print(f"❌ Failed to refresh account/rule: {str(refresh_error)}")
+                    return
+            
             # Check monthly DM limit BEFORE sending
-            # Store user_id first to avoid DetachedInstanceError in background tasks
-            user_id = account.user_id
             from app.utils.plan_enforcement import check_dm_limit
             if not check_dm_limit(user_id, db):
                 print(f"⚠️ Monthly DM limit reached for user {user_id}. Skipping DM send.")
