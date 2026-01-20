@@ -139,7 +139,7 @@ async def receive_webhook(
                     # Only process events with a "message" field containing text
                     elif "message" in messaging_event:
                         log_print(f"✅ Processing message event with 'message' field")
-                    await process_instagram_message(messaging_event, db)
+                        await process_instagram_message(messaging_event, db)
                     else:
                         # Log other event types (message_edit, message_reactions, etc.) but skip processing
                         event_type = None
@@ -199,18 +199,52 @@ async def process_instagram_message(event: dict, db: Session):
                     _processed_message_ids.clear()
             return
         
-        # Check if this is a quick reply button click (e.g., "Share Email" or "Skip for Now")
-        # Note: Account lookup will happen later using Smart Fallback logic
+        # Find account using Smart Fallback (same as comment webhook logic)
+        # This must happen BEFORE checking pre-DM actions or triggering rules
+        from app.models.instagram_account import InstagramAccount
+        log_print(f"🔍 [DM] Looking for Instagram account (IGSID: {recipient_id})")
+        
+        # First try to match by IGSID (most accurate)
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.igsid == str(recipient_id),
+            InstagramAccount.is_active == True
+        ).first()
+        
+        if account:
+            log_print(f"✅ [DM] Found account by IGSID: {account.username} (ID: {account.id}, User ID: {account.user_id})")
+        else:
+            # Smart Fallback: If IGSID not stored, find account that has rules for this trigger
+            log_print(f"⚠️ [DM] No account found by IGSID, trying smart fallback matching...", "WARNING")
+            from app.models.automation_rule import AutomationRule
+            
+            # Find account that has active rules for DM triggers (new_message or keyword)
+            accounts_with_rules = db.query(InstagramAccount).join(AutomationRule).filter(
+                InstagramAccount.is_active == True,
+                AutomationRule.trigger_type.in_(["new_message", "keyword"]),
+                AutomationRule.is_active == True
+            ).all()
+            
+            if accounts_with_rules:
+                account = accounts_with_rules[0]
+                log_print(f"✅ [DM] Found account with matching rules: {account.username} (ID: {account.id})")
+                log_print(f"   NOTE: Re-connect via OAuth to store IGSID ({recipient_id}) for accurate matching")
+            else:
+                # Last resort: use first active account
+                account = db.query(InstagramAccount).filter(
+                    InstagramAccount.is_active == True
+                ).first()
+                if account:
+                    log_print(f"⚠️ [DM] Using first active account: {account.username} (ID: {account.id})")
+                    log_print(f"   NOTE: Re-connect Instagram account via OAuth to store IGSID ({recipient_id})")
+        
+        if not account:
+            log_print(f"❌ [DM] No active Instagram accounts found", "ERROR")
+            return
+        
+        # Now handle quick reply skip if needed (account is now available)
         if "message" in event and "quick_reply" in event.get("message", {}):
             quick_reply_payload = event["message"]["quick_reply"].get("payload", "")
-            log_print(f"🔘 Quick reply clicked: Payload='{quick_reply_payload}' from {sender_id}")
-            
-            # Handle email quick reply
-            if quick_reply_payload == "email_shared":
-                # User clicked "Share Email" - treat as intent to share email, wait for their message
-                log_print(f"✅ User clicked 'Share Email' button, waiting for email input from {sender_id}")
-                # Continue processing as a regular message (they'll type their email next)
-            elif quick_reply_payload == "email_skip":
+            if quick_reply_payload == "email_skip":
                 # User clicked "Skip for Now" - proceed to primary DM
                 log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
                 # Find active rules and proceed to primary DM
@@ -236,7 +270,7 @@ async def process_instagram_message(event: dict, db: Session):
                         ))
                 return  # Don't process as regular message
         
-        # Check if this might be a response to a pre-DM follow/email request
+        # Check if this might be a response to a pre-DM follow/email request (now that account is found)
         if account and message_text:
             from app.models.automation_rule import AutomationRule
             from app.services.pre_dm_handler import process_pre_dm_actions, check_if_email_response, check_if_follow_confirmation
