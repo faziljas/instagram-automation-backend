@@ -511,9 +511,9 @@ async def process_instagram_message(event: dict, db: Session):
             # If no rules found, list all rules to help debug
             if len(story_post_comment_rules) == 0:
                 all_story_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id == account.id,
-            AutomationRule.is_active == True
-        ).all()
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
                 log_print(f"⚠️ [STORY DM] NO rules found for story {story_id}! Available rules:", "WARNING")
                 for rule in all_story_rules:
                     log_print(f"   - {rule.name}: trigger={rule.trigger_type}, media_id={rule.media_id}")
