@@ -1406,7 +1406,15 @@ async def execute_automation_action(
                         quick_replies = pre_dm_result.get("quick_replies")
                         print(f"📎 Using {len(quick_replies)} quick reply button(s) from pre-DM result")
                     
-                    page_id_for_dm = account.page_id if account.page_id else None
+                    # Use stored account_page_id (set when getting access token) or try to access account.page_id
+                    try:
+                        if 'account_page_id' in locals():
+                            page_id_for_dm = account_page_id
+                        else:
+                            page_id_for_dm = account.page_id if account.page_id else None
+                    except Exception:
+                        # If detached, use None (not critical for DM sending)
+                        page_id_for_dm = None
                     if page_id_for_dm:
                         print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
                     else:
@@ -1420,11 +1428,11 @@ async def execute_automation_action(
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "dm_sent", db)
                 
-                # Log the DM
+                # Log the DM (use stored values to avoid DetachedInstanceError)
                 from app.models.dm_log import DmLog
                 dm_log = DmLog(
-                    user_id=account.user_id,
-                    instagram_account_id=account.id,
+                    user_id=user_id,  # Use stored user_id
+                    instagram_account_id=account_id,  # Use stored account_id
                     recipient_username=str(sender_id),  # Using sender_id as recipient username (ID format)
                     message=message_template
                 )
