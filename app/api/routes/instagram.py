@@ -1150,93 +1150,56 @@ async def execute_automation_action(
                 )
                 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
-                    # Send follow request message with Follow button
-                    message_template = pre_dm_result["message"]
-                    # Get profile URL for follow button (use stored username to avoid DetachedInstanceError)
+                    # COMBINED APPROACH: Send follow + email request in a single message
+                    follow_message = pre_dm_result["message"]
+                    
+                    # Get profile URL for follow button
                     profile_url = f"https://www.instagram.com/{username}/"
-                    # Create Follow button
                     buttons = [{
                         "text": "Follow Me",
                         "url": profile_url
                     }]
-                    pre_dm_result["buttons"] = buttons
-                    print(f"📩 Sending follow request DM to {sender_id} with Follow button")
                     
-                    # OPTION A: Send email request immediately after follow request (no delay)
-                    # If email collection is enabled, trigger email request as background task
+                    # If email is also enabled, combine both messages and add quick replies
                     if ask_for_email:
-                        sender_id_email = str(sender_id)
-                        rule_id_email = int(rule_id)
-                        user_id_email = int(user_id)
-                        account_id_email = int(account_id)
+                        # Get email request message
+                        ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
                         
-                        async def send_email_request_immediately():
-                            """Send email request DM immediately (no delay)."""
-                            from app.db.session import SessionLocal
-                            from app.models.automation_rule import AutomationRule
-                            from app.models.instagram_account import InstagramAccount
-                            
-                            db_session = SessionLocal()
-                            try:
-                                print(f"⏰ [EMAIL REQUEST] Task started for sender {sender_id_email}, rule {rule_id_email}")
-                                # Small delay (0.5 seconds) to ensure follow request DM is sent first
-                                await asyncio.sleep(0.5)
-                                print(f"⏰ [EMAIL REQUEST] 0.5 second delay complete, proceeding...")
-                                
-                                # Re-fetch rule and account
-                                rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_email).first()
-                                account_refresh = db_session.query(InstagramAccount).filter(
-                                    InstagramAccount.user_id == user_id_email,
-                                    InstagramAccount.id == account_id_email
-                                ).first()
-                                
-                                if not rule_refresh or not account_refresh:
-                                    print(f"⚠️ [EMAIL REQUEST] Rule or account not found - Rule: {rule_refresh is not None}, Account: {account_refresh is not None}")
-                                    return
-                                
-                                print(f"✅ [EMAIL REQUEST] Rule and account found - Rule ID: {rule_id_email}, Account ID: {account_id_email}")
-                                
-                                # Check state - if email already requested or primary sent, skip
-                                from app.services.pre_dm_handler import get_pre_dm_state
-                                current_state = get_pre_dm_state(sender_id_email, rule_id_email)
-                                print(f"📊 [EMAIL REQUEST] Current state: follow_request_sent={current_state.get('follow_request_sent')}, email_request_sent={current_state.get('email_request_sent')}, primary_dm_sent={current_state.get('primary_dm_sent')}")
-                                
-                                if current_state.get("email_request_sent") or current_state.get("primary_dm_sent"):
-                                    print(f"⏭️ [EMAIL REQUEST] Email already requested or primary DM sent - skipping")
-                                    return
-                                
-                                # Get email request action
-                                from app.services.pre_dm_handler import process_pre_dm_actions
-                                print(f"🔄 [EMAIL REQUEST] Calling process_pre_dm_actions with trigger_type={trigger_type}")
-                                email_pre_dm_result = await process_pre_dm_actions(
-                                    rule_refresh, sender_id_email, account_refresh, db_session,
-                                    trigger_type=trigger_type
-                                )
-                                print(f"📋 [EMAIL REQUEST] process_pre_dm_actions returned action: {email_pre_dm_result.get('action')}")
-                                
-                                if email_pre_dm_result["action"] == "send_email_request":
-                                    print(f"📧 [EMAIL REQUEST] Sending email request DM immediately")
-                                    await execute_automation_action(
-                                        rule_refresh, sender_id_email, account_refresh, db_session,
-                                        trigger_type=trigger_type,
-                                        message_id=None,
-                                        pre_dm_result_override=email_pre_dm_result
-                                    )
-                                    print(f"✅ [EMAIL REQUEST] Email request DM sent successfully")
-                                else:
-                                    print(f"⚠️ [EMAIL REQUEST] Unexpected action: {email_pre_dm_result.get('action')} - Expected: send_email_request")
-                            except Exception as e:
-                                print(f"❌ [EMAIL REQUEST] Error sending email request: {str(e)}")
-                                import traceback
-                                traceback.print_exc()
-                            finally:
-                                db_session.close()
-                                print(f"🔒 [EMAIL REQUEST] Database session closed")
+                        # Combine both messages
+                        combined_message = f"{follow_message}\n\n{ask_for_email_message}"
+                        message_template = combined_message
                         
-                        # Start email request task immediately
-                        print(f"🚀 [EMAIL REQUEST] Scheduling email request task for sender {sender_id_email}, rule {rule_id_email}")
-                        asyncio.create_task(send_email_request_immediately())
-                        print(f"📧 [EMAIL REQUEST] Email request task scheduled to run after 0.5 seconds")
+                        # Create Quick Replies for email collection
+                        quick_replies = [
+                            {
+                                "content_type": "text",
+                                "title": "Share Email",
+                                "payload": "email_shared"
+                            },
+                            {
+                                "content_type": "text",
+                                "title": "Skip for Now",
+                                "payload": "email_skip"
+                            }
+                        ]
+                        pre_dm_result["quick_replies"] = quick_replies
+                        
+                        # Mark both as sent in state
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(str(sender_id), rule_id, {
+                            "follow_request_sent": True,
+                            "email_request_sent": True,
+                            "step": "email"
+                        })
+                        
+                        print(f"📩📧 Sending combined follow + email request DM to {sender_id} (with Follow button + Quick Replies)")
+                    else:
+                        # Only follow request, no email
+                        message_template = follow_message
+                        print(f"📩 Sending follow request DM to {sender_id} with Follow button")
+                    
+                    pre_dm_result["buttons"] = buttons
+                    pre_dm_result["message"] = message_template
                     
                     # Schedule primary DM after 15 seconds (simplified, single delayed task)
                     # Store IDs for delayed task

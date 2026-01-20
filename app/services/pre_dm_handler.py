@@ -255,11 +255,10 @@ async def process_pre_dm_actions(
     # Handle email_timeout trigger (5 seconds after email request sent)
     if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout"] and not state.get("primary_dm_sent"):
         # Step 1: Send Follow Request (if enabled and not sent yet)
+        # If both follow and email are enabled, we'll combine them in a single message
         if ask_to_follow and not state.get("follow_request_sent"):
-            update_pre_dm_state(sender_id, rule.id, {
-                "follow_request_sent": True,
-                "step": "follow"
-            })
+            # If email is also enabled, the handler will combine both messages
+            # We return send_follow_request action and let the handler combine them
             return {
                 "action": "send_follow_request",
                 "message": ask_to_follow_message,
@@ -267,10 +266,9 @@ async def process_pre_dm_actions(
                 "email": None
             }
         
-        # Step 2: Send Email Request (if enabled and follow request was sent or not needed)
+        # Step 2: Send Email Request (if enabled and follow request was already sent, or follow is disabled)
         if ask_for_email and not state.get("email_request_sent"):
-            # If follow is enabled, we send email request after follow (with small delay)
-            # For now, we'll send it immediately if follow was sent
+            # Only send separate email request if follow was already sent separately, or follow is disabled
             if not ask_to_follow or state.get("follow_request_sent"):
                 update_pre_dm_state(sender_id, rule.id, {
                     "email_request_sent": True,
