@@ -1083,7 +1083,8 @@ async def execute_automation_action(
     db: Session,
     trigger_type: str = None,
     comment_id: str = None,
-    message_id: str = None
+    message_id: str = None,
+    pre_dm_result_override: dict = None  # Optional: pre-computed pre-DM result to avoid re-processing
 ):
     """
     Execute the automation action defined in the rule.
@@ -1132,10 +1133,10 @@ async def execute_automation_action(
             # Check for pre-DM actions (Ask to Follow, Ask for Email)
             ask_to_follow = rule.config.get("ask_to_follow", False)
             ask_for_email = rule.config.get("ask_for_email", False)
-            pre_dm_result = None
+            pre_dm_result = pre_dm_result_override  # Use override if provided
             
-            if ask_to_follow or ask_for_email:
-                # Process pre-DM actions
+            if (ask_to_follow or ask_for_email) and pre_dm_result is None:
+                # Process pre-DM actions (unless override is provided)
                 from app.services.pre_dm_handler import process_pre_dm_actions
                 
                 pre_dm_result = await process_pre_dm_actions(
@@ -1213,10 +1214,13 @@ async def execute_automation_action(
                                 print(f"📋 [DELAYED EMAIL] Pre-DM result action: {pre_dm_result_after_delay.get('action')}")
                                 if pre_dm_result_after_delay["action"] == "send_email_request":
                                     print(f"✅ [DELAYED EMAIL] Executing automation action to send email request")
+                                    # Pass the pre-computed pre-DM result to avoid re-calling process_pre_dm_actions
+                                    # (which would see email_request_sent=True and return wait_for_email)
                                     await execute_automation_action(
                                         rule_refresh, sender_id_for_task, account_refresh, db_session,
                                         trigger_type="timeout",
-                                        message_id=None
+                                        message_id=None,
+                                        pre_dm_result_override=pre_dm_result_after_delay  # Pass the result directly
                                     )
                                     print(f"✅ [DELAYED EMAIL] Email request sent successfully")
                                 else:
