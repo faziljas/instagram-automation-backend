@@ -1518,34 +1518,83 @@ async def execute_automation_action(
                 print(f"   Follow buttons: {len(follow_btns) if follow_btns else 0}")
                 print(f"   Email quick replies: {len(email_qr) if email_qr else 0}")
                 
+                # CRITICAL FIX: For comment-based triggers, use private reply for first message
+                # to bypass 24-hour window, then regular DM for follow-ups
+                is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                
                 # Send first message: Follow question with Follow Me button
                 if follow_msg:
-                    print(f"📤 Sending follow request DM (Message 1/2)")
-                    try:
-                        send_dm_api(
-                            sender_id,
-                            follow_msg,
-                            access_token,
-                            page_id_for_dm,
-                            buttons=follow_btns,
-                            quick_replies=None
-                        )
-                        print(f"✅ Follow request DM sent successfully")
-                        
-                        # Log the DM
-                        from app.models.dm_log import DmLog
-                        dm_log = DmLog(
-                            user_id=user_id,
-                            instagram_account_id=account_id,
-                            recipient_username=str(sender_id),
-                            message=follow_msg
-                        )
-                        db.add(dm_log)
-                        db.commit()
-                    except Exception as e:
-                        print(f"❌ Failed to send follow request DM: {str(e)}")
-                        import traceback
-                        traceback.print_exc()
+                    if is_comment_trigger:
+                        print(f"💬 Sending follow request via PRIVATE REPLY (comment trigger, Message 1/2)")
+                        print(f"   Comment ID: {comment_id}, Commenter: {sender_id}")
+                        try:
+                            from app.utils.instagram_api import send_private_reply
+                            # Send as private reply to bypass 24-hour window
+                            send_private_reply(comment_id, follow_msg, access_token, page_id_for_dm)
+                            print(f"✅ Follow request sent via private reply")
+                            
+                            # Log the DM
+                            from app.models.dm_log import DmLog
+                            dm_log = DmLog(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=follow_msg
+                            )
+                            db.add(dm_log)
+                            db.commit()
+                            
+                            # Small delay before sending button follow-up
+                            await asyncio.sleep(1)
+                            
+                            # If buttons are configured, send follow-up with buttons
+                            # After private reply, conversation is open for regular DMs
+                            if follow_btns:
+                                print(f"📤 Sending follow-up with Follow button...")
+                                try:
+                                    send_dm_api(
+                                        sender_id,
+                                        follow_msg,
+                                        access_token,
+                                        page_id_for_dm,
+                                        buttons=follow_btns,
+                                        quick_replies=None
+                                    )
+                                    print(f"✅ Follow button sent successfully")
+                                except Exception as btn_error:
+                                    print(f"⚠️ Could not send follow button: {str(btn_error)}")
+                                    
+                        except Exception as e:
+                            print(f"❌ Failed to send follow request via private reply: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        print(f"📤 Sending follow request DM (Message 1/2)")
+                        try:
+                            send_dm_api(
+                                sender_id,
+                                follow_msg,
+                                access_token,
+                                page_id_for_dm,
+                                buttons=follow_btns,
+                                quick_replies=None
+                            )
+                            print(f"✅ Follow request DM sent successfully")
+                            
+                            # Log the DM
+                            from app.models.dm_log import DmLog
+                            dm_log = DmLog(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=follow_msg
+                            )
+                            db.add(dm_log)
+                            db.commit()
+                        except Exception as e:
+                            print(f"❌ Failed to send follow request DM: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
                 
                 # Small delay to ensure messages are sent in order
                 await asyncio.sleep(0.5)
@@ -1554,6 +1603,7 @@ async def execute_automation_action(
                 if email_msg:
                     print(f"📤 Sending email request DM (Message 2/2) with {len(email_qr) if email_qr else 0} quick reply button(s)")
                     try:
+                        # After private reply, conversation is open, so regular DM should work
                         send_dm_api(
                             sender_id,
                             email_msg,
@@ -1812,14 +1862,58 @@ async def execute_automation_action(
                     except Exception:
                         # If detached, use None (not critical for DM sending)
                         page_id_for_dm = None
-                    if page_id_for_dm:
-                        print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
+                    
+                    # CRITICAL FIX: For comment-based triggers, use Private Reply endpoint to bypass 24-hour window
+                    # Comments don't count as DM initiation, so normal send_dm would fail
+                    # Private replies use comment_id instead of user_id and bypass the restriction
+                    if comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]:
+                        print(f"💬 Comment-based trigger detected! Using PRIVATE REPLY to bypass 24-hour window")
+                        print(f"   Trigger type: {trigger_type}, Comment ID: {comment_id}")
+                        print(f"   Recipient (commenter): {sender_id}")
+                        
+                        # For comment-based triggers, send private reply instead of regular DM
+                        # This bypasses Instagram's 24-hour messaging window restriction
+                        from app.utils.instagram_api import send_private_reply
+                        
+                        # Note: Private replies currently don't support buttons/quick_replies in the same way
+                        # So we send a text-based message. If buttons are needed, they would need to be
+                        # sent as a follow-up message after the initial private reply
+                        if buttons or quick_replies:
+                            print(f"⚠️ Buttons/Quick Replies not fully supported with private replies")
+                            print(f"   Sending text message first, then attempting buttons in follow-up")
+                        
+                        # Send the private reply (this uses comment_id as recipient)
+                        send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
+                        print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
+                        
+                        # If buttons or quick replies are configured, send them as a follow-up DM
+                        # After a private reply is sent, the conversation is opened and we CAN send regular DMs
+                        if buttons or quick_replies:
+                            print(f"📤 Sending follow-up DM with buttons/quick replies...")
+                            try:
+                                # Small delay to ensure private reply is processed first
+                                await asyncio.sleep(1)
+                                from app.utils.instagram_api import send_dm
+                                # Now send a follow-up message with buttons/quick replies
+                                # Since the private reply opened the conversation, this should work
+                                follow_up_message = "👆 Please see the message above!"
+                                if buttons:
+                                    follow_up_message = message_template  # Re-send with buttons
+                                send_dm(sender_id, follow_up_message, access_token, page_id_for_dm, buttons, quick_replies)
+                                print(f"✅ Follow-up DM with buttons/quick replies sent to {sender_id}")
+                            except Exception as follow_up_error:
+                                print(f"⚠️ Could not send follow-up with buttons: {str(follow_up_error)}")
+                                print(f"   Main message was still delivered via private reply")
                     else:
-                        print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
-                    # Import send_dm and call it with quick_replies
-                    from app.utils.instagram_api import send_dm
-                    send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
-                    print(f"✅ DM sent to {sender_id}")
+                        # For direct message triggers or when no comment_id, use regular DM
+                        if page_id_for_dm:
+                            print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
+                        else:
+                            print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
+                        # Import send_dm and call it with quick_replies
+                        from app.utils.instagram_api import send_dm
+                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
+                        print(f"✅ DM sent to {sender_id}")
                     
                     # Update stats
                     from app.services.lead_capture import update_automation_stats
