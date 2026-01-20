@@ -284,9 +284,23 @@ async def process_pre_dm_actions(
                 }
         
         # Step 3: Send Primary DM (if pre-DM actions are done or disabled)
-        # If email is enabled, wait for email response
+        # If email is enabled and email was requested, check if we should wait or proceed
         if ask_for_email and state.get("email_request_sent") and not state.get("email_received"):
-            # Still waiting for email
+            # If trigger is email_timeout, proceed to primary DM (timeout occurred)
+            if trigger_type == "email_timeout":
+                update_pre_dm_state(sender_id, rule.id, {
+                    "primary_dm_sent": True,
+                    "step": "primary"
+                })
+                return {
+                    "action": "send_primary",
+                    "message": None,
+                    "should_save_email": False,
+                    "email": None
+                }
+            # If this is a subsequent comment/keyword trigger (user engaged again), still return wait_for_email
+            # The execute_automation_action will handle scheduling primary DM after timeout
+            # This gives user a chance to provide email via DM, but won't wait forever
             return {
                 "action": "wait_for_email",
                 "message": None,

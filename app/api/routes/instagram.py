@@ -1301,9 +1301,59 @@ async def execute_automation_action(
                     # Start the delayed primary DM
                     asyncio.create_task(delayed_primary_dm())
                 elif pre_dm_result["action"] == "wait_for_email":
-                    # Still waiting for email response, don't send anything yet
-                    print(f"⏳ Waiting for email response from {sender_id}")
-                    return
+                    # Still waiting for email response
+                    # If this is a comment/keyword trigger (not a DM), user is engaging again
+                    # Schedule primary DM after email timeout instead of waiting forever
+                    if trigger_type in ["post_comment", "keyword", "live_comment"]:
+                        print(f"⏳ Email requested but not received yet. User commented again, scheduling primary DM after email timeout...")
+                        # Schedule primary DM after email timeout period
+                        user_id_for_dm = user_id
+                        rule_id_for_dm = rule_id
+                        account_id_for_dm = account_id
+                        
+                        async def delayed_primary_dm_for_comment():
+                            # Create a new DB session for the background task
+                            from app.db.session import SessionLocal
+                            db_session = SessionLocal()
+                            try:
+                                await asyncio.sleep(5)  # Wait 5 seconds (email timeout period)
+                                # Re-fetch rule and account in the new session
+                                rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
+                                account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.user_id == user_id_for_dm, InstagramAccount.id == account_id_for_dm).first()
+                                
+                                if not rule_refresh or not account_refresh:
+                                    print(f"⚠️ Rule or account not found in delayed primary DM for comment")
+                                    return
+                                
+                                # Check if primary DM hasn't been sent yet and email wasn't provided
+                                from app.services.pre_dm_handler import get_pre_dm_state
+                                current_state = get_pre_dm_state(str(sender_id), rule_id_for_dm)
+                                if not current_state.get("primary_dm_sent") and not current_state.get("email_received"):
+                                    # Proceed to primary DM (skip email collection since user engaged again)
+                                    pre_dm_result_for_primary = await process_pre_dm_actions(
+                                        rule_refresh, str(sender_id), account_refresh, db_session,
+                                        trigger_type="email_timeout"  # Use different trigger type
+                                    )
+                                    if pre_dm_result_for_primary["action"] == "send_primary":
+                                        await execute_automation_action(
+                                            rule_refresh, str(sender_id), account_refresh, db_session,
+                                            trigger_type="email_timeout",
+                                            message_id=None
+                                        )
+                            except Exception as e:
+                                print(f"❌ Error in delayed primary DM for comment: {str(e)}")
+                                import traceback
+                                traceback.print_exc()
+                            finally:
+                                db_session.close()
+                        
+                        # Start the delayed primary DM
+                        asyncio.create_task(delayed_primary_dm_for_comment())
+                        print(f"🚀 Scheduled primary DM after email timeout (user engaged via comment)")
+                    else:
+                        # For DM triggers, just wait
+                        print(f"⏳ Waiting for email response from {sender_id}")
+                        return
                 elif pre_dm_result["action"] == "send_primary":
                     # Pre-DM actions complete, proceed to primary DM
                     if pre_dm_result.get("email"):
