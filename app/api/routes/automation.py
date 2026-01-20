@@ -186,6 +186,9 @@ def delete_automation_rule(
     for lead in leads:
         db.delete(lead)
     
+    # Flush to ensure deletions are processed before deleting the rule
+    db.flush()
+    
     # Now delete the rule
     db.delete(rule)
     db.commit()
