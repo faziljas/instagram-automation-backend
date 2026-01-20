@@ -1543,8 +1543,70 @@ async def execute_automation_action(
                     else:
                         print(f"⚠️ Email message is empty, skipping email DM")
                     
-                    # Don't send primary DM yet - wait for user response
-                    print(f"✅ Both pre-DM messages sent vertically (portrait mode), skipping primary DM for now")
+                    # Schedule primary DM after 15 seconds (after both pre-DM messages sent)
+                    sender_id_for_dm = str(sender_id)
+                    rule_id_for_dm = int(rule_id)
+                    user_id_for_dm = int(user_id)
+                    account_id_for_dm = int(account_id)
+                    
+                    async def delayed_primary_dm_simple():
+                        """Simplified background task to send primary DM after 15 seconds."""
+                        from app.db.session import SessionLocal
+                        from app.models.automation_rule import AutomationRule
+                        from app.models.instagram_account import InstagramAccount
+                        
+                        db_session = SessionLocal()
+                        try:
+                            print(f"⏰ [PRIMARY DM] Starting 15-second delay for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
+                            await asyncio.sleep(15)  # Wait 15 seconds
+                            print(f"⏰ [PRIMARY DM] 15 seconds elapsed, checking if primary DM already sent")
+                            
+                            # Re-fetch rule and account
+                            rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
+                            account_refresh = db_session.query(InstagramAccount).filter(
+                                InstagramAccount.user_id == user_id_for_dm,
+                                InstagramAccount.id == account_id_for_dm
+                            ).first()
+                            
+                            if not rule_refresh or not account_refresh:
+                                print(f"⚠️ [PRIMARY DM] Rule or account not found")
+                                return
+                            
+                            # Simple check: if primary DM already sent, skip
+                            from app.services.pre_dm_handler import get_pre_dm_state
+                            current_state = get_pre_dm_state(sender_id_for_dm, rule_id_for_dm)
+                            if current_state.get("primary_dm_sent"):
+                                print(f"⏭️ [PRIMARY DM] Primary DM already sent, skipping")
+                                return
+                            
+                            # Mark as sent to prevent duplicates
+                            from app.services.pre_dm_handler import update_pre_dm_state
+                            update_pre_dm_state(sender_id_for_dm, rule_id_for_dm, {
+                                "primary_dm_sent": True
+                            })
+                            
+                            # Send primary DM directly from rule config (no pre-DM state checking)
+                            print(f"✅ [PRIMARY DM] Sending primary DM from rule config")
+                            await execute_automation_action(
+                                rule_refresh, sender_id_for_dm, account_refresh, db_session,
+                                trigger_type="primary_timeout",
+                                message_id=None,
+                                pre_dm_result_override={"action": "send_primary"}  # Skip pre-DM processing
+                            )
+                            print(f"✅ [PRIMARY DM] Primary DM sent successfully")
+                        except Exception as e:
+                            print(f"❌ [PRIMARY DM] Error in delayed primary DM task: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
+                        finally:
+                            db_session.close()
+                    
+                    # Start the delayed primary DM task
+                    print(f"🚀 [PRIMARY DM] Scheduling primary DM after 15 seconds for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
+                    asyncio.create_task(delayed_primary_dm_simple())
+                    
+                    # Don't send primary DM yet - wait for user response or timeout
+                    print(f"✅ Both pre-DM messages sent vertically (portrait mode), primary DM scheduled for 15 seconds")
                     return
                     # Don't set message_template = None - let it be sent with combined message
                 elif pre_dm_result and pre_dm_result["action"] == "send_primary":
