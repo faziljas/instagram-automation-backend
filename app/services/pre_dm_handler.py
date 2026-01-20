@@ -164,6 +164,9 @@ async def process_pre_dm_actions(
             }
         else:
             # No email request, proceed to primary DM
+            update_pre_dm_state(sender_id, rule.id, {
+                "primary_dm_sent": True  # Mark as sent to prevent duplicate from scheduled task
+            })
             return {
                 "action": "send_primary",
                 "message": None,
@@ -193,6 +196,9 @@ async def process_pre_dm_actions(
                 }
             else:
                 # No email request, proceed to primary DM
+                update_pre_dm_state(sender_id, rule.id, {
+                    "primary_dm_sent": True  # Mark as sent to prevent duplicate from scheduled task
+                })
                 return {
                     "action": "send_primary",
                     "message": None,
@@ -207,7 +213,8 @@ async def process_pre_dm_actions(
             # Email received! Save it and proceed to primary DM
             update_pre_dm_state(sender_id, rule.id, {
                 "email_received": True,
-                "email": email_address
+                "email": email_address,
+                "primary_dm_sent": True  # Mark as sent to prevent duplicate from scheduled task
             })
             
             # Save email to leads database
