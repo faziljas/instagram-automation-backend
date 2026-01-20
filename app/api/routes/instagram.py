@@ -1427,9 +1427,10 @@ async def execute_automation_action(
                         print(f"⏳ Waiting for email response from {sender_id}")
                         return
                 elif pre_dm_result and pre_dm_result["action"] == "send_combined_pre_dm":
-                    # Combined follow + email message already sent, proceed to primary DM logic
-                    print(f"✅ Combined pre-DM message sent, proceeding to primary DM")
-                    message_template = None  # Will be set below
+                    # Combined follow + email message will be sent in "Always send DM" section below
+                    # message_template is already set to combined_message, so don't change it
+                    print(f"✅ Combined pre-DM message configured, will be sent below")
+                    # Don't set message_template = None - let it be sent with combined message
                 elif pre_dm_result and pre_dm_result["action"] == "send_primary":
                     # Pre-DM actions complete, proceed to primary DM
                     if pre_dm_result.get("email"):
