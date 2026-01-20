@@ -248,8 +248,8 @@ async def process_instagram_message(event: dict, db: Session):
                 # User clicked "Skip for Now" - proceed to primary DM
                 log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
                 # Find active rules and proceed to primary DM
-                from app.models.automation_rule import AutomationRule
-                rules = db.query(AutomationRule).filter(
+        from app.models.automation_rule import AutomationRule
+        rules = db.query(AutomationRule).filter(
                     AutomationRule.instagram_account_id == account.id,
                     AutomationRule.is_active == True,
                     AutomationRule.action_type == "send_dm"
@@ -1099,7 +1099,16 @@ async def execute_automation_action(
         message_id: The message or comment ID (used for deduplication cache cleanup)
     """
     try:
-        print(f"🔍 [EXECUTE] Starting execute_automation_action - Rule ID: {rule.id}, Action: {rule.action_type}, Sender: {sender_id}")
+        print(f"🔍 [EXECUTE] Starting execute_automation_action - Rule ID: {rule.id if rule else 'None'}, Action: {rule.action_type if rule else 'None'}, Sender: {sender_id}")
+        
+        # Check if rule and account are valid
+        if not rule:
+            print(f"❌ [EXECUTE] Rule is None!")
+            return
+        if not account:
+            print(f"❌ [EXECUTE] Account is None!")
+            return
+        
         if rule.action_type == "send_dm":
             # IMPORTANT: Store all needed attributes from account and rule BEFORE any async operations
             # This prevents DetachedInstanceError when objects are passed across async boundaries
@@ -1108,8 +1117,11 @@ async def execute_automation_action(
                 account_id = account.id
                 username = account.username
                 rule_id = rule.id
+                print(f"🔍 [EXECUTE] Stored values - user_id: {user_id}, account_id: {account_id}, username: {username}, rule_id: {rule_id}")
             except Exception as e:
-                print(f"❌ Error accessing account/rule attributes: {str(e)}")
+                print(f"❌ [EXECUTE] Error accessing account/rule attributes: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 # Try to refresh the objects
                 try:
                     db.refresh(account)
@@ -1120,7 +1132,7 @@ async def execute_automation_action(
                     rule_id = rule.id
                 except Exception as refresh_error:
                     print(f"❌ Failed to refresh account/rule: {str(refresh_error)}")
-                    return
+                return
             
             # Check monthly DM limit BEFORE sending
             from app.utils.plan_enforcement import check_dm_limit
@@ -1429,7 +1441,7 @@ async def execute_automation_action(
                         # Start the delayed primary DM
                         asyncio.create_task(delayed_primary_dm_for_comment())
                         print(f"🚀 [PRIMARY DM] Scheduled primary DM after 15 seconds (user engaged via comment)")
-                    else:
+                else:
                         # For DM triggers, just wait
                         print(f"⏳ Waiting for email response from {sender_id}")
                         return
@@ -1449,7 +1461,7 @@ async def execute_automation_action(
                             access_token = decrypt_credentials(account.encrypted_credentials)
                             page_id_for_dm = account.page_id
                             print(f"⚠️ Using legacy encrypted credentials for pre-DM messages")
-                        else:
+                    else:
                             raise Exception("No access token found for account")
                     except (AttributeError, Exception) as e:
                         # If detached, refresh from DB
@@ -1494,17 +1506,17 @@ async def execute_automation_action(
                                 quick_replies=None
                             )
                             print(f"✅ Follow request DM sent successfully")
-                            
-                            # Log the DM
-                            from app.models.dm_log import DmLog
-                            dm_log = DmLog(
+                
+                # Log the DM
+                from app.models.dm_log import DmLog
+                dm_log = DmLog(
                                 user_id=user_id,
                                 instagram_account_id=account_id,
                                 recipient_username=str(sender_id),
                                 message=follow_msg
-                            )
-                            db.add(dm_log)
-                            db.commit()
+                )
+                db.add(dm_log)
+                db.commit()
                         except Exception as e:
                             print(f"❌ Failed to send follow request DM: {str(e)}")
                             import traceback
@@ -1542,7 +1554,7 @@ async def execute_automation_action(
                             from app.services.lead_capture import update_automation_stats
                             update_automation_stats(rule.id, "dm_sent", db)
                             update_automation_stats(rule.id, "dm_sent", db)  # Count as 2 DMs sent
-                        except Exception as e:
+            except Exception as e:
                             print(f"❌ Failed to send email request DM: {str(e)}")
                             import traceback
                             traceback.print_exc()
