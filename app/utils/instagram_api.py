@@ -186,45 +186,82 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                 })
             
             if template_buttons:
-                # When message contains two logical parts (follow + email),
-                # split on double newline so Instagram shows:
-                # - title: follow request (bold)
-                # - subtitle: email request (regular text)
-                title_text = message
-                subtitle_text = ""
-                if "\n\n" in message:
-                    first, rest = message.split("\n\n", 1)
-                    title_text = first.strip() or message
-                    subtitle_text = rest.strip()
-                else:
-                    # Fallback: truncate long text into title/subtitle
-                    if len(message) > 80:
-                        title_text = message[:80]
-                        subtitle_text = message
-                    else:
-                        title_text = message
-                        subtitle_text = ""
-
-                # Use generic template format for messages with URL buttons
-                # Generic template allows combining text with URL buttons
-                message_payload = {
-                    "attachment": {
-                        "type": "template",
-                        "payload": {
-                            "template_type": "generic",
-                            "elements": [
-                                {
-                                    "title": title_text,  # Follow request or first line
-                                    "subtitle": subtitle_text,  # Email request (second line) or empty
-                                    "buttons": template_buttons
-                                }
-                            ]
+                # Check if we have both buttons and quick_replies (combined follow + email)
+                # If so, create TWO elements: one for follow question, one for email question
+                # Each element gets its own title (bold) and respective buttons
+                if "\n\n" in message and quick_replies:
+                    # Split message into follow question and email question
+                    follow_question, email_question = message.split("\n\n", 1)
+                    follow_question = follow_question.strip()
+                    email_question = email_question.strip()
+                    
+                    # Create two elements for better UX
+                    elements = []
+                    
+                    # Element 1: Follow question with Follow Me button
+                    if follow_question:
+                        elements.append({
+                            "title": follow_question[:80],  # Bold title
+                            "subtitle": "",  # Empty subtitle
+                            "buttons": template_buttons  # Follow Me button
+                        })
+                    
+                    # Element 2: Email question (will get quick replies at message level)
+                    if email_question:
+                        elements.append({
+                            "title": email_question[:80],  # Bold title
+                            "subtitle": "",  # Empty subtitle
+                            "buttons": []  # No URL buttons, will use quick replies
+                        })
+                    
+                    message_payload = {
+                        "attachment": {
+                            "type": "template",
+                            "payload": {
+                                "template_type": "generic",
+                                "elements": elements
+                            }
                         }
                     }
-                }
-                print(f"   Using generic template with {len(template_buttons)} URL button(s)")
-                for i, btn in enumerate(template_buttons, 1):
-                    print(f"      Button {i}: {btn['title']} -> {btn['url']}")
+                    print(f"   Using generic template with {len(elements)} element(s)")
+                    print(f"      Element 1 (Follow): {follow_question[:50]}... with {len(template_buttons)} button(s)")
+                    print(f"      Element 2 (Email): {email_question[:50]}... (quick replies below)")
+                else:
+                    # Single element (no quick replies or no double newline)
+                    title_text = message
+                    subtitle_text = ""
+                    if "\n\n" in message:
+                        first, rest = message.split("\n\n", 1)
+                        title_text = first.strip() or message
+                        subtitle_text = rest.strip()
+                    else:
+                        # Fallback: truncate long text into title/subtitle
+                        if len(message) > 80:
+                            title_text = message[:80]
+                            subtitle_text = message
+                        else:
+                            title_text = message
+                            subtitle_text = ""
+
+                    # Use generic template format for messages with URL buttons
+                    message_payload = {
+                        "attachment": {
+                            "type": "template",
+                            "payload": {
+                                "template_type": "generic",
+                                "elements": [
+                                    {
+                                        "title": title_text,
+                                        "subtitle": subtitle_text,
+                                        "buttons": template_buttons
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                    print(f"   Using generic template with {len(template_buttons)} URL button(s)")
+                    for i, btn in enumerate(template_buttons, 1):
+                        print(f"      Button {i}: {btn['title']} -> {btn['url']}")
             else:
                 # Fallback to plain text if no valid buttons
                 message_payload = {"text": message}
