@@ -1106,15 +1106,33 @@ async def execute_automation_action(
         message_id: The message or comment ID (used for deduplication cache cleanup)
     """
     try:
-        print(f"🔍 [EXECUTE] Starting execute_automation_action - Rule ID: {rule.id if rule else 'None'}, Action: {rule.action_type if rule else 'None'}, Sender: {sender_id}")
+        # Log function entry FIRST - before accessing any attributes
+        print(f"🔍 [EXECUTE] ✅ FUNCTION CALLED - Sender: {sender_id}, Trigger: {trigger_type}")
         
-        # Check if rule and account are valid
+        # Check if rule and account are valid BEFORE accessing attributes
         if not rule:
             print(f"❌ [EXECUTE] Rule is None!")
             return
         if not account:
             print(f"❌ [EXECUTE] Account is None!")
             return
+        
+        # Now safe to access attributes (with error handling)
+        try:
+            rule_id_val = rule.id
+            action_type_val = rule.action_type
+            print(f"🔍 [EXECUTE] Rule ID: {rule_id_val}, Action: {action_type_val}")
+        except Exception as attr_error:
+            print(f"❌ [EXECUTE] Error accessing rule attributes: {str(attr_error)}")
+            print(f"❌ [EXECUTE] Attempting to refresh rule from DB...")
+            try:
+                db.refresh(rule)
+                rule_id_val = rule.id
+                action_type_val = rule.action_type
+                print(f"🔍 [EXECUTE] Rule ID (after refresh): {rule_id_val}, Action: {action_type_val}")
+            except Exception as refresh_error:
+                print(f"❌ [EXECUTE] Failed to refresh rule: {str(refresh_error)}")
+                return
         
         if rule.action_type == "send_dm":
             # IMPORTANT: Store all needed attributes from account and rule BEFORE any async operations
