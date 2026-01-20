@@ -248,8 +248,8 @@ async def process_instagram_message(event: dict, db: Session):
                 # User clicked "Skip for Now" - proceed to primary DM
                 log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
                 # Find active rules and proceed to primary DM
-        from app.models.automation_rule import AutomationRule
-        rules = db.query(AutomationRule).filter(
+                from app.models.automation_rule import AutomationRule
+                rules = db.query(AutomationRule).filter(
                     AutomationRule.instagram_account_id == account.id,
                     AutomationRule.is_active == True,
                     AutomationRule.action_type == "send_dm"
