@@ -1135,12 +1135,15 @@ async def execute_automation_action(
             ask_for_email = rule.config.get("ask_for_email", False)
             pre_dm_result = pre_dm_result_override  # Use override if provided
             
+            print(f"🔍 [DEBUG] Pre-DM check: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, pre_dm_result={pre_dm_result}")
+            
             # If override says "send_primary", skip all pre-DM processing
             if pre_dm_result and pre_dm_result.get("action") == "send_primary":
                 # Direct primary DM - skip to primary DM logic
                 print(f"✅ Skipping pre-DM actions, proceeding directly to primary DM")
                 # pre_dm_result already set to override, continue to primary DM logic below
             elif (ask_to_follow or ask_for_email) and pre_dm_result is None:
+                print(f"🔍 [DEBUG] Processing pre-DM actions: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}")
                 # Process pre-DM actions (unless override is provided)
                 from app.services.pre_dm_handler import process_pre_dm_actions
                 
