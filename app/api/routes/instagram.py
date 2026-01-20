@@ -1148,7 +1148,7 @@ async def execute_automation_action(
                     trigger_type=trigger_type
                 )
                 
-                if pre_dm_result["action"] == "send_follow_request":
+                if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
                     # Send follow request message with Follow button
                     message_template = pre_dm_result["message"]
                     # Get profile URL for follow button (use stored username to avoid DetachedInstanceError)
