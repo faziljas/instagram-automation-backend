@@ -144,7 +144,30 @@ async def process_pre_dm_actions(
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     
-    # Check if this is a response to a follow request
+    # Check if follow button was clicked (postback event)
+    if trigger_type == "postback" and state.get("follow_button_clicked"):
+        # User clicked follow button - proceed to email request
+        if ask_for_email and not state.get("email_request_sent"):
+            update_pre_dm_state(sender_id, rule.id, {
+                "email_request_sent": True,
+                "step": "email"
+            })
+            return {
+                "action": "send_email_request",
+                "message": ask_for_email_message,
+                "should_save_email": False,
+                "email": None
+            }
+        else:
+            # No email request, proceed to primary DM
+            return {
+                "action": "send_primary",
+                "message": None,
+                "should_save_email": False,
+                "email": None
+            }
+    
+    # Check if this is a response to a follow request (text-based confirmation)
     if incoming_message and state.get("follow_request_sent") and not state.get("follow_confirmed"):
         if check_if_follow_confirmation(incoming_message):
             # User confirmed they're following - mark as confirmed and proceed to email request

@@ -131,9 +131,13 @@ async def receive_webhook(
                 log_print(f"📬 Found {len(messaging_events)} messaging event(s) in webhook entry")
                 
                 for messaging_event in messaging_events:
+                    # Check if this is a postback event (button click)
+                    if "postback" in messaging_event:
+                        log_print(f"🔘 Processing postback event (button click)")
+                        await process_postback_event(messaging_event, db)
                     # Check if this is a regular message event (not message_edit, message_reactions, etc.)
                     # Only process events with a "message" field containing text
-                    if "message" in messaging_event:
+                    elif "message" in messaging_event:
                         log_print(f"✅ Processing message event with 'message' field")
                         await process_instagram_message(messaging_event, db)
                     else:
@@ -1053,9 +1057,18 @@ async def execute_automation_action(
                 )
                 
                 if pre_dm_result["action"] == "send_follow_request":
-                    # Send follow request message
+                    # Send follow request message with Follow button
                     message_template = pre_dm_result["message"]
-                    print(f"📩 Sending follow request DM to {sender_id}")
+                    # Get profile URL for follow button
+                    profile_url = f"https://www.instagram.com/{account.username}/"
+                    # Create Follow button
+                    buttons = [{
+                        "text": "Follow Me",
+                        "url": profile_url,
+                        "payload": "follow_clicked"  # For tracking button clicks
+                    }]
+                    pre_dm_result["buttons"] = buttons
+                    print(f"📩 Sending follow request DM to {sender_id} with Follow button")
                 elif pre_dm_result["action"] == "send_email_request":
                     # Send email request message
                     message_template = pre_dm_result["message"]
@@ -1180,9 +1193,12 @@ async def execute_automation_action(
                 
                 # Always send DM if message is configured (for all trigger types)
                 if message_template:
-                    # Get buttons from rule config if DM type is text_button
+                    # Get buttons from pre_dm_result first (for follow button), then from rule config
                     buttons = None
-                    if rule.config.get("buttons") and isinstance(rule.config.get("buttons"), list):
+                    if pre_dm_result and pre_dm_result.get("buttons"):
+                        buttons = pre_dm_result.get("buttons")
+                        print(f"📎 Using {len(buttons)} button(s) from pre-DM result")
+                    elif rule.config.get("buttons") and isinstance(rule.config.get("buttons"), list):
                         buttons = rule.config.get("buttons")
                         print(f"📎 Found {len(buttons)} button(s) in rule config")
                     
