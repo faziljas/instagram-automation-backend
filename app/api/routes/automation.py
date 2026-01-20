@@ -170,6 +170,23 @@ def delete_automation_rule(
             detail="Automation rule not found"
         )
 
+    # Delete associated stats first (to avoid foreign key constraint violation)
+    from app.models.automation_rule_stats import AutomationRuleStats
+    stats = db.query(AutomationRuleStats).filter(
+        AutomationRuleStats.automation_rule_id == rule_id
+    ).all()
+    for stat in stats:
+        db.delete(stat)
+    
+    # Also delete any captured leads associated with this rule
+    from app.models.captured_lead import CapturedLead
+    leads = db.query(CapturedLead).filter(
+        CapturedLead.automation_rule_id == rule_id
+    ).all()
+    for lead in leads:
+        db.delete(lead)
+    
+    # Now delete the rule
     db.delete(rule)
     db.commit()
 
