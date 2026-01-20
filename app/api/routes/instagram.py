@@ -248,8 +248,8 @@ async def process_instagram_message(event: dict, db: Session):
                 # User clicked "Skip for Now" - proceed to primary DM
                 log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
                 # Find active rules and proceed to primary DM
-                from app.models.automation_rule import AutomationRule
-                rules = db.query(AutomationRule).filter(
+        from app.models.automation_rule import AutomationRule
+        rules = db.query(AutomationRule).filter(
                     AutomationRule.instagram_account_id == account.id,
                     AutomationRule.is_active == True,
                     AutomationRule.action_type == "send_dm"
@@ -1139,6 +1139,7 @@ async def execute_automation_action(
             if pre_dm_result and pre_dm_result.get("action") == "send_primary":
                 # Direct primary DM - skip to primary DM logic
                 print(f"✅ Skipping pre-DM actions, proceeding directly to primary DM")
+                # pre_dm_result already set to override, continue to primary DM logic below
             elif (ask_to_follow or ask_for_email) and pre_dm_result is None:
                 # Process pre-DM actions (unless override is provided)
                 from app.services.pre_dm_handler import process_pre_dm_actions
@@ -1177,8 +1178,10 @@ async def execute_automation_action(
                             
                             db_session = SessionLocal()
                             try:
+                                print(f"⏰ [EMAIL REQUEST] Task started for sender {sender_id_email}, rule {rule_id_email}")
                                 # Small delay (0.5 seconds) to ensure follow request DM is sent first
                                 await asyncio.sleep(0.5)
+                                print(f"⏰ [EMAIL REQUEST] 0.5 second delay complete, proceeding...")
                                 
                                 # Re-fetch rule and account
                                 rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_email).first()
@@ -1188,22 +1191,28 @@ async def execute_automation_action(
                                 ).first()
                                 
                                 if not rule_refresh or not account_refresh:
-                                    print(f"⚠️ [EMAIL REQUEST] Rule or account not found")
+                                    print(f"⚠️ [EMAIL REQUEST] Rule or account not found - Rule: {rule_refresh is not None}, Account: {account_refresh is not None}")
                                     return
+                                
+                                print(f"✅ [EMAIL REQUEST] Rule and account found - Rule ID: {rule_id_email}, Account ID: {account_id_email}")
                                 
                                 # Check state - if email already requested or primary sent, skip
                                 from app.services.pre_dm_handler import get_pre_dm_state
                                 current_state = get_pre_dm_state(sender_id_email, rule_id_email)
+                                print(f"📊 [EMAIL REQUEST] Current state: follow_request_sent={current_state.get('follow_request_sent')}, email_request_sent={current_state.get('email_request_sent')}, primary_dm_sent={current_state.get('primary_dm_sent')}")
+                                
                                 if current_state.get("email_request_sent") or current_state.get("primary_dm_sent"):
-                                    print(f"⏭️ [EMAIL REQUEST] Email already requested or primary DM sent")
+                                    print(f"⏭️ [EMAIL REQUEST] Email already requested or primary DM sent - skipping")
                                     return
                                 
                                 # Get email request action
                                 from app.services.pre_dm_handler import process_pre_dm_actions
+                                print(f"🔄 [EMAIL REQUEST] Calling process_pre_dm_actions with trigger_type={trigger_type}")
                                 email_pre_dm_result = await process_pre_dm_actions(
                                     rule_refresh, sender_id_email, account_refresh, db_session,
                                     trigger_type=trigger_type
                                 )
+                                print(f"📋 [EMAIL REQUEST] process_pre_dm_actions returned action: {email_pre_dm_result.get('action')}")
                                 
                                 if email_pre_dm_result["action"] == "send_email_request":
                                     print(f"📧 [EMAIL REQUEST] Sending email request DM immediately")
@@ -1215,17 +1224,19 @@ async def execute_automation_action(
                                     )
                                     print(f"✅ [EMAIL REQUEST] Email request DM sent successfully")
                                 else:
-                                    print(f"⚠️ [EMAIL REQUEST] Unexpected action: {email_pre_dm_result.get('action')}")
+                                    print(f"⚠️ [EMAIL REQUEST] Unexpected action: {email_pre_dm_result.get('action')} - Expected: send_email_request")
                             except Exception as e:
                                 print(f"❌ [EMAIL REQUEST] Error sending email request: {str(e)}")
                                 import traceback
                                 traceback.print_exc()
                             finally:
                                 db_session.close()
+                                print(f"🔒 [EMAIL REQUEST] Database session closed")
                         
                         # Start email request task immediately
+                        print(f"🚀 [EMAIL REQUEST] Scheduling email request task for sender {sender_id_email}, rule {rule_id_email}")
                         asyncio.create_task(send_email_request_immediately())
-                        print(f"📧 [EMAIL REQUEST] Scheduled email request DM to be sent immediately after follow request")
+                        print(f"📧 [EMAIL REQUEST] Email request task scheduled to run after 0.5 seconds")
                     
                     # Schedule primary DM after 15 seconds (simplified, single delayed task)
                     # Store IDs for delayed task
@@ -1519,7 +1530,7 @@ async def execute_automation_action(
                         print(f"✅ Using OAuth page token for sending message")
                         account_page_id = account.page_id
                     elif account.encrypted_credentials:
-                        access_token = decrypt_credentials(account.encrypted_credentials)
+                access_token = decrypt_credentials(account.encrypted_credentials)
                         print(f"⚠️ Using legacy encrypted credentials")
                         account_page_id = account.page_id
                     else:
@@ -1596,7 +1607,7 @@ async def execute_automation_action(
                     try:
                         if 'account_page_id' in locals():
                             page_id_for_dm = account_page_id
-                        else:
+                else:
                             page_id_for_dm = account.page_id if account.page_id else None
                     except Exception:
                         # If detached, use None (not critical for DM sending)
