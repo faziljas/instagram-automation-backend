@@ -1236,7 +1236,6 @@ async def execute_automation_action(
                             print(f"🔒 [DELAYED EMAIL] Database session closed")
                     
                     # Start the delayed email request task
-                    import asyncio
                     print(f"🚀 [DELAYED EMAIL] Scheduling delayed email request task for sender {sender_id_for_task}, rule {rule_id_for_task}")
                     task = asyncio.create_task(delayed_email_request_task())
                     # Store task reference to prevent garbage collection (optional but recommended)
@@ -1409,7 +1408,7 @@ async def execute_automation_action(
                         message_template = rule.config.get("message_template", "")
             
             if not message_template:
-                print("⚠️ No message template configured")
+                print(f"⚠️ No message template configured for rule {rule.id}, action: {pre_dm_result.get('action') if pre_dm_result else 'None'}")
                 return
             
             # Update stats
