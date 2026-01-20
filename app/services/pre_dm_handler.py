@@ -89,6 +89,10 @@ def check_if_follow_confirmation(message_text: str) -> bool:
         if phrase in message_lower:
             return True
     
+    # Check if message is exactly "follow" (case-insensitive)
+    if message_lower == "follow":
+        return True
+    
     return False
 
 

@@ -271,11 +271,13 @@ async def process_instagram_message(event: dict, db: Session):
                 return  # Don't process as regular message
         
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
+        # IMPORTANT: Check ALL rules with pre-DM actions, including those with media_id (for comment-based rules)
         if account and message_text:
             from app.models.automation_rule import AutomationRule
             from app.services.pre_dm_handler import process_pre_dm_actions, check_if_email_response, check_if_follow_confirmation
             
-            # Find rules with pre-DM actions enabled
+            # Find rules with pre-DM actions enabled (include ALL rules, not just new_message)
+            # This allows comment-based rules with pre-DM actions to respond to DMs
             pre_dm_rules = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id == account.id,
                 AutomationRule.is_active == True,
@@ -291,6 +293,7 @@ async def process_instagram_message(event: dict, db: Session):
                 
                 # Check if this is a follow confirmation
                 if ask_to_follow and check_if_follow_confirmation(message_text):
+                    log_print(f"✅ Follow confirmation detected from {sender_id} for rule '{rule.name}' (Rule ID: {rule.id})")
                     # User confirmed they're following - mark as followed and proceed
                     pre_dm_result = await process_pre_dm_actions(
                         rule, sender_id, account, db,
