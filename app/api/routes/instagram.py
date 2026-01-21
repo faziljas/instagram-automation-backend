@@ -513,6 +513,12 @@ async def process_instagram_message(event: dict, db: Session):
                         log_print(f"✅ [STRICT MODE] Valid email received: {pre_dm_result.get('email')}")
                         log_print(f"📤 Sending primary DM now (both follow + email completed)")
                         
+                        # Retrieve comment_id from pre-DM state if this was triggered from a comment
+                        from app.services.pre_dm_handler import get_pre_dm_state
+                        state = get_pre_dm_state(sender_id, rule.id)
+                        stored_comment_id = state.get("comment_id")  # comment_id stored when pre-DM actions started
+                        log_print(f"🔍 [COMMENT ID] Retrieved from state: comment_id={stored_comment_id}")
+                        
                         # Send primary DM immediately, preserving email + send_email_success flag
                         asyncio.create_task(execute_automation_action(
                             rule,
@@ -521,6 +527,7 @@ async def process_instagram_message(event: dict, db: Session):
                             db,
                             trigger_type="new_message",
                             message_id=message_id,
+                            comment_id=stored_comment_id,  # Pass comment_id if available (from comment trigger)
                             pre_dm_result_override={
                                 "action": "send_primary",
                                 "email": pre_dm_result.get("email"),
@@ -1587,11 +1594,16 @@ async def execute_automation_action(
                         
                         # Mark only follow as sent (NOT email yet)
                         from app.services.pre_dm_handler import update_pre_dm_state
-                        update_pre_dm_state(str(sender_id), rule_id, {
+                        state_updates = {
                             "follow_request_sent": True,
                             "step": "follow",
                             "waiting_for_follow_confirmation": True  # NEW: Strict mode flag
-                        })
+                        }
+                        # Store comment_id in state if available (for comment triggers)
+                        if comment_id:
+                            state_updates["comment_id"] = comment_id
+                            print(f"💾 [COMMENT ID] Storing comment_id in pre-DM state: {comment_id}")
+                        update_pre_dm_state(str(sender_id), rule_id, state_updates)
                         
                         # Change action to signal we'll send follow, then WAIT for button click
                         pre_dm_result["action"] = "send_follow_strict_mode"
@@ -2278,9 +2290,11 @@ async def execute_automation_action(
                 
                 # IMPORTANT: Send email success message BEFORE checking message_template
                 # This ensures it's sent even if primary DM template is missing
+                print(f"🔍 [EMAIL SUCCESS] Checking: pre_dm_result={pre_dm_result}, send_email_success={pre_dm_result.get('send_email_success') if pre_dm_result else None}")
                 try:
                     if pre_dm_result and pre_dm_result.get("send_email_success"):
                         email_success_message = rule.config.get("email_success_message")
+                        print(f"🔍 [EMAIL SUCCESS] email_success_message from config: '{email_success_message}'")
                         if email_success_message and str(email_success_message).strip():
                             print(f"📧 Sending email success message before primary DM")
                             # Always send as a regular DM (not private reply)
@@ -2288,8 +2302,14 @@ async def execute_automation_action(
                             print(f"✅ Email success message sent successfully")
                             # Small delay between messages
                             await asyncio.sleep(1)
+                        else:
+                            print(f"⏭️ [EMAIL SUCCESS] Skipping: email_success_message is empty or not configured")
+                    else:
+                        print(f"⏭️ [EMAIL SUCCESS] Skipping: send_email_success is False or pre_dm_result is None")
                 except Exception as success_err:
                     print(f"⚠️ Failed to send email success message: {str(success_err)}")
+                    import traceback
+                    traceback.print_exc()
             except Exception as token_err:
                 print(f"❌ Failed to get access token for email success message: {str(token_err)}")
             
@@ -2313,6 +2333,7 @@ async def execute_automation_action(
             
             # Send DM using Instagram Graph API (for OAuth accounts)
             try:
+                print(f"🔍 [COMMENT REPLY] Starting check: comment_id={comment_id}, trigger_type={trigger_type}")
 
                 # Check if auto-reply to comments is enabled
                 # This applies to post_comment, live_comment, AND keyword triggers when comment_id is present
