@@ -2172,7 +2172,7 @@ async def execute_automation_action(
                     message_template = rule.config.get("message_template", "")
             elif not pre_dm_result or pre_dm_result.get("action") == "send_primary":
                 # Regular DM flow (or primary DM after pre-DM actions)
-                    # Get message template from config
+                # Get message template from config
                 # Support message_variations for randomization, fallback to message_template
                 if message_template is None:  # Only set if not already set by pre-DM
                     message_variations = rule.config.get("message_variations", [])
@@ -2248,6 +2248,17 @@ async def execute_automation_action(
                         print(f"❌ Failed to refresh account and get access token: {str(refresh_error)}")
                         raise Exception(f"Could not access account credentials: {str(refresh_error)}")
                 
+                # If we just completed an email capture, optionally send email success message BEFORE primary DM
+                try:
+                    if pre_dm_result and pre_dm_result.get("send_email_success"):
+                        email_success_message = rule.config.get("email_success_message")
+                        if email_success_message and str(email_success_message).strip():
+                            print(f"📧 Sending email success message before primary DM")
+                            # Always send as a regular DM (not private reply)
+                            send_dm_api(sender_id, email_success_message, access_token, account_page_id, buttons=None, quick_replies=None)
+                except Exception as success_err:
+                    print(f"⚠️ Failed to send email success message: {str(success_err)}")
+
                 # Check if auto-reply to comments is enabled
                 # This applies to post_comment, live_comment, AND keyword triggers when comment_id is present
                 # (keyword triggers can come from comments if the rule has keywords configured)

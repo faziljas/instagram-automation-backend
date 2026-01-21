@@ -374,7 +374,9 @@ async def process_pre_dm_actions(
                 "action": "send_primary",
                 "message": None,
                 "should_save_email": False,
-                "email": email_address
+                "email": email_address,
+                # Hint for execute_automation_action: send email success message before primary DM
+                "send_email_success": True
             }
         else:
             # STRICT MODE: Invalid email - send retry message and WAIT
