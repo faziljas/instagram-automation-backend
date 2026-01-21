@@ -188,6 +188,12 @@ async def process_instagram_message(event: dict, db: Session):
         message_text = message.get("text", "")
         message_id = message.get("mid")  # Message ID for deduplication
         
+        # Check if message has attachments (images, videos, etc.)
+        attachments = message.get("attachments", [])
+        if attachments and not message_text:
+            log_print(f"🚫 Ignoring message with only attachments (no text) - mid: {message_id}")
+            return
+        
         # Check for echo messages (messages sent by the bot itself) FIRST before processing
         is_echo = message.get("is_echo", False) or event.get("is_echo", False)
         if is_echo:
@@ -396,6 +402,25 @@ async def process_instagram_message(event: dict, db: Session):
                             log_print(f"❌ Failed to send retry message: {str(e)}", "ERROR")
                         
                         return  # Don't process as new_message rule, wait for valid email
+                    
+                    # If we reach here and this rule has pre-DM actions enabled,
+                    # it means the message didn't match follow confirmation OR email
+                    # In STRICT MODE, we should NOT process this as a new_message trigger
+                    # Just ignore it and wait for proper confirmation
+                    if ask_to_follow or ask_for_email:
+                        # Check current state to see if we're waiting for something
+                        from app.services.pre_dm_handler import get_pre_dm_state
+                        state = get_pre_dm_state(sender_id, rule.id)
+                        
+                        if state.get("follow_request_sent") and not state.get("follow_confirmed"):
+                            log_print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id}")
+                            log_print(f"   Message '{message_text}' ignored - not a valid confirmation")
+                            return  # Don't process random messages while waiting for follow
+                        
+                        if state.get("email_request_sent") and not state.get("email_received"):
+                            log_print(f"⏳ [STRICT MODE] Waiting for email from {sender_id}")
+                            log_print(f"   Message '{message_text}' ignored - not a valid email")
+                            return  # Don't process random messages while waiting for email
         
         # Check if this is a story reply (DMs replying to stories)
         story_id = None
