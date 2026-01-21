@@ -67,7 +67,7 @@ def check_if_follow_confirmation(message_text: str) -> bool:
     
     message_lower = message_text.strip().lower()
     
-    # Common follow confirmation phrases
+    # Common follow confirmation phrases (20+ variations for strict mode)
     follow_confirmations = [
         "already following",
         "already follow",
@@ -97,6 +97,20 @@ def check_if_follow_confirmation(message_text: str) -> bool:
         "ok",
         "okay",
         "sure",
+        "did it",
+        "i did it",
+        "just followed",
+        "followed you",
+        "following now",
+        "i'm following now",
+        "im following now",
+        "following already",
+        "got it",
+        "👍",
+        "✅",
+        "✓",
+        "check",
+        "checked",
     ]
     
     for phrase in follow_confirmations:
@@ -104,7 +118,7 @@ def check_if_follow_confirmation(message_text: str) -> bool:
             return True
     
     # Check if message is exactly these short confirmations (case-insensitive)
-    exact_matches = ["follow", "done", "ok", "yes", "followed", "y"]
+    exact_matches = ["follow", "done", "ok", "yes", "followed", "y", "k", "sure", "yep", "yup", "yeah", "got it", "finished", "complete"]
     if message_lower in exact_matches:
         return True
     

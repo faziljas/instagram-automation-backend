@@ -191,8 +191,14 @@ async def process_instagram_message(event: dict, db: Session):
         # Check if message has attachments (images, videos, etc.)
         attachments = message.get("attachments", [])
         if attachments and not message_text:
-            log_print(f"🚫 Ignoring message with only attachments (no text) - mid: {message_id}")
+            log_print(f"🚫 [STRICT MODE] Ignoring message with only attachments (no text) - mid: {message_id}")
             return
+        
+        # STRICT MODE: If message has attachments WITH text, still ignore in strict mode flow
+        # User should only send text for follow confirmations and emails
+        if attachments:
+            log_print(f"🚫 [STRICT MODE] Message has attachments - will check if waiting for follow/email before ignoring")
+            # Continue processing to check if we're in strict mode flow
         
         # Check for echo messages (messages sent by the bot itself) FIRST before processing
         is_echo = message.get("is_echo", False) or event.get("is_echo", False)
@@ -414,13 +420,19 @@ async def process_instagram_message(event: dict, db: Session):
                         
                         if state.get("follow_request_sent") and not state.get("follow_confirmed"):
                             log_print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id}")
-                            log_print(f"   Message '{message_text}' ignored - not a valid confirmation")
-                            return  # Don't process random messages while waiting for follow
+                            if attachments:
+                                log_print(f"   🚫 Image/attachment ignored - only text confirmations accepted")
+                            else:
+                                log_print(f"   Message '{message_text}' ignored - not a valid confirmation")
+                            return  # Don't process random messages/images while waiting for follow
                         
                         if state.get("email_request_sent") and not state.get("email_received"):
                             log_print(f"⏳ [STRICT MODE] Waiting for email from {sender_id}")
-                            log_print(f"   Message '{message_text}' ignored - not a valid email")
-                            return  # Don't process random messages while waiting for email
+                            if attachments:
+                                log_print(f"   🚫 Image/attachment ignored - only email text accepted")
+                            else:
+                                log_print(f"   Message '{message_text}' ignored - not a valid email")
+                            return  # Don't process random messages/images while waiting for email
         
         # Check if this is a story reply (DMs replying to stories)
         story_id = None
@@ -1375,9 +1387,11 @@ async def execute_automation_action(
                     # STRICT MODE: Send follow request with text-based confirmation (most reliable)
                     follow_message = pre_dm_result["message"]
                     
-                    # Add profile URL and instructions for text confirmation
-                    profile_url = f"https://www.instagram.com/{username}/"
-                    follow_message_with_instructions = f"{follow_message}\n\n👉 Follow me here: {profile_url}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!"
+                    # FIXED: Do NOT include Instagram URL to avoid unwanted @username preview bubble
+                    # Instagram automatically creates a rich preview/embed for Instagram URLs,
+                    # which shows "@username" in a separate message bubble (the issue user reported)
+                    # Instead, just ask them to follow with clear instructions
+                    follow_message_with_instructions = f"{follow_message}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!"
                     
                     # NO buttons - just plain text message (most reliable approach)
                     # User will type "done", "followed", "yes" etc. to confirm
