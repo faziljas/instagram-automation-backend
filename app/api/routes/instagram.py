@@ -1558,15 +1558,7 @@ async def execute_automation_action(
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
                     # STRICT MODE: Send follow request with text-based confirmation (most reliable)
                     follow_message = pre_dm_result["message"]
-                    
-                    # STRONGER: Make it crystal clear they must actually follow first
-                    # This text is user-editable in the UI, we're just adding helper wording.
-                    follow_message = (
-                        f"{follow_message}\n\n"
-                        "👉 Please tap the Follow button on my profile first.\n"
-                        "Only after you've followed, use the button or type 'done' / 'followed' here to continue."
-                    )
-                    
+                                        
                     # FIXED: Do NOT include Instagram URL to avoid unwanted @username preview bubble
                     # Instagram automatically creates a rich preview/embed for Instagram URLs,
                     # which shows "@username" in a separate message bubble (the issue user reported)
