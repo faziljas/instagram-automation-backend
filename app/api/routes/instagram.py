@@ -253,9 +253,11 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"❌ [DM] No active Instagram accounts found", "ERROR")
             return
         
-        # Now handle quick reply skip if needed (account is now available)
+        # Now handle quick reply buttons if needed (account is now available)
         if "message" in event and "quick_reply" in event.get("message", {}):
             quick_reply_payload = event["message"]["quick_reply"].get("payload", "")
+            
+            # 1) Handle "Skip for Now" email skip button
             if quick_reply_payload == "email_skip":
                 # User clicked "Skip for Now" - proceed to primary DM
                 log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
@@ -281,6 +283,102 @@ async def process_instagram_message(event: dict, db: Session):
                             message_id=message_id
                         ))
                 return  # Don't process as regular message
+            
+            # 2) Handle "Follow Me" quick reply button (payload: follow_me_{rule_id})
+            if quick_reply_payload.startswith("follow_me_"):
+                log_print(f"👥 [STRICT MODE] User clicked 'Follow Me' quick reply button! Payload={quick_reply_payload}")
+                
+                # Extract rule_id from payload
+                rule_id_from_payload = None
+                try:
+                    rule_id_from_payload = int(quick_reply_payload.split("follow_me_")[1])
+                except (ValueError, IndexError):
+                    log_print(f\"⚠️ Could not parse rule_id from payload: {quick_reply_payload}\", \"WARNING\")
+                
+                from app.models.automation_rule import AutomationRule
+                from app.services.pre_dm_handler import update_pre_dm_state
+                from app.services.lead_capture import update_automation_stats
+                
+                # Find the specific rule (if rule_id provided), otherwise fall back to active rules
+                if rule_id_from_payload:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.id == rule_id_from_payload,
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                else:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                
+                for rule in rules:
+                    ask_to_follow = rule.config.get("ask_to_follow", False)
+                    ask_for_email = rule.config.get("ask_for_email", False)
+                    
+                    if not (ask_to_follow or ask_for_email):
+                        continue
+                    
+                    # Track button click in stats for this rule
+                    try:
+                        update_automation_stats(rule.id, "follow_button_clicked", db)
+                    except Exception as e:
+                        log_print(f"⚠️ Failed to update follow_button_clicked stats: {str(e)}", "WARNING")
+                    
+                    # Mark follow as confirmed in pre-DM state
+                    update_pre_dm_state(str(sender_id), rule.id, {
+                        "follow_button_clicked": True,
+                        "follow_confirmed": True,
+                        "follow_button_clicked_time": str(asyncio.get_event_loop().time())
+                    })
+                    log_print(f"✅ Marked follow button click + confirmation for rule {rule.id}")
+                    
+                    # If email is enabled, send email question immediately
+                    if ask_for_email:
+                        ask_for_email_message = rule.config.get(
+                            "ask_for_email_message",
+                            "Quick question - what's your email? I'd love to send you something special! 📧"
+                        )
+                        
+                        log_print(f"📧 [STRICT MODE] Sending email request immediately after Follow Me click")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id_for_dm = account.page_id
+                            
+                            # Send email request as plain text (no buttons)
+                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                            log_print(f"✅ Email request sent after Follow Me button click")
+                            
+                            # Update state to mark that we're now waiting for email
+                            update_pre_dm_state(str(sender_id), rule.id, {
+                                "email_request_sent": True,
+                                "step": "email",
+                                "waiting_for_email_text": True
+                            })
+                        except Exception as e:
+                            log_print(f"❌ Failed to send email request after Follow Me click: {str(e)}", "ERROR")
+                    
+                    # If no email configured, proceed directly to primary DM
+                    else:
+                        log_print(f"✅ Follow confirmed via Follow Me button, proceeding directly to primary DM")
+                        asyncio.create_task(execute_automation_action(
+                            rule, sender_id, account, db,
+                            trigger_type="postback",
+                            message_id=message_id,
+                            pre_dm_result_override={"action": "send_primary"}
+                        ))
+                    
+                    # Only process the first matching rule
+                    return
         
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
         # IMPORTANT: Check ALL rules with pre-DM actions, including those with media_id (for comment-based rules)
