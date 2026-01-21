@@ -2156,7 +2156,9 @@ async def execute_automation_action(
             # Check if this is a lead capture flow
             is_lead_capture = rule.config.get("is_lead_capture", False)
             
-            if is_lead_capture:
+            # Skip lead capture step processing if we're coming from pre-DM actions
+            # (we just need to send the primary DM using lead_dm_messages)
+            if is_lead_capture and not (pre_dm_result and pre_dm_result.get("action") == "send_primary"):
                 # Process lead capture flow
                 from app.services.lead_capture import process_lead_capture_step, update_automation_stats
                 
