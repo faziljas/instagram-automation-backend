@@ -48,6 +48,16 @@ async def startup_event():
         print(f"⚠️ Error creating tables: {str(e)}", file=sys.stderr)
         raise
     
+    # Run migrations automatically
+    try:
+        print("🔄 Running database migrations...", file=sys.stderr)
+        from add_follow_button_clicks_migration import run_migration
+        run_migration()
+        print("✅ Migrations completed successfully", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent and may already be applied
+    
     # Auto-migrate: Add columns if they don't exist
     try:
         with engine.begin() as conn:
@@ -101,8 +111,20 @@ async def startup_event():
             else:
                 print("✅ media_id column already exists", file=sys.stderr)
             
-            # Note: captured_leads and automation_rule_stats tables are created via Base.metadata.create_all()
-            # No need for manual column additions as they're new tables
+            # Check and add follow_button_clicks columns to automation_rule_stats
+            if not column_exists('automation_rule_stats', 'total_follow_button_clicks'):
+                print("🔄 Auto-migrating: Adding total_follow_button_clicks column...", file=sys.stderr)
+                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN total_follow_button_clicks INTEGER DEFAULT 0"))
+                print("✅ Auto-migration complete: total_follow_button_clicks column added", file=sys.stderr)
+            else:
+                print("✅ total_follow_button_clicks column already exists", file=sys.stderr)
+            
+            if not column_exists('automation_rule_stats', 'last_follow_button_clicked_at'):
+                print("🔄 Auto-migrating: Adding last_follow_button_clicked_at column...", file=sys.stderr)
+                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN last_follow_button_clicked_at TIMESTAMP"))
+                print("✅ Auto-migration complete: last_follow_button_clicked_at column added", file=sys.stderr)
+            else:
+                print("✅ last_follow_button_clicked_at column already exists", file=sys.stderr)
             
     except Exception as e:
         print(f"⚠️ Auto-migration warning: {str(e)}", file=sys.stderr)
