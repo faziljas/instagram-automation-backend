@@ -1,3 +1,8 @@
+"""
+Instagram Automation Backend API
+Version: 2.1.0 - Strict Mode Lead Capture
+Last Updated: 2026-01-21
+"""
 from dotenv import load_dotenv
 load_dotenv()
 
