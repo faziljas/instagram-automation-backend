@@ -1488,21 +1488,35 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # STRICT MODE: Send ONLY follow request (NO automatic email scheduling)
-                        # NO buttons/quick replies - just plain text with instructions
+                        # Build Instagram profile URL for "Follow Me" button
+                        instagram_profile_url = f"https://instagram.com/{account.username}"
+                        follow_button = [{
+                            "text": "Follow Me",
+                            "url": instagram_profile_url
+                        }]
+                        
+                        # STRICT MODE: Send follow request with "Follow Me" button for easy navigation
                         if is_comment_trigger:
                             print(f"💬 Sending via PRIVATE REPLY to open conversation (comment trigger)")
                             try:
                                 from app.utils.instagram_api import send_private_reply
                                 # Send complete message via private reply (no separate messages to avoid loading symbol)
+                                # Note: Private replies don't support buttons, so we send text only
                                 send_private_reply(comment_id, follow_message_with_instructions, access_token, page_id_for_dm)
                                 print(f"✅ Follow request sent via private reply (single message, no loading)")
+                                # For comment triggers, send a follow-up DM with the button after private reply
+                                try:
+                                    send_dm_api(sender_id, "Tap the button below to follow me! 👇", access_token, page_id_for_dm, buttons=follow_button, quick_replies=None)
+                                    print(f"✅ Follow Me button sent as follow-up DM")
+                                except Exception as btn_error:
+                                    print(f"⚠️ Could not send follow button: {str(btn_error)}")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
                             try:
-                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=None, quick_replies=None)
-                                print(f"✅ Follow request DM sent")
+                                # Send DM with "Follow Me" button
+                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=follow_button, quick_replies=None)
+                                print(f"✅ Follow request DM sent with Follow Me button")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         

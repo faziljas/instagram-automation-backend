@@ -39,8 +39,14 @@ def validate_email(email: str) -> Tuple[bool, str]:
     
     # Check domain part
     local_part, domain = email.split('@')
-    if len(local_part) < 1:
-        return False, "Email must have a local part before @."
+    
+    # STRICT: Local part must be at least 4 characters (reject very short emails like "Abc", "Xyz")
+    if len(local_part) < 4:
+        return False, "Email address is too short. Please enter a valid email address (at least 4 characters before @)."
+    
+    # STRICT: Local part must contain at least one letter (reject pure numbers like "1234@...")
+    if not re.search(r'[a-zA-Z]', local_part):
+        return False, "Email address must contain at least one letter. Please enter a valid email address."
     
     if len(domain) < 4:  # x.co (minimum)
         return False, "Email domain is too short."
@@ -53,17 +59,41 @@ def validate_email(email: str) -> Tuple[bool, str]:
     if len(tld) < 2:
         return False, "Email must have a valid domain extension (e.g., .com, .org)."
     
-    # Reject obviously fake emails
+    # STRICT: Reject common fake/test patterns (case-insensitive)
     fake_patterns = [
-        r'test@test\.com',
-        r'abc@abc\.com',
-        r'123@123\.com',
-        r'fake@fake\.com',
-        r'example@example\.com',
+        r'^test@test\.',
+        r'^abc@abc\.',
+        r'^123@123\.',
+        r'^fake@fake\.',
+        r'^example@example\.',
+        r'^demo@demo\.',
+        r'^sample@sample\.',
+        r'^temp@temp\.',
+        r'^user@user\.',
+        r'^email@email\.',
     ]
     for pattern in fake_patterns:
-        if re.match(pattern, email):
+        if re.match(pattern, email, re.IGNORECASE):
             return False, "Please enter a real email address."
+    
+    # STRICT: Reject common fake patterns even if they're 4+ characters
+    # Check for common fake patterns in local part
+    common_fake_patterns = ['abc', 'xyz', 'test', 'demo', 'fake', 'temp', 'user', 'mail', 'sample', 'example']
+    if local_part.lower() in common_fake_patterns:
+        return False, "Please enter a real email address."
+    
+    # STRICT: Reject local parts that are too simple (like "abcd", "test123", etc.)
+    # If local part is exactly 4 characters and all letters, check if it's a common pattern
+    if len(local_part) == 4 and re.match(r'^[a-zA-Z]{4}$', local_part):
+        # Reject common 4-letter fake patterns
+        common_4letter = ['abcd', 'test', 'demo', 'fake', 'temp', 'user', 'mail', 'name', 'info', 'data']
+        if local_part.lower() in common_4letter:
+            return False, "Please enter a real email address."
+    
+    # STRICT: Reject domains that look fake
+    fake_domains = ['test.com', 'example.com', 'fake.com', 'demo.com', 'sample.com', 'temp.com', 'abc.com', 'xyz.com']
+    if domain.lower() in fake_domains:
+        return False, "Please enter a real email address."
     
     return True, ""
 
