@@ -506,7 +506,7 @@ async def process_instagram_message(event: dict, db: Session):
                         log_print(f"✅ [STRICT MODE] Valid email received: {pre_dm_result.get('email')}")
                         log_print(f"📤 Sending primary DM now (both follow + email completed)")
                         
-                        # Send primary DM immediately
+                        # Send primary DM immediately, preserving email + send_email_success flag
                         asyncio.create_task(execute_automation_action(
                             rule,
                             sender_id,
@@ -514,7 +514,11 @@ async def process_instagram_message(event: dict, db: Session):
                             db,
                             trigger_type="new_message",
                             message_id=message_id,
-                            pre_dm_result_override={"action": "send_primary"}
+                            pre_dm_result_override={
+                                "action": "send_primary",
+                                "email": pre_dm_result.get("email"),
+                                "send_email_success": pre_dm_result.get("send_email_success", False),
+                            }
                         ))
                         
                         return  # Don't process as new_message rule
