@@ -234,6 +234,15 @@ async def process_pre_dm_actions(
                     "should_save_email": False,
                     "email": None
                 }
+        else:
+            # STRICT MODE: Random text received while waiting for follow confirmation - IGNORE
+            print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id}, ignoring message: '{incoming_message}'")
+            return {
+                "action": "ignore",
+                "message": None,
+                "should_save_email": False,
+                "email": None
+            }
     
     # Check if this is a response to an email request
     if incoming_message and state.get("email_request_sent") and not state.get("email_received"):
