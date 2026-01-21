@@ -1541,16 +1541,21 @@ async def execute_automation_action(
                         
                         # STRICT MODE: Send follow request with "Follow Me" quick reply button
                         if is_comment_trigger:
-                            print(f"💬 Sending via PRIVATE REPLY to open conversation (comment trigger)")
+                            print(f"💬 Opening conversation via private reply (comment trigger)")
                             try:
                                 from app.utils.instagram_api import send_private_reply
-                                # Send complete message via private reply (no separate messages to avoid loading symbol)
-                                send_private_reply(comment_id, follow_message_with_url, access_token, page_id_for_dm)
-                                print(f"✅ Follow request sent via private reply (single message, no loading)")
-                                # For comment triggers, send a follow-up DM with the quick reply button
+                                # Send minimal opener to open conversation (bypasses 24-hour window)
+                                opener_message = "Hi! 👋"
+                                send_private_reply(comment_id, opener_message, access_token, page_id_for_dm)
+                                print(f"✅ Conversation opened via private reply")
+                                
+                                # Small delay to ensure conversation is open
+                                await asyncio.sleep(1)
+                                
+                                # Now send the complete follow message with button as single DM
                                 try:
-                                    send_dm_api(sender_id, "Tap 'Follow Me' below after you've followed! 👇", access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                                    print(f"✅ Follow Me quick reply button sent as follow-up DM")
+                                    send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                    print(f"✅ Follow request sent as single DM with Follow Me button (no loading spinner)")
                                 except Exception as btn_error:
                                     print(f"⚠️ Could not send follow button: {str(btn_error)}")
                             except Exception as e:
