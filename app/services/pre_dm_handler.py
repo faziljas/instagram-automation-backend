@@ -177,6 +177,12 @@ async def process_pre_dm_actions(
     ask_for_email = config.get("ask_for_email", False)
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
+
+    # If this rule is using the new Lead Capture flow, we don't use the legacy
+    # pre-DM email question. Lead capture will handle asking for email/phone/etc.
+    is_lead_capture = config.get("is_lead_capture", False)
+    if is_lead_capture:
+        ask_for_email = False
     
     # ---------------------------------------------------------
     # Short‑circuit checks: already follower / already have email
