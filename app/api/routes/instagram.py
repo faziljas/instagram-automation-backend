@@ -679,9 +679,9 @@ async def process_postback_event(event: dict, db: Session):
         
         print(f"✅ Found account: {account.username} (ID: {account.id})")
         
-        # Handle "Follow Me" button click
+        # Handle "I Followed" button click (quick reply postback)
         if "follow" in payload.lower() or "follow" in title.lower():
-            print(f"👥 User clicked 'Follow Me' button!")
+            print(f"👥 [STRICT MODE] User clicked '✅ I Followed' quick reply!")
             
             # Find active rules for this account that have email requests enabled
             rules = db.query(AutomationRule).filter(
@@ -1310,14 +1310,18 @@ async def execute_automation_action(
                 )
                 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
-                    # COMBINED APPROACH: Send follow + email request in a single message
+                    # STRICT MODE: Send follow request with quick reply button (triggers postback)
                     follow_message = pre_dm_result["message"]
                     
-                    # Get profile URL for follow button
+                    # Add profile URL to message text (since quick replies can't open URLs)
                     profile_url = f"https://www.instagram.com/{username}/"
-                    buttons = [{
-                        "text": "Follow Me",
-                        "url": profile_url
+                    follow_message_with_link = f"{follow_message}\n\n👉 Follow me here: {profile_url}"
+                    
+                    # Use QUICK REPLY button instead of URL button (quick replies trigger postback events)
+                    quick_replies = [{
+                        "content_type": "text",
+                        "title": "✅ I Followed",
+                        "payload": "follow_confirmed"
                     }]
                     
                     # STRICT MODE: If email is enabled, send follow first, then WAIT for button click
@@ -1337,13 +1341,13 @@ async def execute_automation_action(
                         pre_dm_result["action"] = "send_follow_strict_mode"
                         
                         # Store messages for later use
-                        pre_dm_result["follow_message"] = follow_message
-                        pre_dm_result["follow_buttons"] = buttons
+                        pre_dm_result["follow_message"] = follow_message_with_link
+                        pre_dm_result["follow_quick_replies"] = quick_replies
                         pre_dm_result["email_message"] = ask_for_email_message
                         
                         # Send follow request
-                        print(f"📩 [STRICT MODE] Sending follow request with button to {sender_id}")
-                        print(f"   ⚠️ Email question will ONLY be sent after user clicks 'Follow Me' button")
+                        print(f"📩 [STRICT MODE] Sending follow request with quick reply to {sender_id}")
+                        print(f"   ⚠️ Email question will ONLY be sent after user clicks '✅ I Followed' button")
                         print(f"   🚫 No timeouts - waiting indefinitely for user action")
                         
                         # Get access token NOW before sending
@@ -1388,15 +1392,15 @@ async def execute_automation_action(
                                 send_private_reply(comment_id, opener_message, access_token, page_id_for_dm)
                                 print(f"✅ Conversation opened via private reply")
                                 
-                                # Small delay then send the actual follow message with button
+                                # Small delay then send the actual follow message with QUICK REPLY
                                 await asyncio.sleep(1)
-                                send_dm_api(sender_id, follow_message, access_token, page_id_for_dm, buttons=buttons, quick_replies=None)
-                                print(f"✅ Follow request DM with button sent")
+                                send_dm_api(sender_id, follow_message_with_link, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                                print(f"✅ Follow request DM with quick reply sent")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
                             try:
-                                send_dm_api(sender_id, follow_message, access_token, page_id_for_dm, buttons=buttons, quick_replies=None)
+                                send_dm_api(sender_id, follow_message_with_link, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                                 print(f"✅ Follow request DM sent")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
