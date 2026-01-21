@@ -2317,13 +2317,29 @@ async def execute_automation_action(
                 # Check if auto-reply to comments is enabled
                 # This applies to post_comment, live_comment, AND keyword triggers when comment_id is present
                 # (keyword triggers can come from comments if the rule has keywords configured)
-                auto_reply_to_comments = rule.config.get("auto_reply_to_comments", False)
-                comment_replies = rule.config.get("comment_replies", [])
+                
+                # Check for comment reply settings - support both old format and new simple/lead format
+                is_lead_capture = rule.config.get("is_lead_capture", False)
+                
+                # Determine which comment reply fields to use based on rule type
+                if is_lead_capture:
+                    # Lead Capture rule: check lead-specific fields first, then fallback to shared
+                    auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                    comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+                else:
+                    # Simple Reply rule: check simple-specific fields first, then fallback to shared
+                    auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                    comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+                
+                print(f"🔍 [COMMENT REPLY] Rule {rule.id} (is_lead_capture={is_lead_capture}): auto_reply_to_comments={auto_reply_to_comments}, comment_replies type={type(comment_replies)}, len={len(comment_replies) if isinstance(comment_replies, list) else 'N/A'}")
+                print(f"🔍 [COMMENT REPLY] Config fields: auto_reply_to_comments={rule.config.get('auto_reply_to_comments')}, simple_auto_reply_to_comments={rule.config.get('simple_auto_reply_to_comments')}, lead_auto_reply_to_comments={rule.config.get('lead_auto_reply_to_comments')}")
+                print(f"🔍 [COMMENT REPLY] comment_replies={rule.config.get('comment_replies')}, simple_comment_replies={rule.config.get('simple_comment_replies')}, lead_comment_replies={rule.config.get('lead_comment_replies')}")
                 
                 # If we have a comment_id and auto-reply is enabled, send public comment reply
                 if comment_id and auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
                     # Filter out empty replies
                     valid_replies = [r for r in comment_replies if r and str(r).strip()]
+                    print(f"🔍 [COMMENT REPLY] After filtering: {len(valid_replies)} valid replies out of {len(comment_replies)} total")
                     if valid_replies:
                         # Randomly select one comment reply
                         import random
@@ -2346,6 +2362,16 @@ async def execute_automation_action(
                             print(f"   comment ID format, or the comment is not on your own content.")
                             print(f"   Continuing with DM send...")
                             # Continue to send DM even if public reply fails
+                    else:
+                        print(f"⏭️ [COMMENT REPLY] Skipping: All comment_replies are empty after filtering for rule {rule.id}")
+                else:
+                    # Log why comment reply is not being sent
+                    if not comment_id:
+                        print(f"⏭️ [COMMENT REPLY] Skipping: No comment_id provided (trigger_type={trigger_type})")
+                    elif not auto_reply_to_comments:
+                        print(f"⏭️ [COMMENT REPLY] Skipping: auto_reply_to_comments is False for rule {rule.id}")
+                    elif not comment_replies or not isinstance(comment_replies, list) or len(comment_replies) == 0:
+                        print(f"⏭️ [COMMENT REPLY] Skipping: No comment_replies configured for rule {rule.id} (comment_replies={comment_replies})")
                 
                 # Always send DM if message is configured (for all trigger types)
                 if message_template:
