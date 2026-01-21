@@ -788,59 +788,98 @@ async def process_postback_event(event: dict, db: Session):
         
         print(f"✅ Found account: {account.username} (ID: {account.id})")
         
-        # Handle "I Followed" button click (quick reply postback)
-        if "follow" in payload.lower() or "follow" in title.lower():
-            print(f"👥 [STRICT MODE] User clicked '✅ I Followed' quick reply!")
+        # Handle "Follow Me" button click (quick reply postback)
+        # Payload format: "follow_me_{rule_id}" or just contains "follow"
+        if "follow_me" in payload.lower() or ("follow" in payload.lower() and "follow" in title.lower()):
+            print(f"👥 [STRICT MODE] User clicked 'Follow Me' button! Payload: {payload}, Title: {title}")
+            
+            # Extract rule_id from payload if present (format: "follow_me_{rule_id}")
+            rule_id_from_payload = None
+            if "follow_me_" in payload:
+                try:
+                    rule_id_from_payload = int(payload.split("follow_me_")[1])
+                except (ValueError, IndexError):
+                    pass
             
             # Find active rules for this account that have email requests enabled
-            rules = db.query(AutomationRule).filter(
-                AutomationRule.instagram_account_id == account.id,
-                AutomationRule.is_active == True
-            ).all()
+            if rule_id_from_payload:
+                # If we have rule_id from payload, use that specific rule
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.id == rule_id_from_payload,
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
+            else:
+                # Fallback: find all active rules for this account
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
             
             # Find the rule that sent this follow button (check if ask_for_email is enabled)
             for rule in rules:
                 ask_for_email = rule.config.get("ask_for_email", False)
-                if ask_for_email:
+                ask_to_follow = rule.config.get("ask_to_follow", False)
+                
+                # Only process if this rule has follow/email enabled
+                if ask_to_follow or ask_for_email:
+                    # Track the button click in stats
+                    from app.services.lead_capture import update_automation_stats
+                    update_automation_stats(rule.id, "follow_button_clicked", db)
+                    print(f"📊 Tracked follow button click for rule {rule.id}")
+                    
                     # Mark that follow button was clicked in state
                     from app.services.pre_dm_handler import update_pre_dm_state
                     update_pre_dm_state(str(sender_id), rule.id, {
                         "follow_button_clicked": True,
+                        "follow_confirmed": True,  # Mark as confirmed since they clicked the button
                         "follow_button_clicked_time": str(asyncio.get_event_loop().time())
                     })
                     print(f"✅ Marked follow button click for rule {rule.id}")
                     
-                    # STRICT MODE: Send email request as TEXT-ONLY (no buttons)
-                    ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
-                    
-                    print(f"📧 [STRICT MODE] Sending email request as TEXT input (follow button clicked)")
-                    from app.utils.encryption import decrypt_credentials
-                    from app.utils.instagram_api import send_dm
-                    
-                    try:
-                        # Get access token
-                        if account.encrypted_page_token:
-                            access_token = decrypt_credentials(account.encrypted_page_token)
-                        elif account.encrypted_credentials:
-                            access_token = decrypt_credentials(account.encrypted_credentials)
-                        else:
-                            raise Exception("No access token found")
+                    # STRICT MODE: If email is enabled, send email request immediately
+                    if ask_for_email:
+                        ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
                         
-                        page_id_for_dm = account.page_id
+                        print(f"📧 [STRICT MODE] Sending email request immediately (Follow Me button clicked)")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
                         
-                        # Send email request as PLAIN TEXT (NO buttons or quick_replies)
-                        send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
-                        print(f"✅ Email request sent (text input only, no buttons)")
-                        
-                        # Update state to mark email request as sent and waiting for typed email
-                        update_pre_dm_state(str(sender_id), rule.id, {
-                            "email_request_sent": True,
-                            "step": "email",
-                            "waiting_for_email_text": True  # NEW: Strict mode flag
-                        })
-                        
-                    except Exception as e:
-                        print(f"❌ Failed to send email request: {str(e)}")
+                        try:
+                            # Get access token
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id_for_dm = account.page_id
+                            
+                            # Send email request as PLAIN TEXT (NO buttons or quick_replies)
+                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                            print(f"✅ Email request sent immediately after Follow Me button click")
+                            
+                            # Update state to mark email request as sent and waiting for typed email
+                            update_pre_dm_state(str(sender_id), rule.id, {
+                                "email_request_sent": True,
+                                "step": "email",
+                                "waiting_for_email_text": True  # NEW: Strict mode flag
+                            })
+                            
+                        except Exception as e:
+                            print(f"❌ Failed to send email request: {str(e)}")
+                    else:
+                        # No email request, proceed directly to primary DM
+                        print(f"✅ Follow confirmed via button click, proceeding to primary DM")
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="postback",
+                            pre_dm_result_override={"action": "send_primary"}
+                        ))
                     
                     break  # Only process first matching rule
         
@@ -1488,35 +1527,39 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # Build Instagram profile URL for "Follow Me" button
-                        instagram_profile_url = f"https://instagram.com/{account.username}"
-                        follow_button = [{
-                            "text": "Follow Me",
-                            "url": instagram_profile_url
+                        # Build "Follow Me" quick reply button (sends postback for tracking)
+                        # Quick replies allow us to track clicks and send email question immediately
+                        follow_quick_reply = [{
+                            "content_type": "text",
+                            "title": "Follow Me 👆",
+                            "payload": f"follow_me_{rule_id}"  # Include rule_id for tracking
                         }]
                         
-                        # STRICT MODE: Send follow request with "Follow Me" button for easy navigation
+                        # Also include profile URL in message for easy navigation
+                        instagram_profile_url = f"https://instagram.com/{account.username}"
+                        follow_message_with_url = f"{follow_message_with_instructions}\n\n🔗 {instagram_profile_url}"
+                        
+                        # STRICT MODE: Send follow request with "Follow Me" quick reply button
                         if is_comment_trigger:
                             print(f"💬 Sending via PRIVATE REPLY to open conversation (comment trigger)")
                             try:
                                 from app.utils.instagram_api import send_private_reply
                                 # Send complete message via private reply (no separate messages to avoid loading symbol)
-                                # Note: Private replies don't support buttons, so we send text only
-                                send_private_reply(comment_id, follow_message_with_instructions, access_token, page_id_for_dm)
+                                send_private_reply(comment_id, follow_message_with_url, access_token, page_id_for_dm)
                                 print(f"✅ Follow request sent via private reply (single message, no loading)")
-                                # For comment triggers, send a follow-up DM with the button after private reply
+                                # For comment triggers, send a follow-up DM with the quick reply button
                                 try:
-                                    send_dm_api(sender_id, "Tap the button below to follow me! 👇", access_token, page_id_for_dm, buttons=follow_button, quick_replies=None)
-                                    print(f"✅ Follow Me button sent as follow-up DM")
+                                    send_dm_api(sender_id, "Tap 'Follow Me' below after you've followed! 👇", access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                    print(f"✅ Follow Me quick reply button sent as follow-up DM")
                                 except Exception as btn_error:
                                     print(f"⚠️ Could not send follow button: {str(btn_error)}")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
                             try:
-                                # Send DM with "Follow Me" button
-                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=follow_button, quick_replies=None)
-                                print(f"✅ Follow request DM sent with Follow Me button")
+                                # Send DM with "Follow Me" quick reply button
+                                send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                print(f"✅ Follow request DM sent with Follow Me quick reply button")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         

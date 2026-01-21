@@ -288,7 +288,7 @@ def process_lead_capture_step(
 def update_automation_stats(rule_id: int, event_type: str, db: Session):
     """
     Update automation rule statistics.
-    event_type: "triggered" | "dm_sent" | "comment_replied" | "lead_captured"
+    event_type: "triggered" | "dm_sent" | "comment_replied" | "lead_captured" | "follow_button_clicked"
     """
     try:
         # Try to get existing stats
@@ -318,6 +318,9 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
         elif event_type == "lead_captured":
             stats.total_leads_captured += 1
             stats.last_lead_captured_at = datetime.utcnow()
+        elif event_type == "follow_button_clicked":
+            stats.total_follow_button_clicks += 1
+            stats.last_follow_button_clicked_at = datetime.utcnow()
         
         stats.updated_at = datetime.utcnow()
         db.commit()
@@ -334,8 +337,10 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
                         "total_dms_sent": 0,
                         "total_comments_replied": 0,
                         "total_leads_captured": 0,
+                        "total_follow_button_clicks": 0,
                         "last_triggered_at": None,
-                        "last_lead_captured_at": None
+                        "last_lead_captured_at": None,
+                        "last_follow_button_clicked_at": None
                     }
                 
                 stats_dict = rule.config["stats"]
@@ -349,6 +354,9 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
                 elif event_type == "lead_captured":
                     stats_dict["total_leads_captured"] = stats_dict.get("total_leads_captured", 0) + 1
                     stats_dict["last_lead_captured_at"] = datetime.utcnow().isoformat()
+                elif event_type == "follow_button_clicked":
+                    stats_dict["total_follow_button_clicks"] = stats_dict.get("total_follow_button_clicks", 0) + 1
+                    stats_dict["last_follow_button_clicked_at"] = datetime.utcnow().isoformat()
                 
                 rule.config = rule.config  # Trigger SQLAlchemy to detect change
                 db.commit()

@@ -18,10 +18,12 @@ class AutomationRuleStats(Base):
     total_dms_sent = Column(Integer, default=0)
     total_comments_replied = Column(Integer, default=0)
     total_leads_captured = Column(Integer, default=0)
+    total_follow_button_clicks = Column(Integer, default=0)  # Track "Follow Me" button clicks
     
     # Timestamps
     last_triggered_at = Column(DateTime, nullable=True)
     last_lead_captured_at = Column(DateTime, nullable=True)
+    last_follow_button_clicked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
