@@ -1559,6 +1559,14 @@ async def execute_automation_action(
                     # STRICT MODE: Send follow request with text-based confirmation (most reliable)
                     follow_message = pre_dm_result["message"]
                     
+                    # STRONGER: Make it crystal clear they must actually follow first
+                    # This text is user-editable in the UI, we're just adding helper wording.
+                    follow_message = (
+                        f"{follow_message}\n\n"
+                        "👉 Please tap the Follow button on my profile first.\n"
+                        "Only after you've followed, use the button or type 'done' / 'followed' here to continue."
+                    )
+                    
                     # FIXED: Do NOT include Instagram URL to avoid unwanted @username preview bubble
                     # Instagram automatically creates a rich preview/embed for Instagram URLs,
                     # which shows "@username" in a separate message bubble (the issue user reported)
@@ -2172,7 +2180,7 @@ async def execute_automation_action(
                     message_template = rule.config.get("message_template", "")
             elif not pre_dm_result or pre_dm_result.get("action") == "send_primary":
                 # Regular DM flow (or primary DM after pre-DM actions)
-                # Get message template from config
+                    # Get message template from config
                 # Support message_variations for randomization, fallback to message_template
                 if message_template is None:  # Only set if not already set by pre-DM
                     message_variations = rule.config.get("message_variations", [])
@@ -2183,6 +2191,18 @@ async def execute_automation_action(
                         print(f"🎲 Randomly selected message from {len(message_variations)} variations")
                     else:
                         message_template = rule.config.get("message_template", "")
+
+                # SOFT REMINDER: If ask_to_follow is enabled, gently remind user to stay followed
+                try:
+                    if rule.config.get("ask_to_follow", False):
+                        reminder = (
+                            "\n\n🙏 If you ever unfollow, I may have to pause sending free guides and resources. "
+                            "Staying followed helps me keep this running for you. ❤️"
+                        )
+                        message_template = f"{message_template}{reminder}"
+                except Exception:
+                    # Never let reminder logic break the main DM
+                    pass
             
             if not message_template:
                 print(f"⚠️ No message template configured for rule {rule.id}, action: {pre_dm_result.get('action') if pre_dm_result else 'None'}")
