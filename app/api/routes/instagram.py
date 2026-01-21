@@ -260,27 +260,27 @@ async def process_instagram_message(event: dict, db: Session):
                 # User clicked "Skip for Now" - proceed to primary DM
                 log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
                 # Find active rules and proceed to primary DM
-        from app.models.automation_rule import AutomationRule
-        rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id == account.id,
-            AutomationRule.is_active == True,
-            AutomationRule.action_type == "send_dm"
-        ).all()
-        for rule in rules:
-            if rule.config.get("ask_for_email", False):
-                # Update state to skip email
-                from app.services.pre_dm_handler import update_pre_dm_state
-                update_pre_dm_state(sender_id, rule.id, {
-                    "email_skipped": True,
-                    "email_request_sent": True  # Mark as sent to prevent re-asking
-                })
-                # Proceed to primary DM
-                asyncio.create_task(execute_automation_action(
-                    rule, sender_id, account, db,
-                    trigger_type="email_skip",
-                    message_id=message_id
-                ))
-        return  # Don't process as regular message
+                from app.models.automation_rule import AutomationRule
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True,
+                    AutomationRule.action_type == "send_dm"
+                ).all()
+                for rule in rules:
+                    if rule.config.get("ask_for_email", False):
+                        # Update state to skip email
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "email_skipped": True,
+                            "email_request_sent": True  # Mark as sent to prevent re-asking
+                        })
+                        # Proceed to primary DM
+                        asyncio.create_task(execute_automation_action(
+                            rule, sender_id, account, db,
+                            trigger_type="email_skip",
+                            message_id=message_id
+                        ))
+                return  # Don't process as regular message
         
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
         # IMPORTANT: Check ALL rules with pre-DM actions, including those with media_id (for comment-based rules)
