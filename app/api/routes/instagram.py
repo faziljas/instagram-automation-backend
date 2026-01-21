@@ -326,30 +326,83 @@ async def process_instagram_message(event: dict, db: Session):
                         ))
                         return
                 
-                # Check if message looks like an email (response to email request)
+                # Check if user sent ANY message (could be email or invalid response)
                 if ask_for_email:
-                    is_email, email_address = check_if_email_response(message_text)
-                    if is_email:
-                        # Check if this rule is waiting for email from this sender
-                        pre_dm_result = await process_pre_dm_actions(
-                            rule, sender_id, account, db,
-                            incoming_message=message_text,
-                            trigger_type="new_message"
-                        )
+                    # Check if this rule is waiting for email from this sender
+                    pre_dm_result = await process_pre_dm_actions(
+                        rule, sender_id, account, db,
+                        incoming_message=message_text,
+                        trigger_type="new_message"
+                    )
+                    
+                    if pre_dm_result["action"] == "send_email_success":
+                        # Email was valid! Send success message with PDF/link, then primary DM
+                        log_print(f"✅ Valid email received from {sender_id}: {pre_dm_result.get('email')}")
                         
-                        if pre_dm_result["action"] == "send_primary":
-                            # Email was received and saved, now send primary DM
-                            log_print(f"✅ Pre-DM email received from {sender_id}, proceeding to primary DM")
-                            # Trigger primary DM sending
+                        # Send success message with PDF/link
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id = account.page_id
+                            success_msg = pre_dm_result["message"]
+                            
+                            send_dm(sender_id, success_msg, access_token, page_id, buttons=None, quick_replies=None)
+                            log_print(f"✅ Email success message sent with PDF/link")
+                            
+                            # Small delay before primary DM
+                            await asyncio.sleep(2)
+                            
+                            # Now send primary DM
+                            log_print(f"📤 Sending primary DM after email capture")
                             asyncio.create_task(execute_automation_action(
                                 rule,
                                 sender_id,
                                 account,
                                 db,
                                 trigger_type="new_message",
-                                message_id=message_id
+                                message_id=message_id,
+                                pre_dm_result_override={"action": "send_primary"}
                             ))
-                            return  # Don't process as new_message rule
+                            
+                        except Exception as e:
+                            log_print(f"❌ Failed to send email success message: {str(e)}", "ERROR")
+                        
+                        return  # Don't process as new_message rule
+                    
+                    elif pre_dm_result["action"] == "send_email_retry":
+                        # Email was invalid! Send retry message
+                        log_print(f"⚠️ Invalid email from {sender_id}, asking to retry")
+                        
+                        # Send retry message
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id = account.page_id
+                            retry_msg = pre_dm_result["message"]
+                            
+                            send_dm(sender_id, retry_msg, access_token, page_id, buttons=None, quick_replies=None)
+                            log_print(f"✅ Email retry message sent")
+                            
+                        except Exception as e:
+                            log_print(f"❌ Failed to send retry message: {str(e)}", "ERROR")
+                        
+                        return  # Don't process as new_message rule, wait for valid email
         
         # Check if this is a story reply (DMs replying to stories)
         story_id = None

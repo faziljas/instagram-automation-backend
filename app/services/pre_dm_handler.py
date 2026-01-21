@@ -210,7 +210,7 @@ async def process_pre_dm_actions(
     if incoming_message and state.get("email_request_sent") and not state.get("email_received"):
         is_email, email_address = check_if_email_response(incoming_message)
         if is_email:
-            # Email received! Save it and proceed to primary DM
+            # Email received! Save it and proceed to send PDF/link, then primary DM
             update_pre_dm_state(sender_id, rule.id, {
                 "email_received": True,
                 "email": email_address,
@@ -241,18 +241,28 @@ async def process_pre_dm_actions(
                 print(f"⚠️ Error saving pre-DM email: {str(e)}")
                 db.rollback()
             
-            # Proceed to primary DM
+            # Get success message and PDF/link from config
+            email_success_message = config.get("email_success_message", "Got it! Check your email in about 2 minutes. 📧✨")
+            lead_magnet_link = config.get("lead_magnet_link", "")
+            
+            # If PDF/link is provided, append it to success message
+            if lead_magnet_link:
+                email_success_message = f"{email_success_message}\n\n{lead_magnet_link}"
+            
+            # Return action to send success message + PDF/link, then primary DM
             return {
-                "action": "send_primary",
-                "message": None,
+                "action": "send_email_success",
+                "message": email_success_message,
                 "should_save_email": False,
-                "email": email_address
+                "email": email_address,
+                "lead_magnet_link": lead_magnet_link
             }
         else:
-            # Not a valid email, ask again
+            # Not a valid email, ask again with custom retry message
+            email_retry_message = config.get("email_retry_message", "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧")
             return {
-                "action": "send_email_request",
-                "message": f"Please provide a valid email address.\n\n{ask_for_email_message}",
+                "action": "send_email_retry",
+                "message": email_retry_message,
                 "should_save_email": False,
                 "email": None
             }
