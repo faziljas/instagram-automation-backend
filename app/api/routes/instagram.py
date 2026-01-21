@@ -2185,24 +2185,43 @@ async def execute_automation_action(
             elif not pre_dm_result or pre_dm_result.get("action") == "send_primary":
                 # Regular DM flow (or primary DM after pre-DM actions)
                 # Get message template from config
-                # Support message_variations for randomization, fallback to message_template
+                # For Lead Capture rules, check lead_dm_messages first, then fallback to message_variations
                 if message_template is None:  # Only set if not already set by pre-DM
-                    message_variations = rule.config.get("message_variations", [])
-                    print(f"🔍 [DEBUG] Loading message template: message_variations={message_variations}, type={type(message_variations)}")
-                    if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
-                        # Filter out empty messages
-                        valid_messages = [m for m in message_variations if m and str(m).strip()]
-                        if valid_messages:
-                            # Randomly select one message from variations
-                            import random
-                            message_template = random.choice(valid_messages)
-                            print(f"🎲 Randomly selected message from {len(valid_messages)} valid variations")
+                    is_lead_capture = rule.config.get("is_lead_capture", False)
+                    
+                    # For Lead Capture rules, try lead_dm_messages first
+                    if is_lead_capture:
+                        lead_dm_messages = rule.config.get("lead_dm_messages", [])
+                        print(f"🔍 [DEBUG] Lead Capture rule: checking lead_dm_messages={lead_dm_messages}")
+                        if lead_dm_messages and isinstance(lead_dm_messages, list) and len(lead_dm_messages) > 0:
+                            valid_messages = [m for m in lead_dm_messages if m and str(m).strip()]
+                            if valid_messages:
+                                import random
+                                message_template = random.choice(valid_messages)
+                                print(f"🎲 Selected message from {len(valid_messages)} lead_dm_messages variations")
+                            else:
+                                print(f"⚠️ All lead_dm_messages are empty, trying fallback to message_variations")
                         else:
-                            print(f"⚠️ All message variations are empty, trying fallback to message_template")
+                            print(f"⚠️ lead_dm_messages is empty, trying fallback to message_variations")
+                    
+                    # If still no template, try message_variations (shared or simple reply messages)
+                    if not message_template:
+                        message_variations = rule.config.get("message_variations", [])
+                        print(f"🔍 [DEBUG] Loading message template: message_variations={message_variations}, type={type(message_variations)}")
+                        if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
+                            # Filter out empty messages
+                            valid_messages = [m for m in message_variations if m and str(m).strip()]
+                            if valid_messages:
+                                # Randomly select one message from variations
+                                import random
+                                message_template = random.choice(valid_messages)
+                                print(f"🎲 Randomly selected message from {len(valid_messages)} valid variations")
+                            else:
+                                print(f"⚠️ All message variations are empty, trying fallback to message_template")
+                                message_template = rule.config.get("message_template", "")
+                        else:
                             message_template = rule.config.get("message_template", "")
-                    else:
-                        message_template = rule.config.get("message_template", "")
-                        print(f"🔍 [DEBUG] Using message_template fallback: '{message_template[:50] if message_template else 'None'}...'")
+                            print(f"🔍 [DEBUG] Using message_template fallback: '{message_template[:50] if message_template else 'None'}...'")
 
                 # SOFT REMINDER: If ask_to_follow is enabled, gently remind user to stay followed
                 try:
