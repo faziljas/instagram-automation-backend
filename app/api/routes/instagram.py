@@ -293,7 +293,7 @@ async def process_instagram_message(event: dict, db: Session):
                 try:
                     rule_id_from_payload = int(quick_reply_payload.split("follow_me_")[1])
                 except (ValueError, IndexError):
-                    log_print(f\"⚠️ Could not parse rule_id from payload: {quick_reply_payload}\", \"WARNING\")
+                    log_print(f"⚠️ Could not parse rule_id from payload: {quick_reply_payload}", "WARNING")
                 
                 from app.models.automation_rule import AutomationRule
                 from app.services.pre_dm_handler import update_pre_dm_state
