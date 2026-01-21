@@ -302,16 +302,33 @@ async def process_instagram_message(event: dict, db: Session):
                     )
                     
                     if pre_dm_result["action"] == "send_email_request":
-                        # Send email request
-                        log_print(f"✅ Follow confirmed from {sender_id}, sending email request")
-                        asyncio.create_task(execute_automation_action(
-                            rule,
-                            sender_id,
-                            account,
-                            db,
-                            trigger_type="new_message",
-                            message_id=message_id
-                        ))
+                        # STRICT MODE: Send email request IMMEDIATELY after follow confirmation
+                        log_print(f"✅ [STRICT MODE] Follow confirmed from {sender_id}, sending email request now")
+                        
+                        # Get email request message
+                        email_message = pre_dm_result.get("message", "")
+                        
+                        # Send email request as TEXT-ONLY (no buttons)
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id = account.page_id
+                            
+                            # Send email request as plain text
+                            send_dm(sender_id, email_message, access_token, page_id, buttons=None, quick_replies=None)
+                            log_print(f"✅ Email request sent (text input only)")
+                            
+                        except Exception as e:
+                            log_print(f"❌ Failed to send email request: {str(e)}", "ERROR")
+                        
                         return
                     elif pre_dm_result["action"] == "send_primary":
                         # Skip to primary DM
@@ -1310,21 +1327,17 @@ async def execute_automation_action(
                 )
                 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
-                    # STRICT MODE: Send follow request with quick reply button (triggers postback)
+                    # STRICT MODE: Send follow request with text-based confirmation (most reliable)
                     follow_message = pre_dm_result["message"]
                     
-                    # Add profile URL to message text (since quick replies can't open URLs)
+                    # Add profile URL and instructions for text confirmation
                     profile_url = f"https://www.instagram.com/{username}/"
-                    follow_message_with_link = f"{follow_message}\n\n👉 Follow me here: {profile_url}"
+                    follow_message_with_instructions = f"{follow_message}\n\n👉 Follow me here: {profile_url}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!"
                     
-                    # Use QUICK REPLY button instead of URL button (quick replies trigger postback events)
-                    quick_replies = [{
-                        "content_type": "text",
-                        "title": "✅ I Followed",
-                        "payload": "follow_confirmed"
-                    }]
+                    # NO buttons - just plain text message (most reliable approach)
+                    # User will type "done", "followed", "yes" etc. to confirm
                     
-                    # STRICT MODE: If email is enabled, send follow first, then WAIT for button click
+                    # STRICT MODE: If email is enabled, send follow request, then WAIT for text confirmation
                     if ask_for_email:
                         # Get email request message (will be sent ONLY after button click)
                         ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
@@ -1341,14 +1354,13 @@ async def execute_automation_action(
                         pre_dm_result["action"] = "send_follow_strict_mode"
                         
                         # Store messages for later use
-                        pre_dm_result["follow_message"] = follow_message_with_link
-                        pre_dm_result["follow_quick_replies"] = quick_replies
+                        pre_dm_result["follow_message"] = follow_message_with_instructions
                         pre_dm_result["email_message"] = ask_for_email_message
                         
                         # Send follow request
-                        print(f"📩 [STRICT MODE] Sending follow request with quick reply to {sender_id}")
-                        print(f"   ⚠️ Email question will ONLY be sent after user clicks '✅ I Followed' button")
-                        print(f"   🚫 No timeouts - waiting indefinitely for user action")
+                        print(f"📩 [STRICT MODE] Sending follow request with text confirmation to {sender_id}")
+                        print(f"   ⚠️ Email question will ONLY be sent after user types 'done' or 'followed'")
+                        print(f"   🚫 No timeouts - waiting indefinitely for user confirmation")
                         
                         # Get access token NOW before sending
                         from app.utils.instagram_api import send_dm as send_dm_api
@@ -1383,6 +1395,7 @@ async def execute_automation_action(
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
                         # STRICT MODE: Send ONLY follow request (NO automatic email scheduling)
+                        # NO buttons/quick replies - just plain text with instructions
                         if is_comment_trigger:
                             print(f"💬 Sending via PRIVATE REPLY to open conversation (comment trigger)")
                             try:
@@ -1392,15 +1405,15 @@ async def execute_automation_action(
                                 send_private_reply(comment_id, opener_message, access_token, page_id_for_dm)
                                 print(f"✅ Conversation opened via private reply")
                                 
-                                # Small delay then send the actual follow message with QUICK REPLY
+                                # Small delay then send the actual follow message (TEXT ONLY)
                                 await asyncio.sleep(1)
-                                send_dm_api(sender_id, follow_message_with_link, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
-                                print(f"✅ Follow request DM with quick reply sent")
+                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                                print(f"✅ Follow request DM sent (text-based confirmation)")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
                             try:
-                                send_dm_api(sender_id, follow_message_with_link, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                                 print(f"✅ Follow request DM sent")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")

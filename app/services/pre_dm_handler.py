@@ -83,14 +83,29 @@ def check_if_follow_confirmation(message_text: str) -> bool:
         "yes i'm following",
         "yes im following",
         "yes i am following",
+        "done",
+        "followed",
+        "i followed",
+        "i've followed",
+        "ive followed",
+        "finished",
+        "complete",
+        "completed",
+        "yes",
+        "yep",
+        "yup",
+        "ok",
+        "okay",
+        "sure",
     ]
     
     for phrase in follow_confirmations:
         if phrase in message_lower:
             return True
     
-    # Check if message is exactly "follow" (case-insensitive)
-    if message_lower == "follow":
+    # Check if message is exactly these short confirmations (case-insensitive)
+    exact_matches = ["follow", "done", "ok", "yes", "followed", "y"]
+    if message_lower in exact_matches:
         return True
     
     return False
