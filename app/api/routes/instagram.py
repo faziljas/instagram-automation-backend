@@ -1425,15 +1425,9 @@ async def execute_automation_action(
                             print(f"💬 Sending via PRIVATE REPLY to open conversation (comment trigger)")
                             try:
                                 from app.utils.instagram_api import send_private_reply
-                                # Send a simple opener via private reply to bypass 24-hour window
-                                opener_message = "Hi! 👋"
-                                send_private_reply(comment_id, opener_message, access_token, page_id_for_dm)
-                                print(f"✅ Conversation opened via private reply")
-                                
-                                # Small delay then send the actual follow message (TEXT ONLY)
-                                await asyncio.sleep(1)
-                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=None, quick_replies=None)
-                                print(f"✅ Follow request DM sent (text-based confirmation)")
+                                # Send complete message via private reply (no separate messages to avoid loading symbol)
+                                send_private_reply(comment_id, follow_message_with_instructions, access_token, page_id_for_dm)
+                                print(f"✅ Follow request sent via private reply (single message, no loading)")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
