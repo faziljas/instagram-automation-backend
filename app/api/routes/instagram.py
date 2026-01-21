@@ -2291,27 +2291,38 @@ async def execute_automation_action(
                 # IMPORTANT: Send email success message BEFORE checking message_template
                 # This ensures it's sent even if primary DM template is missing
                 print(f"🔍 [EMAIL SUCCESS] Checking: pre_dm_result={pre_dm_result}, send_email_success={pre_dm_result.get('send_email_success') if pre_dm_result else None}")
-                try:
-                    if pre_dm_result and pre_dm_result.get("send_email_success"):
-                        email_success_message = rule.config.get("email_success_message")
-                        print(f"🔍 [EMAIL SUCCESS] email_success_message from config: '{email_success_message}'")
-                        if email_success_message and str(email_success_message).strip():
-                            print(f"📧 Sending email success message before primary DM")
+                
+                # Check if we should send email success message
+                should_send_email_success = False
+                if pre_dm_result:
+                    send_email_success_flag = pre_dm_result.get("send_email_success", False)
+                    print(f"🔍 [EMAIL SUCCESS] send_email_success flag: {send_email_success_flag}, type: {type(send_email_success_flag)}")
+                    if send_email_success_flag is True or str(send_email_success_flag).lower() == 'true':
+                        should_send_email_success = True
+                
+                if should_send_email_success:
+                    email_success_message = rule.config.get("email_success_message")
+                    print(f"🔍 [EMAIL SUCCESS] email_success_message from config: '{email_success_message}'")
+                    if email_success_message and str(email_success_message).strip():
+                        print(f"📧 Sending email success message before primary DM")
+                        try:
                             # Always send as a regular DM (not private reply)
                             send_dm_api(sender_id, email_success_message, access_token, account_page_id, buttons=None, quick_replies=None)
                             print(f"✅ Email success message sent successfully")
                             # Small delay between messages
                             await asyncio.sleep(1)
-                        else:
-                            print(f"⏭️ [EMAIL SUCCESS] Skipping: email_success_message is empty or not configured")
+                        except Exception as send_err:
+                            print(f"⚠️ Failed to send email success message: {str(send_err)}")
+                            import traceback
+                            traceback.print_exc()
                     else:
-                        print(f"⏭️ [EMAIL SUCCESS] Skipping: send_email_success is False or pre_dm_result is None")
-                except Exception as success_err:
-                    print(f"⚠️ Failed to send email success message: {str(success_err)}")
-                    import traceback
-                    traceback.print_exc()
+                        print(f"⏭️ [EMAIL SUCCESS] Skipping: email_success_message is empty or not configured")
+                else:
+                    print(f"⏭️ [EMAIL SUCCESS] Skipping: send_email_success is False or pre_dm_result is None (pre_dm_result={pre_dm_result})")
             except Exception as token_err:
                 print(f"❌ Failed to get access token for email success message: {str(token_err)}")
+                import traceback
+                traceback.print_exc()
             
             # Now check if we have a message template for the primary DM
             if not message_template:
