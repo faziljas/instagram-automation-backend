@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.automation_rule import AutomationRule
 from app.models.captured_lead import CapturedLead
 from app.models.instagram_account import InstagramAccount
+from app.models.follower import Follower
 from app.services.lead_capture import validate_email, update_automation_stats
 
 
@@ -176,6 +177,93 @@ async def process_pre_dm_actions(
     ask_for_email = config.get("ask_for_email", False)
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
+    
+    # ---------------------------------------------------------
+    # Short‑circuit checks: already follower / already have email
+    # ---------------------------------------------------------
+    already_following = False
+    already_has_email = False
+    existing_email: Optional[str] = None
+    
+    try:
+        # 1) Check followers table to see if this sender already follows the account
+        #    We try matching by numeric user_id first (preferred), then fall back to username.
+        try:
+            sender_id_int = int(sender_id)
+        except (TypeError, ValueError):
+            sender_id_int = None
+        
+        follower_query = db.query(Follower).filter(
+            Follower.instagram_account_id == account.id
+        )
+        if sender_id_int is not None:
+            follower_query = follower_query.filter(Follower.user_id == sender_id_int)
+        else:
+            # Fallback: best‑effort username match using extra_metadata from previous leads
+            follower_query = follower_query.filter(Follower.username.isnot(None))
+        
+        follower_obj = follower_query.first()
+        if follower_obj:
+            already_following = True
+        
+        # 2) Check captured_leads for an existing email tied to this sender/account
+        leads = db.query(CapturedLead).filter(
+            CapturedLead.instagram_account_id == account.id,
+            CapturedLead.email.isnot(None)
+        ).all()
+        sender_id_str = str(sender_id) if sender_id is not None else None
+        for lead in leads:
+            meta = lead.extra_metadata or {}
+            if sender_id_str and str(meta.get("sender_id")) == sender_id_str:
+                already_has_email = True
+                existing_email = lead.email
+                break
+    except Exception as e:
+        # Never let analytics/lookup failures break the main DM flow
+        print(f"⚠️ [STRICT MODE] Failed pre-check for existing follower/email: {str(e)}")
+    
+    # 3) Use these flags to potentially skip pre‑DM steps
+    if ask_to_follow or ask_for_email:
+        # Case A: user already follows AND we already have their email
+        if already_following and (already_has_email or not ask_for_email):
+            update_pre_dm_state(sender_id, rule.id, {
+                "follow_request_sent": True,
+                "follow_confirmed": True,
+                "email_request_sent": bool(ask_for_email),
+                "email_received": bool(existing_email),
+                "email": existing_email,
+                "primary_dm_sent": True
+            })
+            return {
+                "action": "send_primary",
+                "message": None,
+                "should_save_email": False,
+                "email": existing_email
+            }
+        
+        # Case B: already following, but no email yet and ask_for_email is enabled
+        if already_following and ask_for_email and not already_has_email:
+            # Skip follow step, go straight to email question
+            update_pre_dm_state(sender_id, rule.id, {
+                "follow_request_sent": True,
+                "follow_confirmed": True
+            })
+            return {
+                "action": "send_email_request",
+                "message": ask_for_email_message,
+                "should_save_email": False,
+                "email": None
+            }
+        
+        # Case C: not following, but we already have email → only ask to follow (no email step)
+        if ask_to_follow and already_has_email and not ask_for_email:
+            # Mark email as satisfied so we don't try to re‑ask later
+            update_pre_dm_state(sender_id, rule.id, {
+                "email_request_sent": True,
+                "email_received": True,
+                "email": existing_email
+            })
+            # Continue normal flow so they still get a follow request
     
     # Check if follow button was clicked (postback event)
     if trigger_type == "postback" and state.get("follow_button_clicked"):
