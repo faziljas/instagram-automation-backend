@@ -2188,13 +2188,21 @@ async def execute_automation_action(
                 # Support message_variations for randomization, fallback to message_template
                 if message_template is None:  # Only set if not already set by pre-DM
                     message_variations = rule.config.get("message_variations", [])
+                    print(f"🔍 [DEBUG] Loading message template: message_variations={message_variations}, type={type(message_variations)}")
                     if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
-                        # Randomly select one message from variations
-                        import random
-                        message_template = random.choice([m for m in message_variations if m and str(m).strip()])
-                        print(f"🎲 Randomly selected message from {len(message_variations)} variations")
+                        # Filter out empty messages
+                        valid_messages = [m for m in message_variations if m and str(m).strip()]
+                        if valid_messages:
+                            # Randomly select one message from variations
+                            import random
+                            message_template = random.choice(valid_messages)
+                            print(f"🎲 Randomly selected message from {len(valid_messages)} valid variations")
+                        else:
+                            print(f"⚠️ All message variations are empty, trying fallback to message_template")
+                            message_template = rule.config.get("message_template", "")
                     else:
                         message_template = rule.config.get("message_template", "")
+                        print(f"🔍 [DEBUG] Using message_template fallback: '{message_template[:50] if message_template else 'None'}...'")
 
                 # SOFT REMINDER: If ask_to_follow is enabled, gently remind user to stay followed
                 try:
@@ -2208,26 +2216,13 @@ async def execute_automation_action(
                     # Never let reminder logic break the main DM
                     pass
             
-            if not message_template:
-                print(f"⚠️ No message template configured for rule {rule.id}, action: {pre_dm_result.get('action') if pre_dm_result else 'None'}")
-                return
-            
-            # Update stats
-            from app.services.lead_capture import update_automation_stats
-            update_automation_stats(rule.id, "triggered", db)
-            
-            # Apply delay if configured (delay is in minutes, convert to seconds)
-            delay_minutes = rule.config.get("delay_minutes", 0)
-            if delay_minutes and delay_minutes > 0:
-                delay_seconds = delay_minutes * 60
-                print(f"⏳ Waiting {delay_minutes} minute(s) ({delay_seconds} seconds) before sending message...")
-                await asyncio.sleep(delay_seconds)
-                print(f"✅ Delay complete, proceeding to send message")
-            
-            # Send DM using Instagram Graph API (for OAuth accounts)
+            # Get access token BEFORE checking message_template
+            # This allows us to send email success message even if primary DM template is missing
             from app.utils.encryption import decrypt_credentials
             from app.utils.instagram_api import send_private_reply, send_dm as send_dm_api
             
+            access_token = None
+            account_page_id = None
             try:
                 # Get access token - refresh account if needed to avoid DetachedInstanceError
                 try:
@@ -2260,7 +2255,8 @@ async def execute_automation_action(
                         print(f"❌ Failed to refresh account and get access token: {str(refresh_error)}")
                         raise Exception(f"Could not access account credentials: {str(refresh_error)}")
                 
-                # If we just completed an email capture, optionally send email success message BEFORE primary DM
+                # IMPORTANT: Send email success message BEFORE checking message_template
+                # This ensures it's sent even if primary DM template is missing
                 try:
                     if pre_dm_result and pre_dm_result.get("send_email_success"):
                         email_success_message = rule.config.get("email_success_message")
@@ -2268,8 +2264,34 @@ async def execute_automation_action(
                             print(f"📧 Sending email success message before primary DM")
                             # Always send as a regular DM (not private reply)
                             send_dm_api(sender_id, email_success_message, access_token, account_page_id, buttons=None, quick_replies=None)
+                            print(f"✅ Email success message sent successfully")
+                            # Small delay between messages
+                            await asyncio.sleep(1)
                 except Exception as success_err:
                     print(f"⚠️ Failed to send email success message: {str(success_err)}")
+            except Exception as token_err:
+                print(f"❌ Failed to get access token for email success message: {str(token_err)}")
+            
+            # Now check if we have a message template for the primary DM
+            if not message_template:
+                print(f"⚠️ No message template configured for rule {rule.id}, action: {pre_dm_result.get('action') if pre_dm_result else 'None'}")
+                # Email success message was already sent above if needed, so we can return now
+                return
+            
+            # Update stats
+            from app.services.lead_capture import update_automation_stats
+            update_automation_stats(rule.id, "triggered", db)
+            
+            # Apply delay if configured (delay is in minutes, convert to seconds)
+            delay_minutes = rule.config.get("delay_minutes", 0)
+            if delay_minutes and delay_minutes > 0:
+                delay_seconds = delay_minutes * 60
+                print(f"⏳ Waiting {delay_minutes} minute(s) ({delay_seconds} seconds) before sending message...")
+                await asyncio.sleep(delay_seconds)
+                print(f"✅ Delay complete, proceeding to send message")
+            
+            # Send DM using Instagram Graph API (for OAuth accounts)
+            try:
 
                 # Check if auto-reply to comments is enabled
                 # This applies to post_comment, live_comment, AND keyword triggers when comment_id is present
