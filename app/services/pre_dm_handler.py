@@ -177,12 +177,9 @@ async def process_pre_dm_actions(
     ask_for_email = config.get("ask_for_email", False)
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
-
-    # If this rule is using the new Lead Capture flow, we don't use the legacy
-    # pre-DM email question. Lead capture will handle asking for email/phone/etc.
-    is_lead_capture = config.get("is_lead_capture", False)
-    if is_lead_capture:
-        ask_for_email = False
+    
+    # Note: lead capture flows are not used for pre‑DM email; follow/email
+    # behaviour is driven entirely by these flags and messages.
     
     # ---------------------------------------------------------
     # Short‑circuit checks: already follower / already have email
@@ -300,6 +297,8 @@ async def process_pre_dm_actions(
     # Check if this is a response to a follow request (text-based confirmation)
     if incoming_message and state.get("follow_request_sent") and not state.get("follow_confirmed"):
         if check_if_follow_confirmation(incoming_message):
+            print(f"🔍 [DEBUG] Follow confirmation received: '{incoming_message}' from {sender_id} for rule {rule.id}")
+            print(f"🔍 [DEBUG] ask_for_email={ask_for_email}, email_request_sent={state.get('email_request_sent')}")
             # User confirmed they're following - mark as confirmed and proceed to email request
             update_pre_dm_state(sender_id, rule.id, {
                 "follow_confirmed": True
@@ -307,6 +306,7 @@ async def process_pre_dm_actions(
             
             # If email request is enabled, proceed to email request
             if ask_for_email and not state.get("email_request_sent"):
+                print(f"✅ [DEBUG] Sending email request to {sender_id} for rule {rule.id}")
                 update_pre_dm_state(sender_id, rule.id, {
                     "email_request_sent": True,
                     "step": "email"
@@ -318,6 +318,7 @@ async def process_pre_dm_actions(
                     "email": None
                 }
             else:
+                print(f"⚠️ [DEBUG] Skipping email request: ask_for_email={ask_for_email}, email_request_sent={state.get('email_request_sent')}")
                 # No email request, proceed to primary DM
                 update_pre_dm_state(sender_id, rule.id, {
                     "primary_dm_sent": True  # Mark as sent to prevent duplicate from scheduled task

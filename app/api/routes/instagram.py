@@ -407,12 +407,15 @@ async def process_instagram_message(event: dict, db: Session):
                 
                 if ask_to_follow and check_if_follow_confirmation(message_text) and state.get("follow_request_sent") and not state.get("follow_confirmed"):
                     log_print(f"✅ Follow confirmation detected from {sender_id} for rule '{rule.name}' (Rule ID: {rule.id})")
+                    log_print(f"🔍 DEBUG: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, state={state}")
                     # User confirmed they're following - mark as followed and proceed
                     pre_dm_result = await process_pre_dm_actions(
                         rule, sender_id, account, db,
                         incoming_message=message_text,
                         trigger_type="new_message"
                     )
+                    
+                    log_print(f"🔍 DEBUG: pre_dm_result action={pre_dm_result.get('action')}, message={pre_dm_result.get('message', '')[:50] if pre_dm_result.get('message') else 'None'}")
                     
                     if pre_dm_result["action"] == "send_email_request":
                         # STRICT MODE: Send email request IMMEDIATELY after follow confirmation
@@ -1191,7 +1194,8 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                         break  # Only trigger first matching keyword rule
                     else:
                         # Log when keyword doesn't match (for debugging)
-                        print(f"🔍 Keyword check: '{message_text_lower}' does not exactly match keyword '{keyword}' (Rule ID: {rule.id})")
+                        if keywords_list:  # Only log if we have keywords to check
+                            print(f"🔍 Keyword check: '{comment_text_lower}' does not exactly match keyword '{keyword}' (Rule ID: {rule.id})")
         
         # Process post_comment rules ONLY if no keyword rule matched
         if not keyword_rule_matched:
