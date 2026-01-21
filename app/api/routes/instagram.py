@@ -335,51 +335,27 @@ async def process_instagram_message(event: dict, db: Session):
                         trigger_type="new_message"
                     )
                     
-                    if pre_dm_result["action"] == "send_email_success":
-                        # Email was valid! Send success message with PDF/link, then primary DM
-                        log_print(f"✅ Valid email received from {sender_id}: {pre_dm_result.get('email')}")
+                    if pre_dm_result["action"] == "send_primary":
+                        # STRICT MODE: Email was valid! Proceed directly to primary DM
+                        log_print(f"✅ [STRICT MODE] Valid email received: {pre_dm_result.get('email')}")
+                        log_print(f"📤 Sending primary DM now (both follow + email completed)")
                         
-                        # Send success message with PDF/link
-                        from app.utils.encryption import decrypt_credentials
-                        from app.utils.instagram_api import send_dm
-                        
-                        try:
-                            if account.encrypted_page_token:
-                                access_token = decrypt_credentials(account.encrypted_page_token)
-                            elif account.encrypted_credentials:
-                                access_token = decrypt_credentials(account.encrypted_credentials)
-                            else:
-                                raise Exception("No access token found")
-                            
-                            page_id = account.page_id
-                            success_msg = pre_dm_result["message"]
-                            
-                            send_dm(sender_id, success_msg, access_token, page_id, buttons=None, quick_replies=None)
-                            log_print(f"✅ Email success message sent with PDF/link")
-                            
-                            # Small delay before primary DM
-                            await asyncio.sleep(2)
-                            
-                            # Now send primary DM
-                            log_print(f"📤 Sending primary DM after email capture")
-                            asyncio.create_task(execute_automation_action(
-                                rule,
-                                sender_id,
-                                account,
-                                db,
-                                trigger_type="new_message",
-                                message_id=message_id,
-                                pre_dm_result_override={"action": "send_primary"}
-                            ))
-                            
-                        except Exception as e:
-                            log_print(f"❌ Failed to send email success message: {str(e)}", "ERROR")
+                        # Send primary DM immediately
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="new_message",
+                            message_id=message_id,
+                            pre_dm_result_override={"action": "send_primary"}
+                        ))
                         
                         return  # Don't process as new_message rule
                     
                     elif pre_dm_result["action"] == "send_email_retry":
-                        # Email was invalid! Send retry message
-                        log_print(f"⚠️ Invalid email from {sender_id}, asking to retry")
+                        # STRICT MODE: Email was invalid! Send retry message and WAIT
+                        log_print(f"⚠️ [STRICT MODE] Invalid email format, sending retry message")
                         
                         # Send retry message
                         from app.utils.encryption import decrypt_credentials
@@ -397,7 +373,7 @@ async def process_instagram_message(event: dict, db: Session):
                             retry_msg = pre_dm_result["message"]
                             
                             send_dm(sender_id, retry_msg, access_token, page_id, buttons=None, quick_replies=None)
-                            log_print(f"✅ Email retry message sent")
+                            log_print(f"✅ Retry message sent, waiting for valid email")
                             
                         except Exception as e:
                             log_print(f"❌ Failed to send retry message: {str(e)}", "ERROR")
@@ -725,10 +701,10 @@ async def process_postback_event(event: dict, db: Session):
                     })
                     print(f"✅ Marked follow button click for rule {rule.id}")
                     
-                    # Send email request IMMEDIATELY
+                    # STRICT MODE: Send email request as TEXT-ONLY (no buttons)
                     ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
                     
-                    print(f"📧 Sending email request immediately (follow button clicked)")
+                    print(f"📧 [STRICT MODE] Sending email request as TEXT input (follow button clicked)")
                     from app.utils.encryption import decrypt_credentials
                     from app.utils.instagram_api import send_dm
                     
@@ -743,27 +719,15 @@ async def process_postback_event(event: dict, db: Session):
                         
                         page_id_for_dm = account.page_id
                         
-                        # Send email request with quick reply buttons
-                        quick_replies = [
-                            {
-                                "content_type": "text",
-                                "title": "Share Email",
-                                "payload": "email_shared"
-                            },
-                            {
-                                "content_type": "text",
-                                "title": "Skip for Now",
-                                "payload": "email_skip"
-                            }
-                        ]
+                        # Send email request as PLAIN TEXT (NO buttons or quick_replies)
+                        send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        print(f"✅ Email request sent (text input only, no buttons)")
                         
-                        send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
-                        print(f"✅ Email request sent immediately after Follow button click")
-                        
-                        # Update state to mark email request as sent
+                        # Update state to mark email request as sent and waiting for typed email
                         update_pre_dm_state(str(sender_id), rule.id, {
                             "email_request_sent": True,
-                            "step": "email"
+                            "step": "email",
+                            "waiting_for_email_text": True  # NEW: Strict mode flag
                         })
                         
                     except Exception as e:
@@ -1356,43 +1320,31 @@ async def execute_automation_action(
                         "url": profile_url
                     }]
                     
-                    # If email is also enabled, send follow first, then schedule email after 5 seconds
+                    # STRICT MODE: If email is enabled, send follow first, then WAIT for button click
                     if ask_for_email:
-                        # Get email request message
+                        # Get email request message (will be sent ONLY after button click)
                         ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
                         
                         # Mark only follow as sent (NOT email yet)
                         from app.services.pre_dm_handler import update_pre_dm_state
                         update_pre_dm_state(str(sender_id), rule_id, {
                             "follow_request_sent": True,
-                            "step": "follow"
+                            "step": "follow",
+                            "waiting_for_follow_confirmation": True  # NEW: Strict mode flag
                         })
                         
-                        # Change action to signal we'll send follow, then schedule email
-                        pre_dm_result["action"] = "send_follow_then_schedule_email"
+                        # Change action to signal we'll send follow, then WAIT for button click
+                        pre_dm_result["action"] = "send_follow_strict_mode"
                         
-                        # Store both messages and buttons separately
+                        # Store messages for later use
                         pre_dm_result["follow_message"] = follow_message
                         pre_dm_result["follow_buttons"] = buttons
                         pre_dm_result["email_message"] = ask_for_email_message
-                        pre_dm_result["quick_replies"] = [
-                            {
-                                "content_type": "text",
-                                "title": "Share Email",
-                                "payload": "email_shared"
-                            },
-                            {
-                                "content_type": "text",
-                                "title": "Skip for Now",
-                                "payload": "email_skip"
-                            }
-                        ]
                         
-                        # Send follow request, then schedule email after 5 seconds (or immediate if button clicked)
-                        print(f"📩 Sending follow request with button to {sender_id}")
-                        print(f"   Email question will be sent:")
-                        print(f"   - IMMEDIATELY if user clicks 'Follow Me' button")
-                        print(f"   - AFTER 5 SECONDS if user doesn't click")
+                        # Send follow request
+                        print(f"📩 [STRICT MODE] Sending follow request with button to {sender_id}")
+                        print(f"   ⚠️ Email question will ONLY be sent after user clicks 'Follow Me' button")
+                        print(f"   🚫 No timeouts - waiting indefinitely for user action")
                         
                         # Get access token NOW before sending
                         from app.utils.instagram_api import send_dm as send_dm_api
@@ -1426,7 +1378,7 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # Send ONLY follow request (email will be scheduled for 5 seconds later)
+                        # STRICT MODE: Send ONLY follow request (NO automatic email scheduling)
                         if is_comment_trigger:
                             print(f"💬 Sending via PRIVATE REPLY to open conversation (comment trigger)")
                             try:
@@ -1449,115 +1401,16 @@ async def execute_automation_action(
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         
-                        # Schedule email request after 5 seconds (if button not clicked)
-                        sender_id_for_dm = str(sender_id)
-                        rule_id_for_dm = int(rule_id)
-                        user_id_for_dm = int(user_id)
-                        account_id_for_dm = int(account_id)
-                        email_msg = ask_for_email_message
-                        email_quick_replies = pre_dm_result["quick_replies"]
+                        # STRICT MODE: No automatic scheduling
+                        # Email will ONLY be sent when postback event (button click) is received
+                        # Primary DM will ONLY be sent after valid email is provided
+                        print(f"✅ [STRICT MODE] Follow request sent. Flow:")
+                        print(f"   1️⃣ Waiting for user to click 'Follow Me' button")
+                        print(f"   2️⃣ Email question will be sent ONLY after button click")
+                        print(f"   3️⃣ Primary DM will be sent ONLY after valid email provided")
+                        print(f"   🚫 No timeouts - strictly waiting for user actions")
                         
-                        async def delayed_email_request():
-                            """Send email request after 5 seconds if button wasn't clicked."""
-                            from app.db.session import SessionLocal
-                            from app.models.automation_rule import AutomationRule
-                            from app.models.instagram_account import InstagramAccount
-                            from app.services.pre_dm_handler import get_pre_dm_state, update_pre_dm_state
-                            from app.utils.encryption import decrypt_credentials
-                            from app.utils.instagram_api import send_dm
-                            
-                            db_session = SessionLocal()
-                            try:
-                                print(f"⏰ [EMAIL] Waiting 5 seconds to check if Follow button was clicked...")
-                                await asyncio.sleep(5)
-                                
-                                # Check if button was clicked (postback handler would have set this)
-                                current_state = get_pre_dm_state(sender_id_for_dm, rule_id_for_dm)
-                                if current_state.get("email_request_sent"):
-                                    print(f"✅ [EMAIL] Email already sent (button was clicked), skipping scheduled send")
-                                    return
-                                
-                                print(f"⏱️ [EMAIL] 5 seconds elapsed, button NOT clicked - sending email request now")
-                                
-                                # Re-fetch rule and account
-                                rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
-                                account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.id == account_id_for_dm).first()
-                                
-                                if not rule_refresh or not account_refresh:
-                                    print(f"⚠️ [EMAIL] Rule or account not found")
-                                    return
-                                
-                                # Get access token
-                                if account_refresh.encrypted_page_token:
-                                    access_token = decrypt_credentials(account_refresh.encrypted_page_token)
-                                elif account_refresh.encrypted_credentials:
-                                    access_token = decrypt_credentials(account_refresh.encrypted_credentials)
-                                else:
-                                    raise Exception("No access token found")
-                                
-                                page_id = account_refresh.page_id
-                                
-                                # Send email request
-                                send_dm(sender_id_for_dm, email_msg, access_token, page_id, buttons=None, quick_replies=email_quick_replies)
-                                print(f"✅ [EMAIL] Email request sent (5-second timeout)")
-                                
-                                # Mark email request as sent
-                                update_pre_dm_state(sender_id_for_dm, rule_id_for_dm, {
-                                    "email_request_sent": True,
-                                    "step": "email"
-                                })
-                                
-                            except Exception as e:
-                                print(f"❌ [EMAIL] Error sending delayed email request: {str(e)}")
-                            finally:
-                                db_session.close()
-                        
-                        # Schedule the email request task
-                        asyncio.create_task(delayed_email_request())
-                        print(f"⏰ Email request scheduled for 5 seconds (unless Follow button is clicked)")
-                        
-                        # Schedule primary DM after 15 seconds total (5s for email + 10s more, or immediately after email shared)
-                        async def delayed_primary_dm():
-                            """Send primary DM after email is collected or timeout."""
-                            from app.db.session import SessionLocal
-                            from app.models.automation_rule import AutomationRule
-                            from app.models.instagram_account import InstagramAccount
-                            from app.services.pre_dm_handler import get_pre_dm_state, update_pre_dm_state
-                            
-                            db_session = SessionLocal()
-                            try:
-                                print(f"⏰ [PRIMARY DM] Waiting 15 seconds for email collection...")
-                                await asyncio.sleep(15)
-                                
-                                # Check if primary DM already sent (email was shared)
-                                current_state = get_pre_dm_state(sender_id_for_dm, rule_id_for_dm)
-                                if current_state.get("primary_dm_sent"):
-                                    print(f"✅ [PRIMARY DM] Primary DM already sent (email was shared), skipping")
-                                    return
-                                
-                                print(f"⏱️ [PRIMARY DM] 15 seconds elapsed - sending primary DM now")
-                                
-                                # Re-fetch rule and account
-                                rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
-                                account_refresh = db_session.query(InstagramAccount).filter(InstagramAccount.id == account_id_for_dm).first()
-                                
-                                if rule_refresh and account_refresh:
-                                    update_pre_dm_state(sender_id_for_dm, rule_id_for_dm, {"primary_dm_sent": True})
-                                    await execute_automation_action(
-                                        rule_refresh, sender_id_for_dm, account_refresh, db_session,
-                                        trigger_type="primary_timeout",
-                                        message_id=None,
-                                        pre_dm_result_override={"action": "send_primary"}
-                                    )
-                                    print(f"✅ [PRIMARY DM] Primary DM sent (timeout)")
-                            except Exception as e:
-                                print(f"❌ [PRIMARY DM] Error: {str(e)}")
-                            finally:
-                                db_session.close()
-                        
-                        asyncio.create_task(delayed_primary_dm())
-                        print(f"⏰ Primary DM scheduled for 15 seconds")
-                        return  # Exit early, don't continue to primary DM logic
+                        return  # Done - wait for postback event
                     else:
                         # Only follow request, no email
                         message_template = follow_message

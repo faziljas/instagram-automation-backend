@@ -210,11 +210,12 @@ async def process_pre_dm_actions(
     if incoming_message and state.get("email_request_sent") and not state.get("email_received"):
         is_email, email_address = check_if_email_response(incoming_message)
         if is_email:
-            # Email received! Save it and proceed to send PDF/link, then primary DM
+            # STRICT MODE: Valid email received! Save it and proceed DIRECTLY to primary DM
+            print(f"✅ [STRICT MODE] Valid email received: {email_address}")
             update_pre_dm_state(sender_id, rule.id, {
                 "email_received": True,
                 "email": email_address,
-                "primary_dm_sent": True  # Mark as sent to prevent duplicate from scheduled task
+                "primary_dm_sent": True  # Mark as sent to prevent duplicates
             })
             
             # Save email to leads database
@@ -236,29 +237,22 @@ async def process_pre_dm_actions(
                 
                 # Update stats
                 update_automation_stats(rule.id, "lead_captured", db)
-                print(f"✅ Pre-DM email captured: {email_address}")
+                print(f"✅ Email saved to database: {email_address}")
             except Exception as e:
-                print(f"⚠️ Error saving pre-DM email: {str(e)}")
+                print(f"⚠️ Error saving email: {str(e)}")
                 db.rollback()
             
-            # Get success message and PDF/link from config
-            email_success_message = config.get("email_success_message", "Got it! Check your email in about 2 minutes. 📧✨")
-            lead_magnet_link = config.get("lead_magnet_link", "")
-            
-            # If PDF/link is provided, append it to success message
-            if lead_magnet_link:
-                email_success_message = f"{email_success_message}\n\n{lead_magnet_link}"
-            
-            # Return action to send success message + PDF/link, then primary DM
+            # STRICT MODE: Proceed DIRECTLY to primary DM (no intermediate success message)
+            print(f"✅ [STRICT MODE] Proceeding to primary DM after valid email")
             return {
-                "action": "send_email_success",
-                "message": email_success_message,
+                "action": "send_primary",
+                "message": None,
                 "should_save_email": False,
-                "email": email_address,
-                "lead_magnet_link": lead_magnet_link
+                "email": email_address
             }
         else:
-            # Not a valid email, ask again with custom retry message
+            # STRICT MODE: Invalid email - send retry message and WAIT
+            print(f"⚠️ [STRICT MODE] Invalid email format: {incoming_message}")
             email_retry_message = config.get("email_retry_message", "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧")
             return {
                 "action": "send_email_retry",
