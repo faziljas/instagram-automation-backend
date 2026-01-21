@@ -182,7 +182,7 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"⚠️ Skipping event - no 'message' field found. Event keys: {list(event.keys())}", "WARNING")
             return
         
-        sender_id = event.get("sender", {}).get("id")
+        sender_id = str(event.get("sender", {}).get("id"))  # Ensure string for state key consistency
         recipient_id = event.get("recipient", {}).get("id")
         message = event.get("message", {})
         message_text = message.get("text", "")
@@ -405,7 +405,11 @@ async def process_instagram_message(event: dict, db: Session):
                 from app.services.pre_dm_handler import get_pre_dm_state
                 state = get_pre_dm_state(sender_id, rule.id)
                 
-                if ask_to_follow and check_if_follow_confirmation(message_text) and state.get("follow_request_sent") and not state.get("follow_confirmed"):
+                # Debug logging to trace why follow confirmation isn't triggering
+                is_follow_confirmation = check_if_follow_confirmation(message_text)
+                log_print(f"🔍 [DEBUG] Message '{message_text}' from {sender_id}, rule {rule.id}: ask_to_follow={ask_to_follow}, is_follow_confirmation={is_follow_confirmation}, state={state}")
+                
+                if ask_to_follow and is_follow_confirmation and state.get("follow_request_sent") and not state.get("follow_confirmed"):
                     log_print(f"✅ Follow confirmation detected from {sender_id} for rule '{rule.name}' (Rule ID: {rule.id})")
                     log_print(f"🔍 DEBUG: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, state={state}")
                     # User confirmed they're following - mark as followed and proceed
