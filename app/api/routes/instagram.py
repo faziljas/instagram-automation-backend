@@ -658,30 +658,50 @@ async def process_instagram_message(event: dict, db: Session):
         # Process new_message rules ONLY if no keyword rule matched AND no story rule matched
         if not keyword_rule_matched and not story_rule_matched:
             if len(new_message_rules) > 0:
-                log_print(f"🎯 [DM] Processing {len(new_message_rules)} 'new_message' rule(s)...")
+                # STRICT MODE: Check if user is waiting for follow/email confirmation
+                # If yes, ignore new_message rules to prevent unwanted triggers
+                from app.services.pre_dm_handler import get_pre_dm_state
+                user_in_waiting_state = False
+                
                 for rule in new_message_rules:
-                    log_print(f"🔄 [DM] Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
-                    log_print(f"✅ [DM] 'new_message' rule triggered (no keyword match)!")
-                    # Check if this rule is already being processed for this message
-                    processing_key = f"{message_id}_{rule.id}"
-                    if processing_key in _processing_rules:
-                        log_print(f"🚫 Skipping execution: Rule {rule.id} already processing for message {message_id} (User {sender_id} already received this DM)")
-                        continue
-                    # Mark as processing
-                    _processing_rules[processing_key] = True
-                    # Clean cache if too large
-                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
-                        _processing_rules.clear()
-                    log_print(f"🚀 Executing automation action for new_message rule '{rule.name}' (Rule ID: {rule.id}, Sender: {sender_id})")
-                    # Run in background task to avoid blocking webhook handler
-                    asyncio.create_task(execute_automation_action(
-                        rule, 
-                        sender_id, 
-                        account, 
-                        db,
-                        trigger_type="new_message",
-                        message_id=message_id
-                    ))
+                    if rule.config.get("ask_to_follow") or rule.config.get("ask_for_email"):
+                        state = get_pre_dm_state(sender_id, rule.id)
+                        if state.get("follow_request_sent") and not state.get("follow_confirmed"):
+                            log_print(f"⏳ [STRICT MODE] User {sender_id} waiting for follow - ignoring new_message rule")
+                            user_in_waiting_state = True
+                            break
+                        if state.get("email_request_sent") and not state.get("email_received"):
+                            log_print(f"⏳ [STRICT MODE] User {sender_id} waiting for email - ignoring new_message rule")
+                            user_in_waiting_state = True
+                            break
+                
+                if user_in_waiting_state:
+                    log_print(f"🚫 [STRICT MODE] Skipping all new_message rules - user in waiting state")
+                else:
+                    log_print(f"🎯 [DM] Processing {len(new_message_rules)} 'new_message' rule(s)...")
+                    for rule in new_message_rules:
+                        log_print(f"🔄 [DM] Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
+                        log_print(f"✅ [DM] 'new_message' rule triggered (no keyword match)!")
+                        # Check if this rule is already being processed for this message
+                        processing_key = f"{message_id}_{rule.id}"
+                        if processing_key in _processing_rules:
+                            log_print(f"🚫 Skipping execution: Rule {rule.id} already processing for message {message_id} (User {sender_id} already received this DM)")
+                            continue
+                        # Mark as processing
+                        _processing_rules[processing_key] = True
+                        # Clean cache if too large
+                        if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                            _processing_rules.clear()
+                        log_print(f"🚀 Executing automation action for new_message rule '{rule.name}' (Rule ID: {rule.id}, Sender: {sender_id})")
+                        # Run in background task to avoid blocking webhook handler
+                        asyncio.create_task(execute_automation_action(
+                            rule, 
+                            sender_id, 
+                            account, 
+                            db,
+                            trigger_type="new_message",
+                            message_id=message_id
+                        ))
             else:
                 log_print(f"⚠️ [DM] No 'new_message' rules found to process. Keyword/story rule matched or no rules configured.", "WARNING")
         else:
