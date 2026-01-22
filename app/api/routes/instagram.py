@@ -4168,14 +4168,22 @@ async def send_conversation_message(
             from app.models.message import Message
             from datetime import datetime
             
+            # Get sender_id (our account's Instagram ID)
+            sender_id = account.igsid or str(account_id)
+            
+            message_id_from_api = result.get("message_id") or result.get("id")
+            
             sent_message = Message(
                 instagram_account_id=account_id,
                 user_id=user_id,
                 conversation_id=conversation.id,
-                message_id=result.get("message_id") or result.get("id"),
+                message_id=message_id_from_api,
+                platform_message_id=message_id_from_api,  # Also set platform_message_id
                 message_text=message_text,
+                content=message_text,  # Also set content field
                 is_from_bot=True,  # Sent by us
-                sender_username=None,  # Our account
+                sender_id=str(sender_id),  # Our account's Instagram ID
+                sender_username=account.username,  # Our account username
                 recipient_username=username,
                 recipient_id=recipient_id,
                 has_attachments=False,
