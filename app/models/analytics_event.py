@@ -30,7 +30,7 @@ class AnalyticsEvent(Base):
     
     # Event details
     event_type = Column(SQLEnum(EventType), nullable=False, index=True)
-    metadata = Column(JSON, nullable=True)  # Store additional data (url, email, sender_id, etc.)
+    event_metadata = Column(JSON, nullable=True)  # Store additional data (url, email, sender_id, etc.)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

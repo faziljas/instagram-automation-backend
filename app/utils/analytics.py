@@ -113,7 +113,7 @@ def log_analytics_event_sync(
             instagram_account_id=instagram_account_id,
             media_id=media_id,
             event_type=event_type,
-            metadata=metadata or {}
+            event_metadata=metadata or {}
         )
         db.add(event)
         db.commit()

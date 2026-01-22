@@ -79,17 +79,17 @@ async def track_link_click(
         
         # Log the analytics event
         if user_id and rule_id:
-            event = AnalyticsEvent(
-                user_id=user_id,
-                rule_id=rule_id,
-                instagram_account_id=instagram_account_id,
-                media_id=media_id,
-                event_type=EventType.LINK_CLICKED,
-                metadata={
-                    "url": target_url,
-                    "clicked_at": datetime.utcnow().isoformat()
-                }
-            )
+                event = AnalyticsEvent(
+                    user_id=user_id,
+                    rule_id=rule_id,
+                    instagram_account_id=instagram_account_id,
+                    media_id=media_id,
+                    event_type=EventType.LINK_CLICKED,
+                    event_metadata={
+                        "url": target_url,
+                        "clicked_at": datetime.utcnow().isoformat()
+                    }
+                )
             db.add(event)
             db.commit()
             print(f"✅ Tracked link click: rule_id={rule_id}, url={target_url[:50]}...")
@@ -274,7 +274,7 @@ def log_analytics_event(
             instagram_account_id=instagram_account_id,
             media_id=media_id,
             event_type=event_type,
-            metadata=metadata or {}
+            event_metadata=metadata or {}
         )
         db.add(event)
         db.commit()
