@@ -248,19 +248,28 @@ def get_analytics_dashboard(
                         elif acc.encrypted_credentials:
                             tok = decrypt_credentials(acc.encrypted_credentials)
                         if tok:
+                            # Try to fetch media info - use thumbnail_url for videos, media_url for photos
                             r = requests.get(
                                 f"https://graph.instagram.com/v21.0/{media_id}",
-                                params={"fields": "media_url,permalink", "access_token": tok},
+                                params={"fields": "media_type,media_url,thumbnail_url,permalink", "access_token": tok},
                                 timeout=10
                             )
                             if r.status_code == 200:
                                 d = r.json()
-                                if d.get("media_url"):
-                                    entry["media_url"] = d["media_url"]
+                                # Use thumbnail_url for videos, media_url for photos
+                                media_url = d.get("thumbnail_url") or d.get("media_url")
+                                if media_url:
+                                    entry["media_url"] = media_url
                                 if d.get("permalink"):
                                     entry["permalink"] = d["permalink"]
-                except Exception:
-                    pass  # keep entry without media_url/permalink
+                            else:
+                                # Log the error for debugging
+                                error_data = r.json() if r.content else {}
+                                print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_data.get('error', {}).get('message', r.text[:100])}")
+                except Exception as e:
+                    # Log the exception for debugging
+                    print(f"⚠️ Exception fetching media info for {media_id}: {str(e)}")
+                    # keep entry without media_url/permalink
             top_posts.append(entry)
         
         return AnalyticsSummary(
