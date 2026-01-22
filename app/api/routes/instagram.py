@@ -3445,22 +3445,40 @@ async def get_instagram_conversations(
         
         # Process incoming conversations
         for conv in incoming_convs:
-            username = conv.sender_username or conv.sender_id
-            if username not in conversations_map or conv.last_message_at > conversations_map[username]['last_message_at']:
+            username = conv.sender_username or str(conv.sender_id)
+            if not username:
+                continue
+                
+            # Check if we should add/update this conversation
+            should_add = username not in conversations_map
+            if not should_add and conv.last_message_at:
+                # Compare dates properly
+                existing_time_str = conversations_map[username].get('last_message_at')
+                if existing_time_str:
+                    try:
+                        from dateutil import parser
+                        existing_dt = parser.parse(existing_time_str)
+                        should_add = conv.last_message_at > existing_dt
+                    except:
+                        should_add = True
+                else:
+                    should_add = True
+            
+            if should_add:
                 # Get latest message for this conversation
                 latest_msg = db.query(Message).filter(
                     Message.instagram_account_id == account_id,
                     Message.user_id == user_id,
                     or_(
                         (Message.is_from_bot == False) & (Message.sender_username == username),
-                        (Message.is_from_bot == False) & (Message.sender_id == conv.sender_id)
+                        (Message.is_from_bot == False) & (Message.sender_id == str(conv.sender_id))
                     )
                 ).order_by(Message.created_at.desc()).first()
                 
                 conversations_map[username] = {
                     "id": username,
                     "username": username,
-                    "user_id": conv.sender_id,
+                    "user_id": str(conv.sender_id),
                     "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
                     "last_message": latest_msg.message_text if latest_msg else "",
                     "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else False,
@@ -3469,7 +3487,10 @@ async def get_instagram_conversations(
         
         # Process outgoing conversations (add if not already in map)
         for conv in outgoing_convs:
-            username = conv.recipient_username or conv.recipient_id
+            username = conv.recipient_username or str(conv.recipient_id)
+            if not username:
+                continue
+                
             if username not in conversations_map:
                 # Get latest message for this conversation
                 latest_msg = db.query(Message).filter(
@@ -3484,7 +3505,7 @@ async def get_instagram_conversations(
                 conversations_map[username] = {
                     "id": username,
                     "username": username,
-                    "user_id": conv.recipient_id,
+                    "user_id": str(conv.recipient_id),
                     "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
                     "last_message": latest_msg.message_text if latest_msg else "",
                     "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else True,
@@ -3512,11 +3533,14 @@ async def get_instagram_conversations(
                 conv_data['last_message_at'] = latest_msg.created_at.isoformat() if latest_msg.created_at else None
                 conv_data['last_message'] = latest_msg.message_text or "[Media]"
                 conv_data['last_message_is_from_bot'] = latest_msg.is_from_bot
+            elif not conv_data.get('last_message_at'):
+                # If no latest message found and no timestamp, skip this conversation
+                continue
             
             conversations.append(conv_data)
         
-        # Sort by last_message_at
-        conversations.sort(key=lambda x: x['last_message_at'] or '', reverse=True)
+        # Sort by last_message_at (handle None values)
+        conversations.sort(key=lambda x: x.get('last_message_at') or '', reverse=True)
         conversations = conversations[:limit]  # Limit results
         
         return {
