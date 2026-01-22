@@ -1950,19 +1950,15 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # Build buttons for follow request
-                        # Use URL button for "Visit Profile" to actually navigate to profile
-                        # Use quick replies for "I'm following" and "Follow Me" to track clicks
-                        instagram_profile_url = f"https://instagram.com/{account.username}"
-                        
-                        # URL button for "Visit Profile" (actually opens the profile)
-                        visit_profile_button = [{
-                            "text": "Visit Profile",
-                            "url": instagram_profile_url
-                        }]
-                        
-                        # Quick reply buttons for tracking
+                        # Build quick reply buttons for follow request
+                        # All buttons as quick replies to keep message as plain text (not card format)
+                        # Quick replies work with plain text messages (straight/vertical layout)
                         follow_quick_reply = [
+                            {
+                                "content_type": "text",
+                                "title": "Visit Profile",
+                                "payload": f"visit_profile_{rule_id}"  # Track profile visits
+                            },
                             {
                                 "content_type": "text",
                                 "title": "I'm following",
@@ -1976,7 +1972,7 @@ async def execute_automation_action(
                         ]
                         
                         # Remove URL from message text to avoid link preview card
-                        # The URL button will handle navigation
+                        # Message will be displayed as plain text (straight/vertical)
                         follow_message_with_url = follow_message_with_instructions
                         
                         # STRICT MODE: Send follow request with "Follow Me" quick reply button
@@ -1992,19 +1988,19 @@ async def execute_automation_action(
                                 # Small delay to ensure conversation is open
                                 await asyncio.sleep(1)
                                 
-                                # Now send the complete follow message with URL button and quick replies
+                                # Now send the complete follow message with quick replies (plain text format)
                                 try:
-                                    send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=follow_quick_reply)
-                                    print(f"✅ Follow request sent as single DM with Visit Profile URL button and quick replies (no loading spinner)")
+                                    send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                    print(f"✅ Follow request sent as single DM with quick replies (plain text, straight layout)")
                                 except Exception as btn_error:
                                     print(f"⚠️ Could not send follow buttons: {str(btn_error)}")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
                             try:
-                                # Send DM with "Visit Profile" URL button and quick reply buttons
-                                send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=follow_quick_reply)
-                                print(f"✅ Follow request DM sent with Visit Profile URL button and quick replies")
+                                # Send DM with quick reply buttons (plain text format, straight layout)
+                                send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                print(f"✅ Follow request DM sent with quick replies (plain text, straight layout)")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         
