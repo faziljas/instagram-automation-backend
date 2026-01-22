@@ -3534,23 +3534,25 @@ async def get_instagram_conversations(
                 detail="Instagram account not found"
             )
         
-        # Sync conversations if requested
+        # Get conversations from Conversation table
+        from app.models.conversation import Conversation
+        from app.models.message import Message
+        from sqlalchemy import func, or_, and_
+        
+        # Sync conversations if requested (do this BEFORE querying)
         if sync:
             from app.services.instagram_sync import sync_instagram_conversations
             try:
                 print(f"🔄 Manual sync requested for account {account_id}")
                 sync_result = sync_instagram_conversations(user_id, account_id, db, limit)
                 print(f"✅ Sync result: {sync_result}")
+                # Refresh session to see newly committed data
+                db.expire_all()
             except Exception as sync_err:
                 print(f"⚠️ Sync warning: {str(sync_err)}")
                 import traceback
                 traceback.print_exc()
                 # Continue even if sync fails
-        
-        # Get conversations from Conversation table
-        from app.models.conversation import Conversation
-        from app.models.message import Message
-        from sqlalchemy import func, or_, and_
         
         conversations_query = db.query(Conversation).filter(
             Conversation.instagram_account_id == account_id,
@@ -3558,6 +3560,9 @@ async def get_instagram_conversations(
         ).order_by(Conversation.updated_at.desc()).limit(limit)
         
         conversations_list = conversations_query.all()
+        
+        # Debug: Log conversation count
+        print(f"📋 Found {len(conversations_list)} conversations in Conversation table for account {account_id}")
         
         # Auto-sync if no conversations exist (first time or after migration)
         # This will build conversations from existing messages in the database
@@ -3567,9 +3572,16 @@ async def get_instagram_conversations(
                 from app.services.instagram_sync import sync_instagram_conversations
                 sync_result = sync_instagram_conversations(user_id, account_id, db, limit)
                 print(f"✅ Auto-sync result: {sync_result}")
+                # Refresh session to see newly committed data
+                db.expire_all()
                 # Re-query after sync
                 conversations_list = conversations_query.all()
                 print(f"📊 Conversations after sync: {len(conversations_list)}")
+                
+                # Debug: Log conversation details
+                if len(conversations_list) > 0:
+                    for conv in conversations_list:
+                        print(f"   - Conversation ID: {conv.id}, Participant: {conv.participant_name or conv.participant_id}, Last message: {conv.last_message[:50] if conv.last_message else 'None'}...")
                 
                 # If still no conversations after sync, try fallback to Message table
                 if len(conversations_list) == 0:
