@@ -253,6 +253,46 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"❌ [DM] No active Instagram accounts found", "ERROR")
             return
         
+        # Store incoming message in Message table (for Messages UI)
+        try:
+            from app.models.message import Message
+            # Try to get sender username from event if available
+            sender_username = None
+            if "sender" in event:
+                sender_username = event["sender"].get("username")
+            
+            # Get recipient username (our account)
+            recipient_username = account.username
+            
+            # Check if message already exists (deduplication)
+            existing_message = None
+            if message_id:
+                existing_message = db.query(Message).filter(
+                    Message.message_id == message_id
+                ).first()
+            
+            if not existing_message:
+                incoming_message = Message(
+                    user_id=account.user_id,
+                    instagram_account_id=account.id,
+                    sender_id=sender_id,
+                    sender_username=sender_username,
+                    recipient_id=str(recipient_id),
+                    recipient_username=recipient_username,
+                    message_text=message_text,
+                    message_id=message_id,
+                    is_from_bot=False,  # This is an incoming message
+                    has_attachments=len(attachments) > 0,
+                    attachments=attachments if attachments else None
+                )
+                db.add(incoming_message)
+                db.commit()
+                log_print(f"💾 Stored incoming message from {sender_username or sender_id}")
+        except Exception as store_err:
+            log_print(f"⚠️ Failed to store incoming message: {str(store_err)}")
+            db.rollback()
+            # Don't fail the whole process if message storage fails
+        
         # Now handle quick reply buttons if needed (account is now available)
         if "message" in event and "quick_reply" in event.get("message", {}):
             quick_reply_payload = event["message"]["quick_reply"].get("payload", "")
@@ -2975,6 +3015,33 @@ async def execute_automation_action(
                     message=message_template
                 )
                 db.add(dm_log)
+                
+                # Also store in Message table for Messages UI
+                try:
+                    from app.models.message import Message
+                    # Get recipient username if available (sender_id might be username or ID)
+                    recipient_username = str(sender_id)  # Default to sender_id
+                    
+                    # Try to get username from account's followers or previous messages
+                    # For now, use sender_id as username (will be updated when we have username)
+                    sent_message = Message(
+                        user_id=user_id,
+                        instagram_account_id=account_id,
+                        sender_id=str(account.igsid or account_id),  # Our account ID
+                        sender_username=username,  # Our account username
+                        recipient_id=str(sender_id),  # Recipient ID
+                        recipient_username=recipient_username,  # Will be updated when we have it
+                        message_text=message_template,
+                        message_id=None,  # Instagram doesn't return message ID immediately
+                        is_from_bot=True,  # This is an outgoing message
+                        has_attachments=False,
+                        attachments=None
+                    )
+                    db.add(sent_message)
+                except Exception as msg_err:
+                    print(f"⚠️ Failed to store message in Message table: {str(msg_err)}")
+                    # Don't fail if Message storage fails
+                
                 db.commit()
                 print(f"✅ DM logged successfully")
                 
@@ -3335,41 +3402,122 @@ async def get_instagram_conversations(
                 detail="Instagram account not found"
             )
         
-        # Get recent conversations from DM logs (grouped by recipient)
-        from app.models.dm_log import DmLog
-        from sqlalchemy import func, distinct
+        # Get conversations from Message table (both sent and received)
+        from app.models.message import Message
+        from sqlalchemy import func, or_, and_
         
-        # Get distinct recipients and their latest message info
-        recent_conversations = db.query(
-            DmLog.recipient_username,
-            func.max(DmLog.sent_at).label('last_message_at'),
-            func.count(DmLog.id).label('message_count')
+        # Get distinct conversations (group by sender/recipient)
+        # A conversation is identified by the other party's username
+        account_igsid = account.igsid or str(account_id)
+        
+        # Get conversations where we received messages (incoming)
+        incoming_convs = db.query(
+            Message.sender_username,
+            Message.sender_id,
+            func.max(Message.created_at).label('last_message_at'),
+            func.count(Message.id).label('message_count')
         ).filter(
-            DmLog.instagram_account_id == account_id,
-            DmLog.user_id == user_id
+            Message.instagram_account_id == account_id,
+            Message.user_id == user_id,
+            Message.is_from_bot == False  # Received messages
         ).group_by(
-            DmLog.recipient_username
-        ).order_by(
-            func.max(DmLog.sent_at).desc()
-        ).limit(limit).all()
+            Message.sender_username,
+            Message.sender_id
+        ).all()
         
-        # Format conversations
+        # Get conversations where we sent messages (outgoing) - to catch conversations we initiated
+        outgoing_convs = db.query(
+            Message.recipient_username,
+            Message.recipient_id,
+            func.max(Message.created_at).label('last_message_at'),
+            func.count(Message.id).label('message_count')
+        ).filter(
+            Message.instagram_account_id == account_id,
+            Message.user_id == user_id,
+            Message.is_from_bot == True  # Sent messages
+        ).group_by(
+            Message.recipient_username,
+            Message.recipient_id
+        ).all()
+        
+        # Merge conversations (use username as key)
+        conversations_map = {}
+        
+        # Process incoming conversations
+        for conv in incoming_convs:
+            username = conv.sender_username or conv.sender_id
+            if username not in conversations_map or conv.last_message_at > conversations_map[username]['last_message_at']:
+                # Get latest message for this conversation
+                latest_msg = db.query(Message).filter(
+                    Message.instagram_account_id == account_id,
+                    Message.user_id == user_id,
+                    or_(
+                        (Message.is_from_bot == False) & (Message.sender_username == username),
+                        (Message.is_from_bot == False) & (Message.sender_id == conv.sender_id)
+                    )
+                ).order_by(Message.created_at.desc()).first()
+                
+                conversations_map[username] = {
+                    "id": username,
+                    "username": username,
+                    "user_id": conv.sender_id,
+                    "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
+                    "last_message": latest_msg.message_text if latest_msg else "",
+                    "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else False,
+                    "message_count": conv.message_count
+                }
+        
+        # Process outgoing conversations (add if not already in map)
+        for conv in outgoing_convs:
+            username = conv.recipient_username or conv.recipient_id
+            if username not in conversations_map:
+                # Get latest message for this conversation
+                latest_msg = db.query(Message).filter(
+                    Message.instagram_account_id == account_id,
+                    Message.user_id == user_id,
+                    or_(
+                        (Message.is_from_bot == True) & (Message.recipient_username == username),
+                        (Message.is_from_bot == True) & (Message.recipient_id == conv.recipient_id)
+                    )
+                ).order_by(Message.created_at.desc()).first()
+                
+                conversations_map[username] = {
+                    "id": username,
+                    "username": username,
+                    "user_id": conv.recipient_id,
+                    "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
+                    "last_message": latest_msg.message_text if latest_msg else "",
+                    "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else True,
+                    "message_count": conv.message_count
+                }
+        
+        # Convert to list and get latest message for each
         conversations = []
-        for conv in recent_conversations:
-            # Get the latest message for each conversation
-            latest_message = db.query(DmLog).filter(
-                DmLog.instagram_account_id == account_id,
-                DmLog.recipient_username == conv.recipient_username
-            ).order_by(DmLog.sent_at.desc()).first()
+        for username, conv_data in conversations_map.items():
+            # Get the absolute latest message for this conversation (sent or received)
+            latest_msg = db.query(Message).filter(
+                Message.instagram_account_id == account_id,
+                Message.user_id == user_id,
+                or_(
+                    (Message.is_from_bot == False) & (
+                        (Message.sender_username == username) | (Message.sender_id == conv_data['user_id'])
+                    ),
+                    (Message.is_from_bot == True) & (
+                        (Message.recipient_username == username) | (Message.recipient_id == conv_data['user_id'])
+                    )
+                )
+            ).order_by(Message.created_at.desc()).first()
             
-            conversations.append({
-                "id": conv.recipient_username,  # Use username as ID (IG API doesn't provide conversation IDs)
-                "recipient_username": conv.recipient_username,
-                "last_message_at": latest_message.sent_at.isoformat() if latest_message else None,
-                "last_message": latest_message.message if latest_message else "",
-                "message_count": conv.message_count,
-                "type": "dm_conversation"  # To differentiate from media
-            })
+            if latest_msg:
+                conv_data['last_message_at'] = latest_msg.created_at.isoformat() if latest_msg.created_at else None
+                conv_data['last_message'] = latest_msg.message_text or "[Media]"
+                conv_data['last_message_is_from_bot'] = latest_msg.is_from_bot
+            
+            conversations.append(conv_data)
+        
+        # Sort by last_message_at
+        conversations.sort(key=lambda x: x['last_message_at'] or '', reverse=True)
+        conversations = conversations[:limit]  # Limit results
         
         return {
             "success": True,
@@ -3385,6 +3533,161 @@ async def get_instagram_conversations(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch conversations: {str(e)}"
         )
+
+
+@router.get("/conversations/{username}/messages")
+async def get_conversation_messages(
+    username: str,
+    account_id: int = Query(..., description="Instagram account ID"),
+    limit: int = Query(100, description="Number of messages to fetch"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch messages for a specific conversation (by recipient username).
+    Returns both sent and received messages.
+    """
+    try:
+        # Check Pro plan access for DMs
+        from app.utils.plan_enforcement import check_pro_plan_access
+        check_pro_plan_access(user_id, db)
+        
+        # Verify account belongs to user
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == account_id,
+            InstagramAccount.user_id == user_id
+        ).first()
+        
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instagram account not found"
+            )
+        
+        from app.models.message import Message
+        
+        # Get account's Instagram ID (recipient_id in messages)
+        account_igsid = account.igsid or str(account_id)
+        
+        # Get messages where either:
+        # 1. We sent to this username (is_from_bot=True, recipient_username=username)
+        # 2. We received from this username (is_from_bot=False, sender_username=username)
+        messages = db.query(Message).filter(
+            Message.instagram_account_id == account_id,
+            Message.user_id == user_id,
+            (
+                (Message.is_from_bot == True) & (Message.recipient_username == username)
+            ) | (
+                (Message.is_from_bot == False) & (Message.sender_username == username)
+            )
+        ).order_by(Message.created_at.asc()).limit(limit).all()
+        
+        # Format messages
+        formatted_messages = []
+        for msg in messages:
+            formatted_messages.append({
+                "id": msg.id,
+                "message_id": msg.message_id,
+                "text": msg.message_text,
+                "is_from_bot": msg.is_from_bot,
+                "sender_username": msg.sender_username,
+                "recipient_username": msg.recipient_username,
+                "has_attachments": msg.has_attachments,
+                "attachments": msg.attachments,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None
+            })
+        
+        return {
+            "success": True,
+            "messages": formatted_messages,
+            "count": len(formatted_messages)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching conversation messages: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch messages: {str(e)}"
+        )
+
+
+@router.get("/conversations/stats")
+async def get_conversation_stats(
+    account_id: int = Query(..., description="Instagram account ID"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Get conversation statistics for the dashboard.
+    Returns: total conversations, unread count, messages sent, messages received
+    """
+    try:
+        # Check Pro plan access for DMs
+        from app.utils.plan_enforcement import check_pro_plan_access
+        check_pro_plan_access(user_id, db)
+        
+        # Verify account belongs to user
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == account_id,
+            InstagramAccount.user_id == user_id
+        ).first()
+        
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instagram account not found"
+            )
+        
+        from app.models.message import Message
+        from sqlalchemy import func, distinct
+        
+        # Get total unique conversations (distinct sender/recipient combinations)
+        total_conversations = db.query(
+            func.count(func.distinct(
+                func.coalesce(Message.sender_username, Message.sender_id)
+            ))
+        ).filter(
+            Message.instagram_account_id == account_id,
+            Message.user_id == user_id,
+            Message.is_from_bot == False  # Only count conversations where we received messages
+        ).scalar() or 0
+        
+        # For now, unread is 0 (we don't track read status yet)
+        unread = 0
+        
+        # Get messages sent (by our bot)
+        messages_sent = db.query(Message).filter(
+            Message.instagram_account_id == account_id,
+            Message.user_id == user_id,
+            Message.is_from_bot == True
+        ).count()
+        
+        # Get messages received (from users)
+        messages_received = db.query(Message).filter(
+            Message.instagram_account_id == account_id,
+            Message.user_id == user_id,
+            Message.is_from_bot == False
+        ).count()
+        
+        return {
+            "success": True,
+            "total_conversations": total_conversations,
+            "unread": unread,
+            "messages_sent": messages_sent,
+            "messages_received": messages_received
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching conversation stats: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch stats: {str(e)}"
+        )
+
 
 # @router.get("/test-api")
 # async def test_instagram_api():
