@@ -3572,13 +3572,24 @@ async def get_instagram_conversations(
                     Message.conversation_id == conv.id
                 ).scalar() or 0
                 
+                # Determine username - use participant_name if available, otherwise use participant_id
+                # If participant_id is numeric, use "Unknown" for display
+                participant_display = conv.participant_name or str(conv.participant_id) if conv.participant_id else "Unknown"
+                if participant_display.isdigit():
+                    participant_display = "Unknown"
+                
+                # Get the latest message to determine if it's from bot
+                latest_msg = db.query(Message).filter(
+                    Message.conversation_id == conv.id
+                ).order_by(Message.created_at.desc()).first()
+                
                 formatted_conversations.append({
                     "id": str(conv.id),
-                    "username": conv.participant_name or conv.participant_id,
-                    "user_id": conv.participant_id,
+                    "username": participant_display,
+                    "user_id": str(conv.participant_id) if conv.participant_id else "",
                     "last_message_at": conv.updated_at.isoformat() if conv.updated_at else None,
                     "last_message": conv.last_message or "",
-                    "last_message_is_from_bot": None,  # Will determine from latest message if needed
+                    "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else False,
                     "message_count": message_count
                 })
             
@@ -3597,6 +3608,7 @@ async def get_instagram_conversations(
         account_igsid = account.igsid or str(account_id)
         
         # Get conversations where we received messages (incoming) from Message table
+        # Group by sender_id (which is always present) to handle cases where sender_username is None
         incoming_convs = db.query(
             Message.sender_username,
             Message.sender_id,
@@ -3605,13 +3617,15 @@ async def get_instagram_conversations(
         ).filter(
             Message.instagram_account_id == account_id,
             Message.user_id == user_id,
-            Message.is_from_bot == False  # Received messages
+            Message.is_from_bot == False,  # Received messages
+            Message.sender_id.isnot(None)  # Ensure sender_id is not None
         ).group_by(
-            Message.sender_username,
-            Message.sender_id
+            Message.sender_id,  # Group by sender_id first (always present)
+            Message.sender_username  # Then by username (may be None)
         ).all()
         
         # Get conversations where we sent messages (outgoing) from Message table
+        # Group by recipient_id (which is always present) to handle cases where recipient_username is None
         outgoing_convs = db.query(
             Message.recipient_username,
             Message.recipient_id,
@@ -3620,10 +3634,11 @@ async def get_instagram_conversations(
         ).filter(
             Message.instagram_account_id == account_id,
             Message.user_id == user_id,
-            Message.is_from_bot == True  # Sent messages
+            Message.is_from_bot == True,  # Sent messages
+            Message.recipient_id.isnot(None)  # Ensure recipient_id is not None
         ).group_by(
-            Message.recipient_username,
-            Message.recipient_id
+            Message.recipient_id,  # Group by recipient_id first (always present)
+            Message.recipient_username  # Then by username (may be None)
         ).all()
         
         # Fallback: Also check DmLog for conversations (if Message table is empty)
@@ -3669,9 +3684,13 @@ async def get_instagram_conversations(
         
         # Process incoming conversations
         for conv in incoming_convs:
-            username = conv.sender_username or str(conv.sender_id)
-            if not username:
+            # Use sender_username if available, otherwise use sender_id as string
+            # If sender_id is None, skip this conversation
+            if not conv.sender_id:
                 continue
+            username = conv.sender_username or str(conv.sender_id)
+            # Use "Unknown" if we only have a numeric ID (not a real username)
+            display_username = username if (username and not username.isdigit()) else "Unknown"
                 
             # Check if we should add/update this conversation
             should_add = username not in conversations_map
@@ -3690,40 +3709,47 @@ async def get_instagram_conversations(
             
             if should_add:
                 # Get latest message for this conversation
+                # Use sender_id for matching (more reliable than username which may be None)
                 latest_msg = db.query(Message).filter(
                     Message.instagram_account_id == account_id,
                     Message.user_id == user_id,
-                    or_(
-                        (Message.is_from_bot == False) & (Message.sender_username == username),
-                        (Message.is_from_bot == False) & (Message.sender_id == str(conv.sender_id))
-                    )
+                    Message.is_from_bot == False,
+                    Message.sender_id == str(conv.sender_id)
                 ).order_by(Message.created_at.desc()).first()
+                
+                # Get message content (handle both message_text and content fields)
+                message_content = ""
+                if latest_msg:
+                    message_content = latest_msg.get_content() if hasattr(latest_msg, 'get_content') else (latest_msg.message_text or latest_msg.content or "")
                 
                 conversations_map[username] = {
                     "id": username,
-                    "username": username,
+                    "username": display_username,
                     "user_id": str(conv.sender_id),
                     "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
-                    "last_message": latest_msg.message_text if latest_msg else "",
+                    "last_message": message_content,
                     "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else False,
                     "message_count": conv.message_count
                 }
         
         # Process outgoing conversations (add if not already in map)
         for conv in outgoing_convs:
-            username = conv.recipient_username or str(conv.recipient_id)
-            if not username:
+            # Use recipient_username if available, otherwise use recipient_id as string
+            # If recipient_id is None, skip this conversation
+            if not conv.recipient_id:
                 continue
+            username = conv.recipient_username or str(conv.recipient_id)
+            # Use "Unknown" if we only have a numeric ID (not a real username)
+            display_username = username if (username and not username.isdigit()) else "Unknown"
                 
             if username not in conversations_map:
                 # Get latest message for this conversation (try Message table first, then DmLog)
+                # Use recipient_id for matching (more reliable than username which may be None)
                 latest_msg = db.query(Message).filter(
                     Message.instagram_account_id == account_id,
                     Message.user_id == user_id,
-                    or_(
-                        (Message.is_from_bot == True) & (Message.recipient_username == username),
-                        (Message.is_from_bot == True) & (Message.recipient_id == conv.recipient_id)
-                    )
+                    Message.is_from_bot == True,
+                    Message.recipient_id == str(conv.recipient_id)
                 ).order_by(Message.created_at.desc()).first()
                 
                 # If not in Message table, check DmLog
@@ -3741,12 +3767,17 @@ async def get_instagram_conversations(
                                 self.created_at = sent_at
                         latest_msg = MockMessage(latest_dm.message, latest_dm.sent_at) if latest_dm else None
                 
+                # Get message content (handle both message_text and content fields)
+                message_content = ""
+                if latest_msg:
+                    message_content = latest_msg.get_content() if hasattr(latest_msg, 'get_content') else (latest_msg.message_text or latest_msg.content or "")
+                
                 conversations_map[username] = {
                     "id": username,
-                    "username": username,
+                    "username": display_username,
                     "user_id": str(conv.recipient_id),
                     "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
-                    "last_message": latest_msg.message_text if latest_msg else "",
+                    "last_message": message_content,
                     "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else True,
                     "message_count": conv.message_count
                 }
@@ -3755,16 +3786,14 @@ async def get_instagram_conversations(
         conversations = []
         for username, conv_data in conversations_map.items():
             # Get the absolute latest message for this conversation (sent or received)
+            # Use user_id for matching (more reliable than username which may be None or numeric)
+            user_id_str = conv_data.get('user_id', '')
             latest_msg = db.query(Message).filter(
                 Message.instagram_account_id == account_id,
                 Message.user_id == user_id,
                 or_(
-                    (Message.is_from_bot == False) & (
-                        (Message.sender_username == username) | (Message.sender_id == conv_data['user_id'])
-                    ),
-                    (Message.is_from_bot == True) & (
-                        (Message.recipient_username == username) | (Message.recipient_id == conv_data['user_id'])
-                    )
+                    (Message.is_from_bot == False) & (Message.sender_id == user_id_str),
+                    (Message.is_from_bot == True) & (Message.recipient_id == user_id_str)
                 )
             ).order_by(Message.created_at.desc()).first()
             
@@ -3784,7 +3813,12 @@ async def get_instagram_conversations(
             
             if latest_msg:
                 conv_data['last_message_at'] = latest_msg.created_at.isoformat() if latest_msg.created_at else None
-                conv_data['last_message'] = latest_msg.message_text or "[Media]"
+                # Get message content (handle both message_text and content fields)
+                if hasattr(latest_msg, 'get_content'):
+                    message_content = latest_msg.get_content() or "[Media]"
+                else:
+                    message_content = (latest_msg.message_text or latest_msg.content or "[Media]")
+                conv_data['last_message'] = message_content
                 conv_data['last_message_is_from_bot'] = latest_msg.is_from_bot
             elif not conv_data.get('last_message_at'):
                 # If no latest message found and no timestamp, skip this conversation
