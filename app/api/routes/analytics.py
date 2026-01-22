@@ -4,7 +4,7 @@ Analytics API routes for tracking automation performance.
 from typing import Optional, List
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, desc
 from urllib.parse import unquote, urlencode, urlparse
@@ -79,6 +79,21 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
     u = ua.lower()
     return any(x in u for x in ("instagram", "iphone", "ipad", "android", "mobile"))
 
+
+def _html_redirect_page(dest_url: str, label: str = "Instagram") -> str:
+    """Return HTML that redirects via meta refresh + fallback link.
+    Works better than 302 in Instagram in-app browser (avoids empty screen)."""
+    esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+        f'<meta http-equiv="refresh" content="0;url={esc}">'
+        f'<title>Redirecting…</title></head><body>'
+        f'<p>Redirecting to {label}…</p>'
+        f'<p><a href="{esc}">Click here if you are not redirected</a>.</p>'
+        f"</body></html>"
+    )
+
+
 @router.get("/track/redirect")
 async def track_link_click(
     request: Request,
@@ -148,12 +163,13 @@ async def track_link_click(
         if is_profile:
             username = _username_from_instagram_url(target_url)
             if username:
-                ua = request.headers.get("user-agent")
-                if _user_agent_looks_mobile(ua):
-                    redirect_to = f"instagram://user?username={username}"
-                else:
-                    redirect_to = f"https://www.instagram.com/{username}"
+                redirect_to = f"https://www.instagram.com/{username}"
 
+        # Use HTML redirect page instead of 302 for profile links. Instagram in-app
+        # browser often ignores 302 and shows empty screen; meta refresh + link works.
+        if is_profile and redirect_to.startswith("https://www.instagram.com/"):
+            html = _html_redirect_page(redirect_to, "Instagram profile")
+            return HTMLResponse(content=html)
         return RedirectResponse(url=redirect_to, status_code=302)
     except HTTPException:
         raise
