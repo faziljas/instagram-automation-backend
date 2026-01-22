@@ -97,6 +97,7 @@ def sync_instagram_conversations(
         from sqlalchemy import func, distinct, or_
         
         # Get conversations from existing messages
+        # Group by sender_id first (always present), then by username (may be None)
         incoming_participants = db.query(
             Message.sender_id,
             Message.sender_username,
@@ -105,11 +106,14 @@ def sync_instagram_conversations(
         ).filter(
             Message.instagram_account_id == account_id,
             Message.user_id == user_id,
-            Message.is_from_bot == False  # Received messages
+            Message.is_from_bot == False,  # Received messages
+            Message.sender_id.isnot(None)  # Ensure sender_id is not None
         ).group_by(
-            Message.sender_id,
-            Message.sender_username
+            Message.sender_id,  # Group by sender_id first (always present)
+            Message.sender_username  # Then by username (may be None)
         ).all()
+        
+        print(f"📥 Found {len(incoming_participants)} incoming message participants")
         
         outgoing_participants = db.query(
             Message.recipient_id,
@@ -119,11 +123,14 @@ def sync_instagram_conversations(
         ).filter(
             Message.instagram_account_id == account_id,
             Message.user_id == user_id,
-            Message.is_from_bot == True  # Sent messages
+            Message.is_from_bot == True,  # Sent messages
+            Message.recipient_id.isnot(None)  # Ensure recipient_id is not None
         ).group_by(
-            Message.recipient_id,
-            Message.recipient_username
+            Message.recipient_id,  # Group by recipient_id first (always present)
+            Message.recipient_username  # Then by username (may be None)
         ).all()
+        
+        print(f"📤 Found {len(outgoing_participants)} outgoing message participants")
         
         # Merge participants
         participants_map = {}
@@ -131,6 +138,9 @@ def sync_instagram_conversations(
         # Process incoming
         for p in incoming_participants:
             participant_id = str(p.sender_id)
+            if not participant_id:
+                continue
+                
             if participant_id not in participants_map:
                 participants_map[participant_id] = {
                     'participant_id': participant_id,
@@ -138,16 +148,23 @@ def sync_instagram_conversations(
                     'last_message_at': p.last_message_at,
                     'message_count': p.message_count
                 }
-            elif p.last_message_at > participants_map[participant_id]['last_message_at']:
-                participants_map[participant_id].update({
-                    'participant_name': p.sender_username or participants_map[participant_id]['participant_name'],
-                    'last_message_at': p.last_message_at,
-                    'message_count': participants_map[participant_id]['message_count'] + p.message_count
-                })
+            else:
+                # Update if this message is newer
+                existing_time = participants_map[participant_id]['last_message_at']
+                if p.last_message_at and (not existing_time or p.last_message_at > existing_time):
+                    participants_map[participant_id].update({
+                        'participant_name': p.sender_username or participants_map[participant_id]['participant_name'],
+                        'last_message_at': p.last_message_at,
+                    })
+                # Always add to message count
+                participants_map[participant_id]['message_count'] = participants_map[participant_id].get('message_count', 0) + p.message_count
         
         # Process outgoing
         for p in outgoing_participants:
             participant_id = str(p.recipient_id)
+            if not participant_id:
+                continue
+                
             if participant_id not in participants_map:
                 participants_map[participant_id] = {
                     'participant_id': participant_id,
@@ -155,12 +172,18 @@ def sync_instagram_conversations(
                     'last_message_at': p.last_message_at,
                     'message_count': p.message_count
                 }
-            elif p.last_message_at > participants_map[participant_id]['last_message_at']:
-                participants_map[participant_id].update({
-                    'participant_name': p.recipient_username or participants_map[participant_id]['participant_name'],
-                    'last_message_at': p.last_message_at,
-                    'message_count': participants_map[participant_id]['message_count'] + p.message_count
-                })
+            else:
+                # Update if this message is newer
+                existing_time = participants_map[participant_id]['last_message_at']
+                if p.last_message_at and (not existing_time or p.last_message_at > existing_time):
+                    participants_map[participant_id].update({
+                        'participant_name': p.recipient_username or participants_map[participant_id]['participant_name'],
+                        'last_message_at': p.last_message_at,
+                    })
+                # Always add to message count
+                participants_map[participant_id]['message_count'] = participants_map[participant_id].get('message_count', 0) + p.message_count
+        
+        print(f"📊 Total unique participants: {len(participants_map)}")
         
         # Create/update Conversation records
         conversations_created = 0

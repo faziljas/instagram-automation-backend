@@ -3551,6 +3551,7 @@ async def get_instagram_conversations(
         conversations_list = conversations_query.all()
         
         # Auto-sync if no conversations exist (first time or after migration)
+        # This will build conversations from existing messages in the database
         if len(conversations_list) == 0 and not sync:
             print("🔄 No conversations found, auto-syncing from existing messages...")
             try:
@@ -3559,9 +3560,16 @@ async def get_instagram_conversations(
                 print(f"✅ Auto-sync result: {sync_result}")
                 # Re-query after sync
                 conversations_list = conversations_query.all()
+                
+                # If still no conversations after sync, try fallback to Message table
+                if len(conversations_list) == 0:
+                    print("🔄 Still no conversations, checking Message table directly...")
+                    # The fallback logic below will handle this
             except Exception as sync_err:
                 print(f"⚠️ Auto-sync warning: {str(sync_err)}")
-                # Continue with empty list
+                import traceback
+                traceback.print_exc()
+                # Continue with empty list - fallback logic will try to build from Message table
         
         # Format conversations from Conversation model
         if len(conversations_list) > 0:
