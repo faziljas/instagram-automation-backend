@@ -3138,11 +3138,19 @@ def delete_instagram_account(
         AutomationRule.instagram_account_id == account_id
     ).all()
     
-    # For each rule, delete associated stats and leads first (to avoid foreign key constraint violation)
+    # For each rule, delete associated data first (to avoid foreign key constraint violation)
     from app.models.automation_rule_stats import AutomationRuleStats
     from app.models.captured_lead import CapturedLead
+    from app.models.analytics_event import AnalyticsEvent
     
     for rule in automation_rules:
+        # Delete analytics events first (they reference automation_rules via foreign key)
+        analytics_events = db.query(AnalyticsEvent).filter(
+            AnalyticsEvent.rule_id == rule.id
+        ).all()
+        for event in analytics_events:
+            db.delete(event)
+        
         # Delete automation rule stats
         stats = db.query(AutomationRuleStats).filter(
             AutomationRuleStats.automation_rule_id == rule.id
@@ -3160,6 +3168,14 @@ def delete_instagram_account(
     # Flush to ensure deletions are processed before deleting rules
     db.flush()
     
+    # Also delete any analytics events that reference this account (even if rule_id is NULL)
+    db.query(AnalyticsEvent).filter(
+        AnalyticsEvent.instagram_account_id == account_id
+    ).delete()
+    
+    # Flush again
+    db.flush()
+    
     # Now delete the automation rules
     db.query(AutomationRule).filter(
         AutomationRule.instagram_account_id == account_id
@@ -3169,6 +3185,15 @@ def delete_instagram_account(
     db.query(DmLog).filter(
         DmLog.instagram_account_id == account_id
     ).delete()
+    
+    # Delete associated Messages (from Message table)
+    from app.models.message import Message
+    db.query(Message).filter(
+        Message.instagram_account_id == account_id
+    ).delete()
+    
+    # Flush before deleting account
+    db.flush()
     
     # Delete the Instagram account
     db.delete(account)
