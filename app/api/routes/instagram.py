@@ -2195,6 +2195,14 @@ async def execute_automation_action(
                                                     # Update stats
                                                     from app.services.lead_capture import update_automation_stats
                                                     update_automation_stats(rule.id, "comment_replied", db)
+                                                    # Log COMMENT_REPLIED for Analytics dashboard
+                                                    try:
+                                                        from app.utils.analytics import log_analytics_event_sync
+                                                        from app.models.analytics_event import EventType
+                                                        _mid = rule.config.get("media_id") if isinstance(getattr(rule, "config", None), dict) else None
+                                                        log_analytics_event_sync(db=db, user_id=account.user_id, event_type=EventType.COMMENT_REPLIED, rule_id=rule.id, media_id=_mid, instagram_account_id=account.id, metadata={"comment_id": comment_id})
+                                                    except Exception as _ae:
+                                                        pass
                                                 except Exception as reply_error:
                                                     print(f"⚠️ Failed to send immediate comment reply: {str(reply_error)}")
                                 except Exception as btn_error:
@@ -2247,6 +2255,14 @@ async def execute_automation_action(
                                                 # Update stats
                                                 from app.services.lead_capture import update_automation_stats
                                                 update_automation_stats(rule.id, "comment_replied", db)
+                                                # Log COMMENT_REPLIED for Analytics dashboard
+                                                try:
+                                                    from app.utils.analytics import log_analytics_event_sync
+                                                    from app.models.analytics_event import EventType
+                                                    _mid = rule.config.get("media_id") if isinstance(getattr(rule, "config", None), dict) else None
+                                                    log_analytics_event_sync(db=db, user_id=account.user_id, event_type=EventType.COMMENT_REPLIED, rule_id=rule.id, media_id=_mid, instagram_account_id=account.id, metadata={"comment_id": comment_id})
+                                                except Exception as _ae:
+                                                    pass
                                             except Exception as reply_error:
                                                 print(f"⚠️ Failed to send immediate comment reply: {str(reply_error)}")
                             except Exception as e:
@@ -2966,6 +2982,14 @@ async def execute_automation_action(
                             # Update stats
                             from app.services.lead_capture import update_automation_stats
                             update_automation_stats(rule.id, "comment_replied", db)
+                            # Log COMMENT_REPLIED for Analytics dashboard
+                            try:
+                                from app.utils.analytics import log_analytics_event_sync
+                                from app.models.analytics_event import EventType
+                                _mid = rule.config.get("media_id") if isinstance(getattr(rule, "config", None), dict) else None
+                                log_analytics_event_sync(db=db, user_id=account.user_id, event_type=EventType.COMMENT_REPLIED, rule_id=rule.id, media_id=_mid, instagram_account_id=account.id, metadata={"comment_id": comment_id})
+                            except Exception as _ae:
+                                pass
                         except Exception as reply_error:
                             print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
                             print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
@@ -4197,6 +4221,22 @@ async def send_conversation_message(
             conversation.last_message_at = datetime.utcnow()
             conversation.last_message_is_from_bot = True
             conversation.updated_at = datetime.utcnow()
+            
+            # Log DM_SENT for Analytics (aligns with Message Views "Messages Sent")
+            try:
+                from app.utils.analytics import log_analytics_event_sync
+                from app.models.analytics_event import EventType
+                log_analytics_event_sync(
+                    db=db,
+                    user_id=user_id,
+                    event_type=EventType.DM_SENT,
+                    rule_id=None,
+                    media_id=None,
+                    instagram_account_id=account_id,
+                    metadata={"recipient_username": username, "source": "messages_ui"}
+                )
+            except Exception as _ax:
+                pass
             
             db.commit()
             db.refresh(sent_message)

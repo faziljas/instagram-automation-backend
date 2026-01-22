@@ -13,7 +13,9 @@ from app.models.analytics_event import AnalyticsEvent, EventType
 from app.models.automation_rule import AutomationRule
 from app.models.instagram_account import InstagramAccount
 from app.utils.auth import verify_token
+from app.utils.encryption import decrypt_credentials
 from pydantic import BaseModel
+import requests
 
 router = APIRouter()
 
@@ -198,13 +200,14 @@ def get_analytics_dashboard(
             AnalyticsEvent.event_type == EventType.COMMENT_REPLIED
         ).count()
         
-        # Get top performing posts/media (grouped by media_id)
+        # Get top performing posts/media (grouped by media_id); include account for media fetch
         top_posts_query = base_query.filter(
             AnalyticsEvent.media_id.isnot(None),
             AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED
         ).with_entities(
             AnalyticsEvent.media_id,
-            func.count(AnalyticsEvent.id).label("trigger_count")
+            func.count(AnalyticsEvent.id).label("trigger_count"),
+            func.max(AnalyticsEvent.instagram_account_id).label("instagram_account_id")
         ).group_by(
             AnalyticsEvent.media_id
         ).order_by(
@@ -212,24 +215,53 @@ def get_analytics_dashboard(
         ).limit(10)
         
         top_posts = []
-        for media_id, trigger_count in top_posts_query.all():
+        for row in top_posts_query.all():
+            media_id = row[0]
+            trigger_count = row[1]
+            instagram_account_id = row[2]
             # Get additional stats for this media
             media_leads = base_query.filter(
                 AnalyticsEvent.media_id == media_id,
                 AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED
             ).count()
-            
             media_dms = base_query.filter(
                 AnalyticsEvent.media_id == media_id,
                 AnalyticsEvent.event_type == EventType.DM_SENT
             ).count()
-            
-            top_posts.append({
+            entry = {
                 "media_id": media_id,
                 "trigger_count": trigger_count,
                 "leads_count": media_leads,
                 "dms_count": media_dms
-            })
+            }
+            # Fetch media_url and permalink from Instagram when we have an account
+            if instagram_account_id:
+                try:
+                    acc = db.query(InstagramAccount).filter(
+                        InstagramAccount.id == instagram_account_id,
+                        InstagramAccount.user_id == user_id
+                    ).first()
+                    if acc:
+                        tok = None
+                        if acc.encrypted_page_token:
+                            tok = decrypt_credentials(acc.encrypted_page_token)
+                        elif acc.encrypted_credentials:
+                            tok = decrypt_credentials(acc.encrypted_credentials)
+                        if tok:
+                            r = requests.get(
+                                f"https://graph.instagram.com/v21.0/{media_id}",
+                                params={"fields": "media_url,permalink", "access_token": tok},
+                                timeout=10
+                            )
+                            if r.status_code == 200:
+                                d = r.json()
+                                if d.get("media_url"):
+                                    entry["media_url"] = d["media_url"]
+                                if d.get("permalink"):
+                                    entry["permalink"] = d["permalink"]
+                except Exception:
+                    pass  # keep entry without media_url/permalink
+            top_posts.append(entry)
         
         return AnalyticsSummary(
             total_triggers=total_triggers,
