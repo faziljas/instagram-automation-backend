@@ -2102,8 +2102,8 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # Build Instagram profile URL for "Visit Profile" button
-                        profile_url = f"https://instagram.com/{username}"
+                        # Build Instagram profile URL for "Visit Profile" button (www avoids redirect quirks)
+                        profile_url = f"https://www.instagram.com/{username}"
                         
                         # Wrap profile URL with tracking to log clicks
                         from app.utils.analytics import generate_tracking_url

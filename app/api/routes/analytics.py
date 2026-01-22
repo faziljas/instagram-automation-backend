@@ -3,11 +3,11 @@ Analytics API routes for tracking automation performance.
 """
 from typing import Optional, List
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, desc
-from urllib.parse import unquote, urlencode
+from urllib.parse import unquote, urlencode, urlparse
 from app.db.session import get_db
 from app.models.analytics_event import AnalyticsEvent, EventType
 from app.models.automation_rule import AutomationRule
@@ -52,8 +52,36 @@ def get_current_user_id(authorization: str = Header(None)) -> int:
         )
 
 
+def _is_instagram_profile_url(url: str) -> bool:
+    u = (url or "").lower()
+    if "instagram.com" not in u:
+        return False
+    rest = u.split("instagram.com")[-1].strip("/").split("?")[0]
+    return len(rest) > 0 and "/" not in rest
+
+
+def _username_from_instagram_url(url: str) -> Optional[str]:
+    try:
+        p = urlparse(url)
+        if "instagram.com" not in (p.netloc or "").lower():
+            return None
+        path = (p.path or "").strip("/").split("?")[0]
+        if not path:
+            return None
+        return path.split("/")[0]
+    except Exception:
+        return None
+
+
+def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
+    if not ua:
+        return False
+    u = ua.lower()
+    return any(x in u for x in ("instagram", "iphone", "ipad", "android", "mobile"))
+
 @router.get("/track/redirect")
 async def track_link_click(
+    request: Request,
     url: str = Query(..., description="Target URL to redirect to"),
     rule_id: Optional[int] = Query(None, description="Automation rule ID"),
     user_id: Optional[int] = Query(None, description="Business owner user ID"),
@@ -63,51 +91,78 @@ async def track_link_click(
 ):
     """
     Track link clicks and redirect to target URL.
-    This endpoint logs a LINK_CLICKED event and immediately redirects the user.
-    
-    Usage: Wrap Instagram button URLs with this tracker:
-    https://yourdomain.com/api/analytics/track/redirect?url={encoded_url}&rule_id={rule_id}&user_id={user_id}
+    For Instagram profile URLs (Visit Profile button): logs PROFILE_VISIT, updates
+    automation stats, then redirects. Other links log LINK_CLICKED only.
     """
     try:
-        # Decode the target URL
         target_url = unquote(url)
-        
-        # Validate URL format
         if not target_url.startswith(("http://", "https://")):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid URL format"
             )
-        
-        # Log the analytics event
+
+        is_profile = _is_instagram_profile_url(target_url)
+
         if user_id and rule_id:
-            event = AnalyticsEvent(
-                user_id=user_id,
-                rule_id=rule_id,
-                instagram_account_id=instagram_account_id,
-                media_id=media_id,
-                event_type=EventType.LINK_CLICKED,
-                event_metadata={
-                    "url": target_url,
-                    "clicked_at": datetime.utcnow().isoformat()
-                }
-            )
-            db.add(event)
-            db.commit()
-            print(f"✅ Tracked link click: rule_id={rule_id}, url={target_url[:50]}...")
+            if is_profile:
+                event = AnalyticsEvent(
+                    user_id=user_id,
+                    rule_id=rule_id,
+                    instagram_account_id=instagram_account_id,
+                    media_id=media_id,
+                    event_type=EventType.PROFILE_VISIT,
+                    event_metadata={
+                        "url": target_url,
+                        "clicked_at": datetime.utcnow().isoformat(),
+                        "source": "visit_profile_button",
+                    },
+                )
+                db.add(event)
+                db.commit()
+                try:
+                    from app.services.lead_capture import update_automation_stats
+                    update_automation_stats(rule_id, "profile_visit", db)
+                except Exception as su:
+                    print(f"⚠️ update_automation_stats(profile_visit) failed: {su}")
+                print(f"✅ Tracked profile visit: rule_id={rule_id}, url={target_url[:50]}...")
+            else:
+                event = AnalyticsEvent(
+                    user_id=user_id,
+                    rule_id=rule_id,
+                    instagram_account_id=instagram_account_id,
+                    media_id=media_id,
+                    event_type=EventType.LINK_CLICKED,
+                    event_metadata={
+                        "url": target_url,
+                        "clicked_at": datetime.utcnow().isoformat(),
+                    },
+                )
+                db.add(event)
+                db.commit()
+                print(f"✅ Tracked link click: rule_id={rule_id}, url={target_url[:50]}...")
         else:
             print(f"⚠️ Link click tracking skipped: missing user_id or rule_id")
-        
-        # Immediately redirect to target URL
-        return RedirectResponse(url=target_url, status_code=302)
-        
+
+        redirect_to = target_url
+        if is_profile:
+            username = _username_from_instagram_url(target_url)
+            if username:
+                ua = request.headers.get("user-agent")
+                if _user_agent_looks_mobile(ua):
+                    redirect_to = f"instagram://user?username={username}"
+                else:
+                    redirect_to = f"https://www.instagram.com/{username}"
+
+        return RedirectResponse(url=redirect_to, status_code=302)
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error tracking link click: {str(e)}")
-        # Still redirect even if tracking fails
         try:
             target_url = unquote(url)
             return RedirectResponse(url=target_url, status_code=302)
-        except:
+        except Exception:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to process redirect"
