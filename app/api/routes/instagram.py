@@ -3913,22 +3913,62 @@ async def get_conversation_messages(
         
         from app.models.message import Message
         from app.models.dm_log import DmLog
+        from app.models.conversation import Conversation
         
         # Get account's Instagram ID (recipient_id in messages)
         account_igsid = account.igsid or str(account_id)
         
-        # Get messages where either:
-        # 1. We sent to this username (is_from_bot=True, recipient_username=username)
-        # 2. We received from this username (is_from_bot=False, sender_username=username)
-        messages = db.query(Message).filter(
-            Message.instagram_account_id == account_id,
-            Message.user_id == user_id,
-            (
-                (Message.is_from_bot == True) & (Message.recipient_username == username)
-            ) | (
-                (Message.is_from_bot == False) & (Message.sender_username == username)
+        # If username is "Unknown", try to find the conversation to get the participant_id (Instagram user_id)
+        participant_id_to_search = None
+        if username == "Unknown" or not username:
+            # Find the conversation by participant_name to get the participant_id (Instagram IGSID)
+            conversation = db.query(Conversation).filter(
+                Conversation.instagram_account_id == account_id,
+                Conversation.user_id == user_id,  # App user_id
+                Conversation.participant_name == username  # Username is "Unknown"
+            ).first()
+            
+            if conversation:
+                participant_id_to_search = conversation.participant_id  # This is the Instagram user_id (IGSID)
+                print(f"🔍 Found conversation for 'Unknown': participant_id={participant_id_to_search}")
+        
+        # Build query conditions - search by both username AND user_id
+        # This handles cases where username might be "Unknown" but we have the actual Instagram user_id
+        message_conditions = []
+        
+        if participant_id_to_search:
+            # Search by Instagram participant_id (for Unknown users)
+            message_conditions.append(
+                (Message.is_from_bot == True) & (Message.recipient_id == str(participant_id_to_search))
             )
-        ).order_by(Message.created_at.asc()).limit(limit).all()
+            message_conditions.append(
+                (Message.is_from_bot == False) & (Message.sender_id == str(participant_id_to_search))
+            )
+        
+        # Always also search by username (works for both known and unknown)
+        message_conditions.append(
+            (Message.is_from_bot == True) & (Message.recipient_username == username)
+        )
+        message_conditions.append(
+            (Message.is_from_bot == False) & (Message.sender_username == username)
+        )
+        
+        # Combine all conditions with OR
+        from sqlalchemy import or_
+        combined_condition = or_(*message_conditions) if message_conditions else None
+        
+        # Get messages
+        query = db.query(Message).filter(
+            Message.instagram_account_id == account_id,
+            Message.user_id == user_id
+        )
+        
+        if combined_condition:
+            query = query.filter(combined_condition)
+        
+        messages = query.order_by(Message.created_at.asc()).limit(limit).all()
+        
+        print(f"📨 Found {len(messages)} messages for username='{username}', participant_id={participant_id_to_search}")
         
         # If no messages in Message table, check DmLog as fallback
         if len(messages) == 0:
@@ -4072,18 +4112,41 @@ async def get_conversation_stats(
             )
         
         from app.models.message import Message
+        from app.models.conversation import Conversation
         from sqlalchemy import func, distinct
         
-        # Get total unique conversations (distinct sender/recipient combinations)
-        total_conversations = db.query(
-            func.count(func.distinct(
-                func.coalesce(Message.sender_username, Message.sender_id)
-            ))
-        ).filter(
-            Message.instagram_account_id == account_id,
-            Message.user_id == user_id,
-            Message.is_from_bot == False  # Only count conversations where we received messages
-        ).scalar() or 0
+        # Get total conversations from Conversation table (more accurate)
+        # This counts all conversations regardless of message direction
+        total_conversations = db.query(Conversation).filter(
+            Conversation.instagram_account_id == account_id,
+            Conversation.user_id == user_id
+        ).count()
+        
+        # Fallback: If no conversations in Conversation table, count from Message table
+        if total_conversations == 0:
+            # Count both incoming and outgoing conversations
+            incoming = db.query(
+                func.count(func.distinct(
+                    func.coalesce(Message.sender_username, Message.sender_id)
+                ))
+            ).filter(
+                Message.instagram_account_id == account_id,
+                Message.user_id == user_id,
+                Message.is_from_bot == False
+            ).scalar() or 0
+            
+            outgoing = db.query(
+                func.count(func.distinct(
+                    func.coalesce(Message.recipient_username, Message.recipient_id)
+                ))
+            ).filter(
+                Message.instagram_account_id == account_id,
+                Message.user_id == user_id,
+                Message.is_from_bot == True
+            ).scalar() or 0
+            
+            # Use max to avoid double counting (conversations can have both incoming and outgoing)
+            total_conversations = max(incoming, outgoing)
         
         # For now, unread is 0 (we don't track read status yet)
         unread = 0
