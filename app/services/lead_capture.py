@@ -288,7 +288,7 @@ def process_lead_capture_step(
 def update_automation_stats(rule_id: int, event_type: str, db: Session):
     """
     Update automation rule statistics.
-    event_type: "triggered" | "dm_sent" | "comment_replied" | "lead_captured" | "follow_button_clicked"
+    event_type: "triggered" | "dm_sent" | "comment_replied" | "lead_captured" | "follow_button_clicked" | "profile_visit" | "im_following_clicked"
     """
     try:
         # Try to get existing stats
@@ -321,6 +321,12 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
         elif event_type == "follow_button_clicked":
             stats.total_follow_button_clicks += 1
             stats.last_follow_button_clicked_at = datetime.utcnow()
+        elif event_type == "profile_visit":
+            stats.total_profile_visits += 1
+            stats.last_profile_visit_at = datetime.utcnow()
+        elif event_type == "im_following_clicked":
+            stats.total_im_following_clicks += 1
+            stats.last_im_following_clicked_at = datetime.utcnow()
         
         stats.updated_at = datetime.utcnow()
         db.commit()
@@ -357,6 +363,12 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
                 elif event_type == "follow_button_clicked":
                     stats_dict["total_follow_button_clicks"] = stats_dict.get("total_follow_button_clicks", 0) + 1
                     stats_dict["last_follow_button_clicked_at"] = datetime.utcnow().isoformat()
+                elif event_type == "profile_visit":
+                    stats_dict["total_profile_visits"] = stats_dict.get("total_profile_visits", 0) + 1
+                    stats_dict["last_profile_visit_at"] = datetime.utcnow().isoformat()
+                elif event_type == "im_following_clicked":
+                    stats_dict["total_im_following_clicks"] = stats_dict.get("total_im_following_clicks", 0) + 1
+                    stats_dict["last_im_following_clicked_at"] = datetime.utcnow().isoformat()
                 
                 rule.config = rule.config  # Trigger SQLAlchemy to detect change
                 db.commit()

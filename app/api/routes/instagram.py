@@ -327,6 +327,10 @@ async def process_instagram_message(event: dict, db: Session):
                     })
                     log_print(f"✅ Marked 'I'm following' confirmation for rule {rule.id}")
                     
+                    # Track analytics: "I'm following" button click
+                    from app.services.lead_capture import update_automation_stats
+                    update_automation_stats(rule.id, "im_following_clicked", db)
+                    
                     # If email is enabled, send email question immediately
                     if ask_for_email:
                         ask_for_email_message = rule.config.get(
@@ -413,6 +417,10 @@ async def process_instagram_message(event: dict, db: Session):
                         "profile_visit_time": str(asyncio.get_event_loop().time())
                     })
                     log_print(f"✅ Tracked profile visit for rule {rule.id}")
+                    
+                    # Track analytics: Profile visit button click
+                    from app.services.lead_capture import update_automation_stats
+                    update_automation_stats(rule.id, "profile_visit", db)
                     
                     # Send a simple reminder message WITHOUT URL to avoid link preview card
                     # (The original follow request message already contains the profile URL)
@@ -1100,6 +1108,10 @@ async def process_postback_event(event: dict, db: Session):
                     })
                     print(f"✅ Marked 'I'm following' confirmation for rule {rule.id}")
                     
+                    # Track analytics: "I'm following" button click
+                    from app.services.lead_capture import update_automation_stats
+                    update_automation_stats(rule.id, "im_following_clicked", db)
+                    
                     # If email is enabled, send email request immediately
                     if ask_for_email:
                         ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
@@ -1180,6 +1192,10 @@ async def process_postback_event(event: dict, db: Session):
                         "profile_visit_time": str(asyncio.get_event_loop().time())
                     })
                     print(f"✅ Tracked profile visit for rule {rule.id}")
+                    
+                    # Track analytics: Profile visit button click
+                    from app.services.lead_capture import update_automation_stats
+                    update_automation_stats(rule.id, "profile_visit", db)
                     
                     # Send a simple reminder message WITHOUT URL to avoid link preview card
                     # (The original follow request message already contains the profile URL)
@@ -1950,15 +1966,19 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # Build quick reply buttons for follow request
-                        # All buttons as quick replies to keep message as plain text (not card format)
-                        # Quick replies work with plain text messages (straight/vertical layout)
+                        # Build Instagram profile URL for "Visit Profile" button
+                        profile_url = f"https://instagram.com/{username}"
+                        
+                        # Build URL button for "Visit Profile" (enables navigation to bio page)
+                        # Note: URL buttons require generic template format (card layout)
+                        visit_profile_button = [{
+                            "text": "Visit Profile",
+                            "url": profile_url
+                        }]
+                        
+                        # Build quick reply buttons for "I'm following" and "Follow Me"
+                        # These can track clicks and work with plain text messages
                         follow_quick_reply = [
-                            {
-                                "content_type": "text",
-                                "title": "Visit Profile",
-                                "payload": f"visit_profile_{rule_id}"  # Track profile visits
-                            },
                             {
                                 "content_type": "text",
                                 "title": "I'm following",
@@ -1971,11 +1991,7 @@ async def execute_automation_action(
                             }
                         ]
                         
-                        # Remove URL from message text to avoid link preview card
-                        # Message will be displayed as plain text (straight/vertical)
-                        follow_message_with_url = follow_message_with_instructions
-                        
-                        # STRICT MODE: Send follow request with "Follow Me" quick reply button
+                        # STRICT MODE: Send follow request with URL button for "Visit Profile" and quick replies for others
                         if is_comment_trigger:
                             print(f"💬 Opening conversation via private reply (comment trigger)")
                             try:
@@ -1988,19 +2004,35 @@ async def execute_automation_action(
                                 # Small delay to ensure conversation is open
                                 await asyncio.sleep(1)
                                 
-                                # Now send the complete follow message with quick replies (plain text format)
+                                # Send follow message with "Visit Profile" URL button (card format - required for navigation)
                                 try:
-                                    send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                                    print(f"✅ Follow request sent as single DM with quick replies (plain text, straight layout)")
+                                    send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=None)
+                                    print(f"✅ Follow request sent with 'Visit Profile' URL button (card format - enables navigation)")
+                                    
+                                    # Small delay between messages
+                                    await asyncio.sleep(1)
+                                    
+                                    # Send second message with quick replies for "I'm following" and "Follow Me" (plain text format)
+                                    quick_reply_message = "Click one of the options below:"
+                                    send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                    print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
                                 except Exception as btn_error:
                                     print(f"⚠️ Could not send follow buttons: {str(btn_error)}")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
                             try:
-                                # Send DM with quick reply buttons (plain text format, straight layout)
-                                send_dm_api(sender_id, follow_message_with_url, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                                print(f"✅ Follow request DM sent with quick replies (plain text, straight layout)")
+                                # Send follow message with "Visit Profile" URL button (card format - required for navigation)
+                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=None)
+                                print(f"✅ Follow request sent with 'Visit Profile' URL button (card format - enables navigation)")
+                                
+                                # Small delay between messages
+                                await asyncio.sleep(1)
+                                
+                                # Send second message with quick replies for "I'm following" and "Follow Me" (plain text format)
+                                quick_reply_message = "Click one of the options below:"
+                                send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         
