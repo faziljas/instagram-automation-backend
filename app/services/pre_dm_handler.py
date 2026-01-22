@@ -371,6 +371,27 @@ async def process_pre_dm_actions(
                 # Update stats
                 update_automation_stats(rule.id, "lead_captured", db)
                 print(f"✅ Email saved to database: {email_address}")
+                
+                # Log EMAIL_COLLECTED analytics event
+                try:
+                    from app.utils.analytics import log_analytics_event_sync
+                    from app.models.analytics_event import EventType
+                    media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                    log_analytics_event_sync(
+                        db=db,
+                        user_id=account.user_id,
+                        event_type=EventType.EMAIL_COLLECTED,
+                        rule_id=rule.id,
+                        media_id=media_id,
+                        instagram_account_id=account.id,
+                        metadata={
+                            "sender_id": sender_id,
+                            "email": email_address,  # Store email in metadata for analytics
+                            "captured_via": "pre_dm_email_request"
+                        }
+                    )
+                except Exception as analytics_err:
+                    print(f"⚠️ Failed to log EMAIL_COLLECTED event: {str(analytics_err)}")
             except Exception as e:
                 print(f"⚠️ Error saving email: {str(e)}")
                 db.rollback()

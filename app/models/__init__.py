@@ -6,6 +6,7 @@ from app.models.dm_log import DmLog
 from app.models.follower import Follower
 from app.models.captured_lead import CapturedLead
 from app.models.automation_rule_stats import AutomationRuleStats
+from app.models.analytics_event import AnalyticsEvent, EventType
 
 __all__ = [
     "User",
@@ -15,5 +16,7 @@ __all__ = [
     "DmLog",
     "Follower",
     "CapturedLead",
-    "AutomationRuleStats"
+    "AutomationRuleStats",
+    "AnalyticsEvent",
+    "EventType"
 ]

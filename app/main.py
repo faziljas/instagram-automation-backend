@@ -25,12 +25,12 @@ logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router, leads
+from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router, leads, analytics
 from app.db.session import engine
 from app.db.base import Base
 from sqlalchemy import text
 # Import all models to ensure they're registered with Base
-from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats
+from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent
 
 app = FastAPI(title="Instagram Automation SaaS")
 
@@ -177,3 +177,4 @@ app.include_router(automation.router, prefix="/automation", tags=["Automation"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 app.include_router(stripe_router.router, prefix="/api/stripe", tags=["Stripe"])
 app.include_router(leads.router, prefix="/api", tags=["Leads"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])

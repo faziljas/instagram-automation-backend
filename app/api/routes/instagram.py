@@ -1844,6 +1844,28 @@ async def execute_automation_action(
                 username = account.username
                 rule_id = rule.id
                 print(f"🔍 [EXECUTE] Stored values - user_id: {user_id}, account_id: {account_id}, username: {username}, rule_id: {rule_id}")
+                
+                # Log TRIGGER_MATCHED analytics event
+                try:
+                    from app.utils.analytics import log_analytics_event_sync
+                    from app.models.analytics_event import EventType
+                    # Get media_id from rule if available
+                    media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                    log_analytics_event_sync(
+                        db=db,
+                        user_id=user_id,
+                        event_type=EventType.TRIGGER_MATCHED,
+                        rule_id=rule_id,
+                        media_id=media_id,
+                        instagram_account_id=account_id,
+                        metadata={
+                            "trigger_type": trigger_type,
+                            "sender_id": sender_id,
+                            "comment_id": comment_id
+                        }
+                    )
+                except Exception as analytics_err:
+                    print(f"⚠️ Failed to log TRIGGER_MATCHED event: {str(analytics_err)}")
             except Exception as e:
                 print(f"❌ [EXECUTE] Error accessing account/rule attributes: {str(e)}")
                 import traceback
@@ -1969,11 +1991,21 @@ async def execute_automation_action(
                         # Build Instagram profile URL for "Visit Profile" button
                         profile_url = f"https://instagram.com/{username}"
                         
+                        # Wrap profile URL with tracking to log clicks
+                        from app.utils.analytics import generate_tracking_url
+                        tracked_profile_url = generate_tracking_url(
+                            target_url=profile_url,
+                            rule_id=rule_id,
+                            user_id=user_id,
+                            media_id=comment_id if is_comment_trigger else None,  # Use comment_id as media_id if available
+                            instagram_account_id=account.id
+                        )
+                        
                         # Build URL button for "Visit Profile" (enables navigation to bio page)
                         # Note: URL buttons require generic template format (card layout)
                         visit_profile_button = [{
                             "text": "Visit Profile",
-                            "url": profile_url
+                            "url": tracked_profile_url
                         }]
                         
                         # Build quick reply buttons for "I'm following" and "Follow Me"
@@ -2912,6 +2944,27 @@ async def execute_automation_action(
                     # Update stats
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "dm_sent", db)
+                    
+                    # Log DM_SENT analytics event
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=user_id,
+                            event_type=EventType.DM_SENT,
+                            rule_id=rule.id,
+                            media_id=media_id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "sender_id": sender_id,
+                                "message_preview": message_template[:100] if message_template else None,
+                                "trigger_type": trigger_type
+                            }
+                        )
+                    except Exception as analytics_err:
+                        print(f"⚠️ Failed to log DM_SENT event: {str(analytics_err)}")
                 
                 # Log the DM (use stored values to avoid DetachedInstanceError)
                 from app.models.dm_log import DmLog
