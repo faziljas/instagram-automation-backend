@@ -284,7 +284,163 @@ async def process_instagram_message(event: dict, db: Session):
                         ))
                 return  # Don't process as regular message
             
-            # 2) Handle "Follow Me" quick reply button (payload: follow_me_{rule_id})
+            # 2) Handle "I'm following" quick reply button (payload: im_following_{rule_id})
+            if quick_reply_payload.startswith("im_following_"):
+                log_print(f"✅ [STRICT MODE] User clicked 'I'm following' button! Payload={quick_reply_payload}")
+                
+                # Extract rule_id from payload
+                rule_id_from_payload = None
+                try:
+                    rule_id_from_payload = int(quick_reply_payload.split("im_following_")[1])
+                except (ValueError, IndexError):
+                    log_print(f"⚠️ Could not parse rule_id from payload: {quick_reply_payload}", "WARNING")
+                
+                from app.models.automation_rule import AutomationRule
+                from app.services.pre_dm_handler import update_pre_dm_state
+                from app.services.lead_capture import update_automation_stats
+                
+                # Find the specific rule
+                if rule_id_from_payload:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.id == rule_id_from_payload,
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                else:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                
+                for rule in rules:
+                    ask_to_follow = rule.config.get("ask_to_follow", False)
+                    ask_for_email = rule.config.get("ask_for_email", False)
+                    
+                    if not (ask_to_follow or ask_for_email):
+                        continue
+                    
+                    # Mark follow as confirmed (user says they're already following)
+                    update_pre_dm_state(str(sender_id), rule.id, {
+                        "follow_confirmed": True,
+                        "im_following_clicked": True,
+                        "follow_request_sent": True  # Mark as sent to prevent re-asking
+                    })
+                    log_print(f"✅ Marked 'I'm following' confirmation for rule {rule.id}")
+                    
+                    # If email is enabled, send email question immediately
+                    if ask_for_email:
+                        ask_for_email_message = rule.config.get(
+                            "ask_for_email_message",
+                            "Quick question - what's your email? I'd love to send you something special! 📧"
+                        )
+                        
+                        log_print(f"📧 [STRICT MODE] Sending email request immediately after 'I'm following' click")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id_for_dm = account.page_id
+                            
+                            # Send email request as plain text (no buttons)
+                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                            log_print(f"✅ Email request sent after 'I'm following' button click")
+                            
+                            # Update state to mark that we're now waiting for email
+                            update_pre_dm_state(str(sender_id), rule.id, {
+                                "email_request_sent": True,
+                                "step": "email",
+                                "waiting_for_email_text": True
+                            })
+                        except Exception as e:
+                            log_print(f"❌ Failed to send email request after 'I'm following' click: {str(e)}", "ERROR")
+                    
+                    # If no email configured, proceed directly to primary DM
+                    else:
+                        log_print(f"✅ Follow confirmed via 'I'm following' button, proceeding directly to primary DM")
+                        asyncio.create_task(execute_automation_action(
+                            rule, sender_id, account, db,
+                            trigger_type="postback",
+                            message_id=message_id,
+                            pre_dm_result_override={"action": "send_primary"}
+                        ))
+                    
+                    # Only process the first matching rule
+                    return
+            
+            # 3) Handle "Visit Profile" quick reply button (payload: visit_profile_{rule_id})
+            if quick_reply_payload.startswith("visit_profile_"):
+                log_print(f"🔗 [STRICT MODE] User clicked 'Visit Profile' button! Payload={quick_reply_payload}")
+                
+                # Extract rule_id from payload
+                rule_id_from_payload = None
+                try:
+                    rule_id_from_payload = int(quick_reply_payload.split("visit_profile_")[1])
+                except (ValueError, IndexError):
+                    log_print(f"⚠️ Could not parse rule_id from payload: {quick_reply_payload}", "WARNING")
+                
+                from app.models.automation_rule import AutomationRule
+                from app.services.pre_dm_handler import update_pre_dm_state
+                
+                # Find the specific rule
+                if rule_id_from_payload:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.id == rule_id_from_payload,
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                else:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                
+                for rule in rules:
+                    ask_to_follow = rule.config.get("ask_to_follow", False)
+                    
+                    if not ask_to_follow:
+                        continue
+                    
+                    # Track profile visit (user clicked to visit profile)
+                    update_pre_dm_state(str(sender_id), rule.id, {
+                        "profile_visited": True,
+                        "profile_visit_time": str(asyncio.get_event_loop().time())
+                    })
+                    log_print(f"✅ Tracked profile visit for rule {rule.id}")
+                    
+                    # Send a reminder message with the profile URL
+                    instagram_profile_url = f"https://instagram.com/{account.username}"
+                    reminder_message = f"Here's my profile link: {instagram_profile_url}\n\nOnce you've followed, click 'I'm following' or type 'done' to continue! 😊"
+                    
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm
+                    
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
+                        
+                        page_id_for_dm = account.page_id
+                        
+                        # Send reminder with profile URL
+                        send_dm(sender_id, reminder_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        log_print(f"✅ Profile visit reminder sent")
+                    except Exception as e:
+                        log_print(f"❌ Failed to send profile visit reminder: {str(e)}", "ERROR")
+                    
+                    # Only process the first matching rule
+                    return
+            
+            # 4) Handle "Follow Me" quick reply button (payload: follow_me_{rule_id})
             if quick_reply_payload.startswith("follow_me_"):
                 log_print(f"👥 [STRICT MODE] User clicked 'Follow Me' quick reply button! Payload={quick_reply_payload}")
                 
@@ -904,9 +1060,154 @@ async def process_postback_event(event: dict, db: Session):
         
         print(f"✅ Found account: {account.username} (ID: {account.id})")
         
+        # Handle "I'm following" button click (quick reply postback)
+        # Payload format: "im_following_{rule_id}"
+        if "im_following" in payload.lower() or ("i'm following" in title.lower() or "im following" in title.lower()):
+            print(f"✅ [STRICT MODE] User clicked 'I'm following' button! Payload: {payload}, Title: {title}")
+            
+            # Extract rule_id from payload if present
+            rule_id_from_payload = None
+            if "im_following_" in payload:
+                try:
+                    rule_id_from_payload = int(payload.split("im_following_")[1])
+                except (ValueError, IndexError):
+                    pass
+            
+            # Find active rules for this account
+            if rule_id_from_payload:
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.id == rule_id_from_payload,
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
+            else:
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
+            
+            for rule in rules:
+                ask_for_email = rule.config.get("ask_for_email", False)
+                ask_to_follow = rule.config.get("ask_to_follow", False)
+                
+                if ask_to_follow or ask_for_email:
+                    # Mark follow as confirmed (user says they're already following)
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(str(sender_id), rule.id, {
+                        "follow_confirmed": True,
+                        "im_following_clicked": True,
+                        "follow_request_sent": True
+                    })
+                    print(f"✅ Marked 'I'm following' confirmation for rule {rule.id}")
+                    
+                    # If email is enabled, send email request immediately
+                    if ask_for_email:
+                        ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
+                        
+                        print(f"📧 [STRICT MODE] Sending email request immediately (I'm following button clicked)")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id_for_dm = account.page_id
+                            
+                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                            print(f"✅ Email request sent after 'I'm following' button click")
+                            
+                            update_pre_dm_state(str(sender_id), rule.id, {
+                                "email_request_sent": True,
+                                "step": "email",
+                                "waiting_for_email_text": True
+                            })
+                        except Exception as e:
+                            print(f"❌ Failed to send email request after 'I'm following' click: {str(e)}")
+                    
+                    # If no email configured, proceed directly to primary DM
+                    else:
+                        print(f"✅ Follow confirmed via 'I'm following' button, proceeding directly to primary DM")
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="postback",
+                            pre_dm_result_override={"action": "send_primary"}
+                        ))
+                    
+                    break  # Only process first matching rule
+        
+        # Handle "Visit Profile" button click (quick reply postback)
+        # Payload format: "visit_profile_{rule_id}"
+        elif "visit_profile" in payload.lower() or ("visit profile" in title.lower()):
+            print(f"🔗 [STRICT MODE] User clicked 'Visit Profile' button! Payload: {payload}, Title: {title}")
+            
+            # Extract rule_id from payload if present
+            rule_id_from_payload = None
+            if "visit_profile_" in payload:
+                try:
+                    rule_id_from_payload = int(payload.split("visit_profile_")[1])
+                except (ValueError, IndexError):
+                    pass
+            
+            # Find active rules for this account
+            if rule_id_from_payload:
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.id == rule_id_from_payload,
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
+            else:
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
+            
+            for rule in rules:
+                ask_to_follow = rule.config.get("ask_to_follow", False)
+                
+                if ask_to_follow:
+                    # Track profile visit
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(str(sender_id), rule.id, {
+                        "profile_visited": True,
+                        "profile_visit_time": str(asyncio.get_event_loop().time())
+                    })
+                    print(f"✅ Tracked profile visit for rule {rule.id}")
+                    
+                    # Send reminder message with profile URL
+                    instagram_profile_url = f"https://instagram.com/{account.username}"
+                    reminder_message = f"Here's my profile link: {instagram_profile_url}\n\nOnce you've followed, click 'I'm following' or type 'done' to continue! 😊"
+                    
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm
+                    
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
+                        
+                        page_id_for_dm = account.page_id
+                        
+                        send_dm(sender_id, reminder_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        print(f"✅ Profile visit reminder sent")
+                    except Exception as e:
+                        print(f"❌ Failed to send profile visit reminder: {str(e)}")
+                    
+                    break  # Only process first matching rule
+        
         # Handle "Follow Me" button click (quick reply postback)
         # Payload format: "follow_me_{rule_id}" or just contains "follow"
-        if "follow_me" in payload.lower() or ("follow" in payload.lower() and "follow" in title.lower()):
+        elif "follow_me" in payload.lower() or ("follow" in payload.lower() and "follow" in title.lower()):
             print(f"👥 [STRICT MODE] User clicked 'Follow Me' button! Payload: {payload}, Title: {title}")
             
             # Extract rule_id from payload if present (format: "follow_me_{rule_id}")
@@ -1649,13 +1950,25 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # Build "Follow Me" quick reply button (sends postback for tracking)
+                        # Build quick reply buttons for follow request
                         # Quick replies allow us to track clicks and send email question immediately
-                        follow_quick_reply = [{
-                            "content_type": "text",
-                            "title": "Follow Me 👆",
-                            "payload": f"follow_me_{rule_id}"  # Include rule_id for tracking
-                        }]
+                        follow_quick_reply = [
+                            {
+                                "content_type": "text",
+                                "title": "Visit Profile",
+                                "payload": f"visit_profile_{rule_id}"  # Track profile visits
+                            },
+                            {
+                                "content_type": "text",
+                                "title": "I'm following",
+                                "payload": f"im_following_{rule_id}"  # Mark as already following
+                            },
+                            {
+                                "content_type": "text",
+                                "title": "Follow Me 👆",
+                                "payload": f"follow_me_{rule_id}"  # Include rule_id for tracking
+                            }
+                        ]
                         
                         # Also include profile URL in message for easy navigation
                         instagram_profile_url = f"https://instagram.com/{account.username}"
