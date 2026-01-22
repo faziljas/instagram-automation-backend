@@ -3887,6 +3887,7 @@ async def get_conversation_messages(
     username: str,
     account_id: int = Query(..., description="Instagram account ID"),
     limit: int = Query(100, description="Number of messages to fetch"),
+    participant_user_id: str = Query(None, description="Instagram user_id (IGSID) of the participant - more reliable than username for Unknown users"),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
@@ -3918,57 +3919,92 @@ async def get_conversation_messages(
         # Get account's Instagram ID (recipient_id in messages)
         account_igsid = account.igsid or str(account_id)
         
-        # If username is "Unknown", try to find the conversation to get the participant_id (Instagram user_id)
+        # Get participant_id to search for messages
+        # Priority: 1) participant_user_id query param, 2) lookup from Conversation table, 3) use username
         participant_id_to_search = None
-        if username == "Unknown" or not username:
-            # Find the conversation by participant_name to get the participant_id (Instagram IGSID)
+        
+        # If participant_user_id is provided (more reliable), use it directly
+        if participant_user_id:
+            participant_id_to_search = str(participant_user_id)
+            print(f"🔍 Using provided participant_user_id: {participant_id_to_search}")
+        elif username == "Unknown" or not username:
+            # Find the conversation - "Unknown" means participant_name is None or numeric ID
+            # Try both: participant_name == "Unknown" OR participant_name == None
+            from sqlalchemy import or_
             conversation = db.query(Conversation).filter(
                 Conversation.instagram_account_id == account_id,
                 Conversation.user_id == user_id,  # App user_id
-                Conversation.participant_name == username  # Username is "Unknown"
+                or_(
+                    Conversation.participant_name == "Unknown",
+                    Conversation.participant_name.is_(None),
+                    Conversation.participant_name == username
+                )
             ).first()
             
             if conversation:
                 participant_id_to_search = conversation.participant_id  # This is the Instagram user_id (IGSID)
-                print(f"🔍 Found conversation for 'Unknown': participant_id={participant_id_to_search}")
+                print(f"🔍 Found conversation for 'Unknown': participant_id={participant_id_to_search}, participant_name={conversation.participant_name}")
+            else:
+                print(f"⚠️ No conversation found for username='{username}'")
         
         # Build query conditions - search by both username AND user_id
         # This handles cases where username might be "Unknown" but we have the actual Instagram user_id
+        from sqlalchemy import or_, and_
         message_conditions = []
         
+        # First, try to find conversation by participant_id to get conversation_id (most reliable)
+        conversation = None
         if participant_id_to_search:
-            # Search by Instagram participant_id (for Unknown users)
+            conversation = db.query(Conversation).filter(
+                Conversation.instagram_account_id == account_id,
+                Conversation.user_id == user_id,
+                Conversation.participant_id == participant_id_to_search
+            ).first()
+        
+        # If we have a conversation_id, use it directly (most reliable)
+        if conversation and conversation.id:
+            query = db.query(Message).filter(
+                Message.instagram_account_id == account_id,
+                Message.user_id == user_id,
+                Message.conversation_id == conversation.id
+            )
+            messages = query.order_by(Message.created_at.asc()).limit(limit).all()
+            print(f"📨 Found {len(messages)} messages using conversation_id={conversation.id}")
+        else:
+            # Fallback: search by participant_id and username
+            if participant_id_to_search:
+                # Search by Instagram participant_id (for Unknown users)
+                message_conditions.append(
+                    and_(Message.is_from_bot == True, Message.recipient_id == str(participant_id_to_search))
+                )
+                message_conditions.append(
+                    and_(Message.is_from_bot == False, Message.sender_id == str(participant_id_to_search))
+                )
+            
+            # Always also search by username (works for both known and unknown)
             message_conditions.append(
-                (Message.is_from_bot == True) & (Message.recipient_id == str(participant_id_to_search))
+                and_(Message.is_from_bot == True, Message.recipient_username == username)
             )
             message_conditions.append(
-                (Message.is_from_bot == False) & (Message.sender_id == str(participant_id_to_search))
+                and_(Message.is_from_bot == False, Message.sender_username == username)
             )
+            
+            # Combine all conditions with OR
+            combined_condition = or_(*message_conditions) if message_conditions else None
+            
+            # Get messages
+            query = db.query(Message).filter(
+                Message.instagram_account_id == account_id,
+                Message.user_id == user_id
+            )
+            
+            if combined_condition:
+                query = query.filter(combined_condition)
+            
+            messages = query.order_by(Message.created_at.asc()).limit(limit).all()
+            print(f"📨 Found {len(messages)} messages using participant_id/username search")
         
-        # Always also search by username (works for both known and unknown)
-        message_conditions.append(
-            (Message.is_from_bot == True) & (Message.recipient_username == username)
-        )
-        message_conditions.append(
-            (Message.is_from_bot == False) & (Message.sender_username == username)
-        )
-        
-        # Combine all conditions with OR
-        from sqlalchemy import or_
-        combined_condition = or_(*message_conditions) if message_conditions else None
-        
-        # Get messages
-        query = db.query(Message).filter(
-            Message.instagram_account_id == account_id,
-            Message.user_id == user_id
-        )
-        
-        if combined_condition:
-            query = query.filter(combined_condition)
-        
-        messages = query.order_by(Message.created_at.asc()).limit(limit).all()
-        
-        print(f"📨 Found {len(messages)} messages for username='{username}', participant_id={participant_id_to_search}")
+        print(f"📨 Total messages found: {len(messages)} for username='{username}', participant_id={participant_id_to_search}")
         
         # If no messages in Message table, check DmLog as fallback
         if len(messages) == 0:
@@ -3996,10 +4032,13 @@ async def get_conversation_messages(
         # Format messages
         formatted_messages = []
         for msg in messages:
+            # Use get_content() method if available, otherwise fallback to message_text or content
+            message_text = msg.get_content() if hasattr(msg, 'get_content') else (msg.message_text or msg.content or "")
+            
             formatted_messages.append({
                 "id": msg.id,
                 "message_id": msg.message_id,
-                "text": msg.message_text,
+                "text": message_text,
                 "is_from_bot": msg.is_from_bot,
                 "sender_username": msg.sender_username,
                 "recipient_username": msg.recipient_username,
@@ -4007,6 +4046,8 @@ async def get_conversation_messages(
                 "attachments": msg.attachments,
                 "created_at": msg.created_at.isoformat() if msg.created_at else None
             })
+        
+        print(f"✅ Returning {len(formatted_messages)} formatted messages")
         
         return {
             "success": True,

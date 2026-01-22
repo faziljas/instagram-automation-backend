@@ -89,10 +89,142 @@ def sync_instagram_conversations(
         
         print(f"🔄 Syncing conversations for account {account.username} (IGSID: {igsid})")
         
-        # Instagram Graph API doesn't have a direct /conversations endpoint
-        # Instead, we'll build conversations from existing messages in our database
-        # and try to fetch additional data if available
+        # Step 1: Try to fetch conversations from Instagram Graph API
+        # Instagram Graph API endpoint: GET /me/conversations?platform=instagram
+        conversations_fetched = 0
+        messages_synced = 0
         
+        try:
+            conversations_url = f"https://graph.instagram.com/v21.0/me/conversations"
+            conversations_params = {
+                "platform": "instagram",
+                "fields": "id,participants,updated_time,message_count",
+                "access_token": access_token,
+                "limit": limit
+            }
+            
+            print(f"📡 Fetching conversations from Instagram API...")
+            conversations_response = requests.get(conversations_url, params=conversations_params, timeout=30)
+            
+            if conversations_response.status_code == 200:
+                conversations_data = conversations_response.json()
+                conversations_list = conversations_data.get("data", [])
+                print(f"✅ Fetched {len(conversations_list)} conversations from Instagram API")
+                
+                # Process each conversation
+                for conv_data in conversations_list:
+                    conversation_id = conv_data.get("id")
+                    participants = conv_data.get("participants", {}).get("data", [])
+                    updated_time = conv_data.get("updated_time")
+                    
+                    if not conversation_id or not participants:
+                        continue
+                    
+                    # Find the other participant (not our account)
+                    other_participant = None
+                    for participant in participants:
+                        participant_id = participant.get("id")
+                        if participant_id and participant_id != igsid:
+                            other_participant = participant
+                            break
+                    
+                    if not other_participant:
+                        continue
+                    
+                    participant_id = other_participant.get("id")
+                    participant_name = other_participant.get("username")
+                    
+                    # Fetch messages for this conversation
+                    messages_url = f"https://graph.instagram.com/v21.0/{conversation_id}/messages"
+                    messages_params = {
+                        "fields": "id,from,to,message,created_time,attachments",
+                        "access_token": access_token,
+                        "limit": 20  # Instagram API limit
+                    }
+                    
+                    try:
+                        messages_response = requests.get(messages_url, params=messages_params, timeout=30)
+                        if messages_response.status_code == 200:
+                            messages_data = messages_response.json()
+                            messages_list = messages_data.get("data", [])
+                            print(f"📨 Fetched {len(messages_list)} messages for conversation {conversation_id}")
+                            
+                            # Find or create conversation record
+                            conversation = db.query(Conversation).filter(
+                                Conversation.instagram_account_id == account_id,
+                                Conversation.user_id == user_id,
+                                Conversation.participant_id == participant_id
+                            ).first()
+                            
+                            if not conversation:
+                                conversation = Conversation(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    participant_id=participant_id,
+                                    participant_name=participant_name,
+                                    platform_conversation_id=conversation_id,
+                                    updated_at=datetime.fromisoformat(updated_time.replace('Z', '+00:00')) if updated_time else datetime.utcnow()
+                                )
+                                db.add(conversation)
+                                db.flush()  # Get conversation.id
+                            
+                            # Save messages to database
+                            for msg_data in messages_list:
+                                message_id = msg_data.get("id")
+                                from_user = msg_data.get("from", {})
+                                to_user = msg_data.get("to", {})
+                                message_text = msg_data.get("message", "")
+                                created_time = msg_data.get("created_time")
+                                attachments = msg_data.get("attachments", {}).get("data", [])
+                                
+                                from_id = from_user.get("id")
+                                to_id = to_user.get("id")
+                                
+                                # Determine if message is from bot (our account) or received
+                                is_from_bot = (from_id == igsid)
+                                
+                                # Check if message already exists
+                                existing_message = db.query(Message).filter(
+                                    Message.message_id == message_id,
+                                    Message.instagram_account_id == account_id
+                                ).first()
+                                
+                                if not existing_message:
+                                    # Create new message
+                                    message = Message(
+                                        user_id=user_id,
+                                        instagram_account_id=account_id,
+                                        conversation_id=conversation.id,
+                                        sender_id=str(from_id) if from_id else "",
+                                        sender_username=from_user.get("username"),
+                                        recipient_id=str(to_id) if to_id else "",
+                                        recipient_username=to_user.get("username"),
+                                        message_text=message_text,
+                                        content=message_text,
+                                        message_id=message_id,
+                                        platform_message_id=message_id,
+                                        is_from_bot=is_from_bot,
+                                        has_attachments=len(attachments) > 0,
+                                        attachments=attachments if attachments else None,
+                                        created_at=datetime.fromisoformat(created_time.replace('Z', '+00:00')) if created_time else datetime.utcnow()
+                                    )
+                                    db.add(message)
+                                    messages_synced += 1
+                            
+                            conversations_fetched += 1
+                            
+                    except Exception as e:
+                        print(f"⚠️ Error fetching messages for conversation {conversation_id}: {str(e)}")
+                        continue
+                        
+            else:
+                print(f"⚠️ Could not fetch conversations from API: {conversations_response.status_code} - {conversations_response.text}")
+        except Exception as e:
+            print(f"⚠️ Error fetching conversations from Instagram API: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
+        # Step 2: Also build conversations from existing messages in database (fallback/enhancement)
         # Get all unique participants from Message table
         from sqlalchemy import func, distinct, or_
         
@@ -256,10 +388,17 @@ def sync_instagram_conversations(
         
         db.commit()
         
-        print(f"✅ Sync complete: {conversations_created} created, {conversations_updated} updated")
+        print(f"✅ Sync complete:")
+        print(f"   - Conversations fetched from API: {conversations_fetched}")
+        print(f"   - Messages synced from API: {messages_synced}")
+        print(f"   - Conversations created: {conversations_created}")
+        print(f"   - Conversations updated: {conversations_updated}")
+        print(f"   - Total participants: {len(participants_map)}")
         
         return {
             "success": True,
+            "conversations_fetched_from_api": conversations_fetched,
+            "messages_synced_from_api": messages_synced,
             "conversations_created": conversations_created,
             "conversations_updated": conversations_updated,
             "total_participants": len(participants_map)
