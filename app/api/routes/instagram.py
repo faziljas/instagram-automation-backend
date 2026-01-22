@@ -3293,6 +3293,12 @@ def delete_instagram_account(
         Message.instagram_account_id == account_id
     ).delete()
     
+    # Delete associated Conversations (from Conversation table)
+    from app.models.conversation import Conversation
+    db.query(Conversation).filter(
+        Conversation.instagram_account_id == account_id
+    ).delete()
+    
     # Flush before deleting account
     db.flush()
     
@@ -3532,10 +3538,13 @@ async def get_instagram_conversations(
         if sync:
             from app.services.instagram_sync import sync_instagram_conversations
             try:
+                print(f"🔄 Manual sync requested for account {account_id}")
                 sync_result = sync_instagram_conversations(user_id, account_id, db, limit)
                 print(f"✅ Sync result: {sync_result}")
             except Exception as sync_err:
                 print(f"⚠️ Sync warning: {str(sync_err)}")
+                import traceback
+                traceback.print_exc()
                 # Continue even if sync fails
         
         # Get conversations from Conversation table
@@ -3553,17 +3562,24 @@ async def get_instagram_conversations(
         # Auto-sync if no conversations exist (first time or after migration)
         # This will build conversations from existing messages in the database
         if len(conversations_list) == 0 and not sync:
-            print("🔄 No conversations found, auto-syncing from existing messages...")
+            print(f"🔄 No conversations found for account {account_id}, auto-syncing from existing messages...")
             try:
                 from app.services.instagram_sync import sync_instagram_conversations
                 sync_result = sync_instagram_conversations(user_id, account_id, db, limit)
                 print(f"✅ Auto-sync result: {sync_result}")
                 # Re-query after sync
                 conversations_list = conversations_query.all()
+                print(f"📊 Conversations after sync: {len(conversations_list)}")
                 
                 # If still no conversations after sync, try fallback to Message table
                 if len(conversations_list) == 0:
-                    print("🔄 Still no conversations, checking Message table directly...")
+                    print("🔄 Still no conversations after sync, checking Message table directly...")
+                    # Check if there are any messages at all
+                    message_count = db.query(func.count(Message.id)).filter(
+                        Message.instagram_account_id == account_id,
+                        Message.user_id == user_id
+                    ).scalar() or 0
+                    print(f"📨 Total messages in database for this account: {message_count}")
                     # The fallback logic below will handle this
             except Exception as sync_err:
                 print(f"⚠️ Auto-sync warning: {str(sync_err)}")
