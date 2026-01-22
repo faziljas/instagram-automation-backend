@@ -770,24 +770,24 @@ async def process_instagram_message(event: dict, db: Session):
                         return  # Don't process as new_message rule, wait for valid email
                     
                     # If we're waiting for something and got random text, ignore it
-                    from app.services.pre_dm_handler import get_pre_dm_state
-                    state = get_pre_dm_state(sender_id, rule.id)
-                    
-                    if state.get("follow_request_sent") and not state.get("follow_confirmed"):
-                        log_print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id}")
-                        if attachments:
-                            log_print(f"   🚫 Image/attachment ignored - only text confirmations accepted")
-                        else:
-                            log_print(f"   Message '{message_text}' ignored - not a valid confirmation")
-                        return  # Don't process random messages/images while waiting for follow
-                    
-                    if state.get("email_request_sent") and not state.get("email_received"):
-                        log_print(f"⏳ [STRICT MODE] Waiting for email from {sender_id}")
-                        if attachments:
-                            log_print(f"   🚫 Image/attachment ignored - only email text accepted")
-                        else:
-                            log_print(f"   Message '{message_text}' ignored - not a valid email")
-                        return  # Don't process random messages/images while waiting for email
+                        from app.services.pre_dm_handler import get_pre_dm_state
+                        state = get_pre_dm_state(sender_id, rule.id)
+                        
+                        if state.get("follow_request_sent") and not state.get("follow_confirmed"):
+                            log_print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id}")
+                            if attachments:
+                                log_print(f"   🚫 Image/attachment ignored - only text confirmations accepted")
+                            else:
+                                log_print(f"   Message '{message_text}' ignored - not a valid confirmation")
+                            return  # Don't process random messages/images while waiting for follow
+                        
+                        if state.get("email_request_sent") and not state.get("email_received"):
+                            log_print(f"⏳ [STRICT MODE] Waiting for email from {sender_id}")
+                            if attachments:
+                                log_print(f"   🚫 Image/attachment ignored - only email text accepted")
+                            else:
+                                log_print(f"   Message '{message_text}' ignored - not a valid email")
+                            return  # Don't process random messages/images while waiting for email
         
         # Check if this is a story reply (DMs replying to stories)
         story_id = None
@@ -1284,10 +1284,10 @@ async def process_postback_event(event: dict, db: Session):
                 ).all()
             else:
                 # Fallback: find all active rules for this account
-                rules = db.query(AutomationRule).filter(
-                    AutomationRule.instagram_account_id == account.id,
-                    AutomationRule.is_active == True
-                ).all()
+            rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account.id,
+                AutomationRule.is_active == True
+            ).all()
             
             # Find the rule that sent this follow button (check if ask_for_email is enabled)
             for rule in rules:
@@ -1312,36 +1312,36 @@ async def process_postback_event(event: dict, db: Session):
                     
                     # STRICT MODE: If email is enabled, send email request immediately
                     if ask_for_email:
-                        ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
-                        
+                    ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
+                    
                         print(f"📧 [STRICT MODE] Sending email request immediately (Follow Me button clicked)")
-                        from app.utils.encryption import decrypt_credentials
-                        from app.utils.instagram_api import send_dm
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm
+                    
+                    try:
+                        # Get access token
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
                         
-                        try:
-                            # Get access token
-                            if account.encrypted_page_token:
-                                access_token = decrypt_credentials(account.encrypted_page_token)
-                            elif account.encrypted_credentials:
-                                access_token = decrypt_credentials(account.encrypted_credentials)
-                            else:
-                                raise Exception("No access token found")
-                            
-                            page_id_for_dm = account.page_id
-                            
-                            # Send email request as PLAIN TEXT (NO buttons or quick_replies)
-                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        page_id_for_dm = account.page_id
+                        
+                        # Send email request as PLAIN TEXT (NO buttons or quick_replies)
+                        send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                             print(f"✅ Email request sent immediately after Follow Me button click")
-                            
-                            # Update state to mark email request as sent and waiting for typed email
-                            update_pre_dm_state(str(sender_id), rule.id, {
-                                "email_request_sent": True,
-                                "step": "email",
-                                "waiting_for_email_text": True  # NEW: Strict mode flag
-                            })
-                            
-                        except Exception as e:
-                            print(f"❌ Failed to send email request: {str(e)}")
+                        
+                        # Update state to mark email request as sent and waiting for typed email
+                        update_pre_dm_state(str(sender_id), rule.id, {
+                            "email_request_sent": True,
+                            "step": "email",
+                            "waiting_for_email_text": True  # NEW: Strict mode flag
+                        })
+                        
+                    except Exception as e:
+                        print(f"❌ Failed to send email request: {str(e)}")
                     else:
                         # No email request, proceed directly to primary DM
                         print(f"✅ Follow confirmed via button click, proceeding to primary DM")
@@ -1956,7 +1956,7 @@ async def execute_automation_action(
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
                     # STRICT MODE: Send follow request with text-based confirmation (most reliable)
                     follow_message = pre_dm_result["message"]
-                                        
+                    
                     # FIXED: Do NOT include Instagram URL to avoid unwanted @username preview bubble
                     # Instagram automatically creates a rich preview/embed for Instagram URLs,
                     # which shows "@username" in a separate message bubble (the issue user reported)
@@ -2708,19 +2708,19 @@ async def execute_automation_action(
                     
                     # If still no template, try message_variations (shared or simple reply messages)
                     if not message_template:
-                        message_variations = rule.config.get("message_variations", [])
+                    message_variations = rule.config.get("message_variations", [])
                         print(f"🔍 [DEBUG] Loading message template: message_variations={message_variations}, type={type(message_variations)}")
-                        if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
+                    if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
                             # Filter out empty messages
                             valid_messages = [m for m in message_variations if m and str(m).strip()]
                             if valid_messages:
-                                # Randomly select one message from variations
-                                import random
+                        # Randomly select one message from variations
+                        import random
                                 message_template = random.choice(valid_messages)
                                 print(f"🎲 Randomly selected message from {len(valid_messages)} valid variations")
-                            else:
+                    else:
                                 print(f"⚠️ All message variations are empty, trying fallback to message_template")
-                                message_template = rule.config.get("message_template", "")
+                        message_template = rule.config.get("message_template", "")
                         else:
                             message_template = rule.config.get("message_template", "")
                             print(f"🔍 [DEBUG] Using message_template fallback: '{message_template[:50] if message_template else 'None'}...'")
@@ -2839,7 +2839,7 @@ async def execute_automation_action(
             # Send DM using Instagram Graph API (for OAuth accounts)
             try:
                 print(f"🔍 [COMMENT REPLY] Starting check: comment_id={comment_id}, trigger_type={trigger_type}")
-
+                
                 # Check if auto-reply to comments is enabled
                 # This applies to post_comment, live_comment, AND keyword triggers when comment_id is present
                 # (keyword triggers can come from comments if the rule has keywords configured)
@@ -3428,14 +3428,16 @@ async def get_instagram_conversations(
             )
         
         # Get conversations from Message table (both sent and received)
+        # Also check DmLog as fallback for older conversations
         from app.models.message import Message
+        from app.models.dm_log import DmLog
         from sqlalchemy import func, or_, and_
         
         # Get distinct conversations (group by sender/recipient)
         # A conversation is identified by the other party's username
         account_igsid = account.igsid or str(account_id)
         
-        # Get conversations where we received messages (incoming)
+        # Get conversations where we received messages (incoming) from Message table
         incoming_convs = db.query(
             Message.sender_username,
             Message.sender_id,
@@ -3450,7 +3452,7 @@ async def get_instagram_conversations(
             Message.sender_id
         ).all()
         
-        # Get conversations where we sent messages (outgoing) - to catch conversations we initiated
+        # Get conversations where we sent messages (outgoing) from Message table
         outgoing_convs = db.query(
             Message.recipient_username,
             Message.recipient_id,
@@ -3464,6 +3466,44 @@ async def get_instagram_conversations(
             Message.recipient_username,
             Message.recipient_id
         ).all()
+        
+        # Fallback: Also check DmLog for conversations (if Message table is empty)
+        # This helps show conversations even if Message table hasn't been populated yet
+        if len(incoming_convs) == 0 and len(outgoing_convs) == 0:
+            # Get conversations from DmLog
+            dm_log_convs = db.query(
+            DmLog.recipient_username,
+            func.max(DmLog.sent_at).label('last_message_at'),
+            func.count(DmLog.id).label('message_count')
+        ).filter(
+            DmLog.instagram_account_id == account_id,
+            DmLog.user_id == user_id
+        ).group_by(
+            DmLog.recipient_username
+            ).all()
+            
+            # Convert DmLog conversations to match Message format
+            for dm_conv in dm_log_convs:
+                username = dm_conv.recipient_username or 'unknown'
+                # Get latest message from DmLog
+                latest_dm = db.query(DmLog).filter(
+                DmLog.instagram_account_id == account_id,
+                    DmLog.recipient_username == dm_conv.recipient_username
+            ).order_by(DmLog.sent_at.desc()).first()
+            
+                # Add to outgoing_convs format
+                class DmLogConv:
+                    def __init__(self, username, last_at, count):
+                        self.recipient_username = username
+                        self.recipient_id = username  # Use username as ID
+                        self.last_message_at = last_at
+                        self.message_count = count
+                
+                outgoing_convs.append(DmLogConv(
+                    username,
+                    dm_conv.last_message_at,
+                    dm_conv.message_count
+                ))
         
         # Merge conversations (use username as key)
         conversations_map = {}
@@ -3517,7 +3557,7 @@ async def get_instagram_conversations(
                 continue
                 
             if username not in conversations_map:
-                # Get latest message for this conversation
+                # Get latest message for this conversation (try Message table first, then DmLog)
                 latest_msg = db.query(Message).filter(
                     Message.instagram_account_id == account_id,
                     Message.user_id == user_id,
@@ -3526,6 +3566,21 @@ async def get_instagram_conversations(
                         (Message.is_from_bot == True) & (Message.recipient_id == conv.recipient_id)
                     )
                 ).order_by(Message.created_at.desc()).first()
+                
+                # If not in Message table, check DmLog
+                if not latest_msg:
+                    latest_dm = db.query(DmLog).filter(
+                        DmLog.instagram_account_id == account_id,
+                        DmLog.recipient_username == username
+                    ).order_by(DmLog.sent_at.desc()).first()
+                    if latest_dm:
+                        # Create a mock message object for DmLog
+                        class MockMessage:
+                            def __init__(self, text, sent_at):
+                                self.message_text = text
+                                self.is_from_bot = True
+                                self.created_at = sent_at
+                        latest_msg = MockMessage(latest_dm.message, latest_dm.sent_at) if latest_dm else None
                 
                 conversations_map[username] = {
                     "id": username,
@@ -3553,6 +3608,20 @@ async def get_instagram_conversations(
                     )
                 )
             ).order_by(Message.created_at.desc()).first()
+            
+            # If not in Message table, check DmLog as fallback
+            if not latest_msg:
+                latest_dm = db.query(DmLog).filter(
+                DmLog.instagram_account_id == account_id,
+                    DmLog.recipient_username == username
+            ).order_by(DmLog.sent_at.desc()).first()
+                if latest_dm:
+                    class MockMessage:
+                        def __init__(self, text, sent_at):
+                            self.message_text = text
+                            self.is_from_bot = True
+                            self.created_at = sent_at
+                    latest_msg = MockMessage(latest_dm.message, latest_dm.sent_at)
             
             if latest_msg:
                 conv_data['last_message_at'] = latest_msg.created_at.isoformat() if latest_msg.created_at else None
@@ -3614,6 +3683,7 @@ async def get_conversation_messages(
             )
         
         from app.models.message import Message
+        from app.models.dm_log import DmLog
         
         # Get account's Instagram ID (recipient_id in messages)
         account_igsid = account.igsid or str(account_id)
@@ -3630,6 +3700,29 @@ async def get_conversation_messages(
                 (Message.is_from_bot == False) & (Message.sender_username == username)
             )
         ).order_by(Message.created_at.asc()).limit(limit).all()
+        
+        # If no messages in Message table, check DmLog as fallback
+        if len(messages) == 0:
+            dm_logs = db.query(DmLog).filter(
+                DmLog.instagram_account_id == account_id,
+                DmLog.user_id == user_id,
+                DmLog.recipient_username == username
+            ).order_by(DmLog.sent_at.asc()).limit(limit).all()
+            
+            # Convert DmLog entries to Message-like format
+            for dm_log in dm_logs:
+                class MockMessage:
+                    def __init__(self, log_id, text, sent_at, recipient):
+                        self.id = log_id
+                        self.message_id = None
+                        self.message_text = text
+                        self.is_from_bot = True
+                        self.sender_username = None
+                        self.recipient_username = recipient
+                        self.has_attachments = False
+                        self.attachments = None
+                        self.created_at = sent_at
+                messages.append(MockMessage(dm_log.id, dm_log.message, dm_log.sent_at, dm_log.recipient_username))
         
         # Format messages
         formatted_messages = []
