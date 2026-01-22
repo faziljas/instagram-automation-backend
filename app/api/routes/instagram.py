@@ -3984,6 +3984,66 @@ async def get_conversation_messages(
         )
 
 
+@router.post("/conversations/sync")
+async def sync_conversations_endpoint(
+    account_id: int = Query(..., description="Instagram account ID"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Dedicated sync endpoint for conversations (like competitors).
+    This can be called independently to force a sync.
+    """
+    try:
+        # Check Pro plan access for DMs
+        from app.utils.plan_enforcement import check_pro_plan_access
+        check_pro_plan_access(user_id, db)
+        
+        # Verify account belongs to user
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == account_id,
+            InstagramAccount.user_id == user_id
+        ).first()
+        
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instagram account not found"
+            )
+        
+        # Sync conversations
+        from app.services.instagram_sync import sync_instagram_conversations
+        sync_result = sync_instagram_conversations(user_id, account_id, db, limit=50)
+        
+        # Refresh session
+        db.expire_all()
+        
+        # Get updated conversations count
+        from app.models.conversation import Conversation
+        conversation_count = db.query(Conversation).filter(
+            Conversation.instagram_account_id == account_id,
+            Conversation.user_id == user_id
+        ).count()
+        
+        return {
+            "success": True,
+            "sync_result": sync_result,
+            "conversations_count": conversation_count,
+            "message": f"Synced successfully. Found {conversation_count} conversation(s)."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error syncing conversations: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync conversations: {str(e)}"
+        )
+
+
 @router.get("/conversations/stats")
 async def get_conversation_stats(
     account_id: int = Query(..., description="Instagram account ID"),
