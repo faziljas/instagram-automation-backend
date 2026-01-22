@@ -1,7 +1,7 @@
 """
 Migration script to create conversations table and update messages table.
 """
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker
 from app.db.base import Base
 from app.models.conversation import Conversation
@@ -19,10 +19,11 @@ def run_migration():
 
     with SessionLocal() as db:
         try:
-            # Check if conversations table exists
-            inspector = db.connection().in_transaction(lambda conn: conn.run_sync(lambda sync_conn: sync_conn.dialect.has_table(sync_conn, Conversation.__tablename__)))
+            # Check if conversations table exists using inspector
+            inspector = inspect(engine)
+            table_exists = inspector.has_table(Conversation.__tablename__)
             
-            if not inspector:
+            if not table_exists:
                 print(f"🔄 Creating '{Conversation.__tablename__}' table...")
                 Conversation.__table__.create(engine)
                 print(f"✅ Table '{Conversation.__tablename__}' created successfully.")
