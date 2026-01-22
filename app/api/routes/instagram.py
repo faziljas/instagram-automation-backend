@@ -5,7 +5,7 @@ import sys
 import logging
 import requests
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.instagram_account import InstagramAccount
@@ -4062,6 +4062,168 @@ async def get_conversation_messages(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch messages: {str(e)}"
+        )
+
+
+@router.post("/conversations/{username}/messages")
+async def send_conversation_message(
+    username: str,
+    message_data: dict = Body(..., description="Message data with 'text' field"),
+    account_id: int = Query(..., description="Instagram account ID"),
+    participant_user_id: str = Query(None, description="Instagram user_id (IGSID) of the participant"),
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Send a message to a specific conversation.
+    Requires: { "text": "message text" }
+    """
+    try:
+        # Check Pro plan access for DMs
+        from app.utils.plan_enforcement import check_pro_plan_access
+        check_pro_plan_access(user_id, db)
+        
+        # Verify account belongs to user
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == account_id,
+            InstagramAccount.user_id == user_id
+        ).first()
+        
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instagram account not found"
+            )
+        
+        # Get message text from request body
+        message_text = message_data.get("text", "").strip() if isinstance(message_data, dict) else ""
+        if not message_text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Message text is required"
+            )
+        
+        # Get recipient user_id from conversation
+        from app.models.conversation import Conversation
+        conversation = None
+        
+        if participant_user_id:
+            # Use provided participant_user_id
+            conversation = db.query(Conversation).filter(
+                Conversation.instagram_account_id == account_id,
+                Conversation.user_id == user_id,
+                Conversation.participant_id == str(participant_user_id)
+            ).first()
+        else:
+            # Try to find by username
+            conversation = db.query(Conversation).filter(
+                Conversation.instagram_account_id == account_id,
+                Conversation.user_id == user_id,
+                Conversation.participant_name == username
+            ).first()
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found"
+            )
+        
+        recipient_id = conversation.participant_id
+        
+        # Get access token and page_id
+        access_token = None
+        page_id = None
+        
+        if account.encrypted_page_token:
+            try:
+                access_token = decrypt_credentials(account.encrypted_page_token)
+            except Exception as e:
+                print(f"⚠️ Failed to decrypt page token: {str(e)}")
+                if account.encrypted_credentials:
+                    access_token = decrypt_credentials(account.encrypted_credentials)
+        elif account.encrypted_credentials:
+            access_token = decrypt_credentials(account.encrypted_credentials)
+        
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Instagram account access token not available"
+            )
+        
+        page_id = account.page_id
+        
+        # Send the message via Instagram API
+        from app.utils.instagram_api import send_dm
+        try:
+            result = send_dm(
+                recipient_id=recipient_id,
+                message=message_text,
+                page_access_token=access_token,
+                page_id=page_id,
+                buttons=None,
+                quick_replies=None
+            )
+            
+            # Store the sent message in the database
+            from app.models.message import Message
+            from datetime import datetime
+            
+            sent_message = Message(
+                instagram_account_id=account_id,
+                user_id=user_id,
+                conversation_id=conversation.id,
+                message_id=result.get("message_id") or result.get("id"),
+                message_text=message_text,
+                is_from_bot=True,  # Sent by us
+                sender_username=None,  # Our account
+                recipient_username=username,
+                recipient_id=recipient_id,
+                has_attachments=False,
+                attachments=None,
+                created_at=datetime.utcnow()
+            )
+            db.add(sent_message)
+            
+            # Update conversation's last_message
+            conversation.last_message = message_text
+            conversation.last_message_at = datetime.utcnow()
+            conversation.last_message_is_from_bot = True
+            conversation.updated_at = datetime.utcnow()
+            
+            db.commit()
+            db.refresh(sent_message)
+            
+            return {
+                "success": True,
+                "message": {
+                    "id": sent_message.id,
+                    "message_id": sent_message.message_id,
+                    "text": sent_message.message_text,
+                    "is_from_bot": sent_message.is_from_bot,
+                    "sender_username": sent_message.sender_username,
+                    "recipient_username": sent_message.recipient_username,
+                    "has_attachments": sent_message.has_attachments,
+                    "attachments": sent_message.attachments,
+                    "created_at": sent_message.created_at.isoformat() if sent_message.created_at else None
+                }
+            }
+            
+        except Exception as send_error:
+            print(f"❌ Failed to send message via Instagram API: {str(send_error)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send message: {str(send_error)}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error sending message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send message: {str(e)}"
         )
 
 
