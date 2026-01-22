@@ -2303,6 +2303,12 @@ async def execute_automation_action(
                 if should_send_email_success:
                     email_success_message = rule.config.get("email_success_message")
                     print(f"🔍 [EMAIL SUCCESS] email_success_message from config: '{email_success_message}'")
+                    
+                    # Use default message if not configured (same as frontend default)
+                    if not email_success_message or str(email_success_message).strip() == '' or str(email_success_message).lower() == 'none':
+                        email_success_message = "Got it! Check your inbox (and maybe spam/promotions) in about 2 minutes. 🎁"
+                        print(f"🔍 [EMAIL SUCCESS] Using default email success message")
+                    
                     if email_success_message and str(email_success_message).strip():
                         print(f"📧 Sending email success message before primary DM")
                         try:
