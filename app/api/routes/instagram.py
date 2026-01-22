@@ -1359,10 +1359,10 @@ async def process_postback_event(event: dict, db: Session):
                 ).all()
             else:
                 # Fallback: find all active rules for this account
-            rules = db.query(AutomationRule).filter(
-                AutomationRule.instagram_account_id == account.id,
-                AutomationRule.is_active == True
-            ).all()
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True
+                ).all()
             
             # Find the rule that sent this follow button (check if ask_for_email is enabled)
             for rule in rules:
@@ -1387,36 +1387,35 @@ async def process_postback_event(event: dict, db: Session):
                     
                     # STRICT MODE: If email is enabled, send email request immediately
                     if ask_for_email:
-                    ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
-                    
+                        ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
+                        
                         print(f"📧 [STRICT MODE] Sending email request immediately (Follow Me button clicked)")
-                    from app.utils.encryption import decrypt_credentials
-                    from app.utils.instagram_api import send_dm
-                    
-                    try:
-                        # Get access token
-                        if account.encrypted_page_token:
-                            access_token = decrypt_credentials(account.encrypted_page_token)
-                        elif account.encrypted_credentials:
-                            access_token = decrypt_credentials(account.encrypted_credentials)
-                        else:
-                            raise Exception("No access token found")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
                         
-                        page_id_for_dm = account.page_id
-                        
-                        # Send email request as PLAIN TEXT (NO buttons or quick_replies)
-                        send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        try:
+                            # Get access token
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id_for_dm = account.page_id
+                            
+                            # Send email request as PLAIN TEXT (NO buttons or quick_replies)
+                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                             print(f"✅ Email request sent immediately after Follow Me button click")
-                        
-                        # Update state to mark email request as sent and waiting for typed email
-                        update_pre_dm_state(str(sender_id), rule.id, {
-                            "email_request_sent": True,
-                            "step": "email",
-                            "waiting_for_email_text": True  # NEW: Strict mode flag
-                        })
-                        
-                    except Exception as e:
-                        print(f"❌ Failed to send email request: {str(e)}")
+                            
+                            # Update state to mark email request as sent and waiting for typed email
+                            update_pre_dm_state(str(sender_id), rule.id, {
+                                "email_request_sent": True,
+                                "step": "email",
+                                "waiting_for_email_text": True  # NEW: Strict mode flag
+                            })
+                        except Exception as e:
+                            print(f"❌ Failed to send email request: {str(e)}")
                     else:
                         # No email request, proceed directly to primary DM
                         print(f"✅ Follow confirmed via button click, proceeding to primary DM")
@@ -2783,19 +2782,19 @@ async def execute_automation_action(
                     
                     # If still no template, try message_variations (shared or simple reply messages)
                     if not message_template:
-                    message_variations = rule.config.get("message_variations", [])
+                        message_variations = rule.config.get("message_variations", [])
                         print(f"🔍 [DEBUG] Loading message template: message_variations={message_variations}, type={type(message_variations)}")
-                    if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
+                        if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
                             # Filter out empty messages
                             valid_messages = [m for m in message_variations if m and str(m).strip()]
                             if valid_messages:
-                        # Randomly select one message from variations
-                        import random
+                                # Randomly select one message from variations
+                                import random
                                 message_template = random.choice(valid_messages)
                                 print(f"🎲 Randomly selected message from {len(valid_messages)} valid variations")
-                    else:
+                            else:
                                 print(f"⚠️ All message variations are empty, trying fallback to message_template")
-                        message_template = rule.config.get("message_template", "")
+                                message_template = rule.config.get("message_template", "")
                         else:
                             message_template = rule.config.get("message_template", "")
                             print(f"🔍 [DEBUG] Using message_template fallback: '{message_template[:50] if message_template else 'None'}...'")
