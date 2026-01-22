@@ -414,9 +414,9 @@ async def process_instagram_message(event: dict, db: Session):
                     })
                     log_print(f"✅ Tracked profile visit for rule {rule.id}")
                     
-                    # Send a reminder message with the profile URL
-                    instagram_profile_url = f"https://instagram.com/{account.username}"
-                    reminder_message = f"Here's my profile link: {instagram_profile_url}\n\nOnce you've followed, click 'I'm following' or type 'done' to continue! 😊"
+                    # Send a simple reminder message WITHOUT URL to avoid link preview card
+                    # (The original follow request message already contains the profile URL)
+                    reminder_message = "Great! Once you've followed, click 'I'm following' or type 'done' to continue! 😊"
                     
                     from app.utils.encryption import decrypt_credentials
                     from app.utils.instagram_api import send_dm
@@ -1181,9 +1181,9 @@ async def process_postback_event(event: dict, db: Session):
                     })
                     print(f"✅ Tracked profile visit for rule {rule.id}")
                     
-                    # Send reminder message with profile URL
-                    instagram_profile_url = f"https://instagram.com/{account.username}"
-                    reminder_message = f"Here's my profile link: {instagram_profile_url}\n\nOnce you've followed, click 'I'm following' or type 'done' to continue! 😊"
+                    # Send a simple reminder message WITHOUT URL to avoid link preview card
+                    # (The original follow request message already contains the profile URL)
+                    reminder_message = "Great! Once you've followed, click 'I'm following' or type 'done' to continue! 😊"
                     
                     from app.utils.encryption import decrypt_credentials
                     from app.utils.instagram_api import send_dm
