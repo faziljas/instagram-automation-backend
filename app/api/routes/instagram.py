@@ -3550,6 +3550,19 @@ async def get_instagram_conversations(
         
         conversations_list = conversations_query.all()
         
+        # Auto-sync if no conversations exist (first time or after migration)
+        if len(conversations_list) == 0 and not sync:
+            print("🔄 No conversations found, auto-syncing from existing messages...")
+            try:
+                from app.services.instagram_sync import sync_instagram_conversations
+                sync_result = sync_instagram_conversations(user_id, account_id, db, limit)
+                print(f"✅ Auto-sync result: {sync_result}")
+                # Re-query after sync
+                conversations_list = conversations_query.all()
+            except Exception as sync_err:
+                print(f"⚠️ Auto-sync warning: {str(sync_err)}")
+                # Continue with empty list
+        
         # Format conversations from Conversation model
         if len(conversations_list) > 0:
             formatted_conversations = []
