@@ -2016,6 +2016,41 @@ async def execute_automation_action(
                                     quick_reply_message = "Click one of the options below:"
                                     send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
                                     print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
+                                    
+                                    # Send public comment reply IMMEDIATELY after follow-up message (not waiting for email)
+                                    if comment_id:
+                                        is_lead_capture = rule.config.get("is_lead_capture", False)
+                                        
+                                        # Determine which comment reply fields to use based on rule type
+                                        if is_lead_capture:
+                                            auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                                            comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+                                        else:
+                                            auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                                            comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+                                        
+                                        if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
+                                            valid_replies = [r for r in comment_replies if r and str(r).strip()]
+                                            if valid_replies:
+                                                import random
+                                                selected_reply = random.choice(valid_replies)
+                                                print(f"💬 [IMMEDIATE] Sending public comment reply immediately after follow-up message")
+                                                try:
+                                                    from app.utils.instagram_api import send_public_comment_reply
+                                                    send_public_comment_reply(comment_id, selected_reply, access_token)
+                                                    print(f"✅ Public comment reply sent immediately: {selected_reply[:50]}...")
+                                                    
+                                                    # Mark comment reply as sent in pre-DM state to avoid duplicate
+                                                    from app.services.pre_dm_handler import update_pre_dm_state
+                                                    update_pre_dm_state(str(sender_id), rule_id, {
+                                                        "comment_reply_sent": True
+                                                    })
+                                                    
+                                                    # Update stats
+                                                    from app.services.lead_capture import update_automation_stats
+                                                    update_automation_stats(rule.id, "comment_replied", db)
+                                                except Exception as reply_error:
+                                                    print(f"⚠️ Failed to send immediate comment reply: {str(reply_error)}")
                                 except Exception as btn_error:
                                     print(f"⚠️ Could not send follow buttons: {str(btn_error)}")
                             except Exception as e:
@@ -2033,6 +2068,41 @@ async def execute_automation_action(
                                 quick_reply_message = "Click one of the options below:"
                                 send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
                                 print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
+                                
+                                # Send public comment reply IMMEDIATELY after follow-up message (not waiting for email)
+                                if comment_id:
+                                    is_lead_capture = rule.config.get("is_lead_capture", False)
+                                    
+                                    # Determine which comment reply fields to use based on rule type
+                                    if is_lead_capture:
+                                        auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                                        comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+                                    else:
+                                        auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                                        comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+                                    
+                                    if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
+                                        valid_replies = [r for r in comment_replies if r and str(r).strip()]
+                                        if valid_replies:
+                                            import random
+                                            selected_reply = random.choice(valid_replies)
+                                            print(f"💬 [IMMEDIATE] Sending public comment reply immediately after follow-up message")
+                                            try:
+                                                from app.utils.instagram_api import send_public_comment_reply
+                                                send_public_comment_reply(comment_id, selected_reply, access_token)
+                                                print(f"✅ Public comment reply sent immediately: {selected_reply[:50]}...")
+                                                
+                                                # Mark comment reply as sent in pre-DM state to avoid duplicate
+                                                from app.services.pre_dm_handler import update_pre_dm_state
+                                                update_pre_dm_state(str(sender_id), rule_id, {
+                                                    "comment_reply_sent": True
+                                                })
+                                                
+                                                # Update stats
+                                                from app.services.lead_capture import update_automation_stats
+                                                update_automation_stats(rule.id, "comment_replied", db)
+                                            except Exception as reply_error:
+                                                print(f"⚠️ Failed to send immediate comment reply: {str(reply_error)}")
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         
@@ -2719,8 +2789,18 @@ async def execute_automation_action(
                 print(f"🔍 [COMMENT REPLY] Config fields: auto_reply_to_comments={rule.config.get('auto_reply_to_comments')}, simple_auto_reply_to_comments={rule.config.get('simple_auto_reply_to_comments')}, lead_auto_reply_to_comments={rule.config.get('lead_auto_reply_to_comments')}")
                 print(f"🔍 [COMMENT REPLY] comment_replies={rule.config.get('comment_replies')}, simple_comment_replies={rule.config.get('simple_comment_replies')}, lead_comment_replies={rule.config.get('lead_comment_replies')}")
                 
+                # Check if comment reply was already sent immediately after follow-up message
+                comment_reply_already_sent = False
+                if comment_id:
+                    from app.services.pre_dm_handler import get_pre_dm_state
+                    state = get_pre_dm_state(str(sender_id), rule.id)
+                    if state and state.get("comment_reply_sent"):
+                        comment_reply_already_sent = True
+                        print(f"⏭️ [COMMENT REPLY] Skipping: Comment reply was already sent immediately after follow-up message")
+                
                 # If we have a comment_id and auto-reply is enabled, send public comment reply
-                if comment_id and auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
+                # (Only if it wasn't already sent immediately after follow-up message)
+                if not comment_reply_already_sent and comment_id and auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
                     # Filter out empty replies
                     valid_replies = [r for r in comment_replies if r and str(r).strip()]
                     print(f"🔍 [COMMENT REPLY] After filtering: {len(valid_replies)} valid replies out of {len(comment_replies)} total")
@@ -2750,7 +2830,9 @@ async def execute_automation_action(
                         print(f"⏭️ [COMMENT REPLY] Skipping: All comment_replies are empty after filtering for rule {rule.id}")
                 else:
                     # Log why comment reply is not being sent
-                    if not comment_id:
+                    if comment_reply_already_sent:
+                        print(f"⏭️ [COMMENT REPLY] Skipping: Comment reply was already sent immediately after follow-up message")
+                    elif not comment_id:
                         print(f"⏭️ [COMMENT REPLY] Skipping: No comment_id provided (trigger_type={trigger_type})")
                     elif not auto_reply_to_comments:
                         print(f"⏭️ [COMMENT REPLY] Skipping: auto_reply_to_comments is False for rule {rule.id}")
