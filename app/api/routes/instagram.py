@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 import requests
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -44,6 +45,61 @@ _MAX_CACHE_SIZE = 1000  # Limit cache size to prevent memory issues
 # Format: (message_id, rule_id) -> timestamp when processing started
 _processing_rules = {}
 _MAX_PROCESSING_CACHE_SIZE = 1000
+
+
+def get_or_create_conversation(
+    db: Session,
+    user_id: int,
+    account_id: int,
+    participant_id: str,
+    participant_name: str = None,
+    platform_conversation_id: str = None
+):
+    """
+    Get or create a Conversation record for a participant.
+    
+    Args:
+        db: Database session
+        user_id: User ID
+        account_id: Instagram account ID
+        participant_id: IGSID of the participant (customer)
+        participant_name: Username of the participant (optional)
+        platform_conversation_id: Instagram Thread ID (optional)
+        
+    Returns:
+        Conversation object
+    """
+    from app.models.conversation import Conversation
+    from datetime import datetime
+    
+    # Find existing conversation
+    conversation = db.query(Conversation).filter(
+        Conversation.instagram_account_id == account_id,
+        Conversation.user_id == user_id,
+        Conversation.participant_id == participant_id
+    ).first()
+    
+    if conversation:
+        # Update participant name if provided and different
+        if participant_name and conversation.participant_name != participant_name:
+            conversation.participant_name = participant_name
+        # Update platform_conversation_id if provided
+        if platform_conversation_id and not conversation.platform_conversation_id:
+            conversation.platform_conversation_id = platform_conversation_id
+        return conversation
+    else:
+        # Create new conversation
+        conversation = Conversation(
+            user_id=user_id,
+            instagram_account_id=account_id,
+            participant_id=participant_id,
+            participant_name=participant_name,
+            platform_conversation_id=platform_conversation_id,
+            updated_at=datetime.utcnow()
+        )
+        db.add(conversation)
+        db.flush()  # Flush to get the ID
+        return conversation
 
 
 def get_current_user_id(authorization: str = Header(None)) -> int:
@@ -272,22 +328,41 @@ async def process_instagram_message(event: dict, db: Session):
                 ).first()
             
             if not existing_message:
+                # Get or create conversation for this participant
+                conversation = get_or_create_conversation(
+                    db=db,
+                    user_id=account.user_id,
+                    account_id=account.id,
+                    participant_id=sender_id,
+                    participant_name=sender_username
+                )
+                
+                # Update conversation's last_message and updated_at
+                message_preview = message_text or "[Media]"
+                if len(message_preview) > 100:
+                    message_preview = message_preview[:100] + "..."
+                conversation.last_message = message_preview
+                conversation.updated_at = datetime.utcnow()
+                
                 incoming_message = Message(
                     user_id=account.user_id,
                     instagram_account_id=account.id,
+                    conversation_id=conversation.id,
                     sender_id=sender_id,
                     sender_username=sender_username,
                     recipient_id=str(recipient_id),
                     recipient_username=recipient_username,
                     message_text=message_text,
+                    content=message_text,  # Also set content field
                     message_id=message_id,
+                    platform_message_id=message_id,  # Also set platform_message_id
                     is_from_bot=False,  # This is an incoming message
                     has_attachments=len(attachments) > 0,
                     attachments=attachments if attachments else None
                 )
                 db.add(incoming_message)
                 db.commit()
-                log_print(f"💾 Stored incoming message from {sender_username or sender_id}")
+                log_print(f"💾 Stored incoming message from {sender_username or sender_id} (conversation_id: {conversation.id})")
         except Exception as store_err:
             log_print(f"⚠️ Failed to store incoming message: {str(store_err)}")
             db.rollback()
@@ -3019,20 +3094,47 @@ async def execute_automation_action(
                 # Also store in Message table for Messages UI
                 try:
                     from app.models.message import Message
+                    from datetime import datetime
                     # Get recipient username if available (sender_id might be username or ID)
                     recipient_username = str(sender_id)  # Default to sender_id
                     
-                    # Try to get username from account's followers or previous messages
-                    # For now, use sender_id as username (will be updated when we have username)
+                    # Try to get username from previous messages
+                    previous_msg = db.query(Message).filter(
+                        Message.instagram_account_id == account_id,
+                        Message.user_id == user_id,
+                        Message.sender_id == str(sender_id)
+                    ).first()
+                    if previous_msg and previous_msg.sender_username:
+                        recipient_username = previous_msg.sender_username
+                    
+                    # Get or create conversation for this participant
+                    conversation = get_or_create_conversation(
+                        db=db,
+                        user_id=user_id,
+                        account_id=account_id,
+                        participant_id=str(sender_id),
+                        participant_name=recipient_username
+                    )
+                    
+                    # Update conversation's last_message and updated_at
+                    message_preview = message_template or "[Media]"
+                    if len(message_preview) > 100:
+                        message_preview = message_preview[:100] + "..."
+                    conversation.last_message = message_preview
+                    conversation.updated_at = datetime.utcnow()
+                    
                     sent_message = Message(
                         user_id=user_id,
                         instagram_account_id=account_id,
+                        conversation_id=conversation.id,
                         sender_id=str(account.igsid or account_id),  # Our account ID
                         sender_username=username,  # Our account username
                         recipient_id=str(sender_id),  # Recipient ID
                         recipient_username=recipient_username,  # Will be updated when we have it
                         message_text=message_template,
+                        content=message_template,  # Also set content field
                         message_id=None,  # Instagram doesn't return message ID immediately
+                        platform_message_id=None,  # Will be updated if we get it later
                         is_from_bot=True,  # This is an outgoing message
                         has_attachments=False,
                         attachments=None
@@ -3398,15 +3500,15 @@ async def get_instagram_media(
 async def get_instagram_conversations(
     account_id: int = Query(..., description="Instagram account ID"),
     limit: int = Query(25, description="Number of conversations to fetch"),
+    sync: bool = Query(False, description="Whether to sync conversations from API"),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     """
     Fetch recent Instagram DM conversations for a specific account.
     
-    Note: Instagram Graph API doesn't provide a direct conversations endpoint,
-    so we return recent conversations based on DM logs (outgoing messages we've sent).
-    For incoming messages, they come through webhooks and can be seen in automation rules.
+    Uses the Conversation model to return structured conversation data.
+    Optionally syncs conversations from existing messages if sync=true.
     
     This endpoint requires Pro plan or higher.
     """
@@ -3427,11 +3529,56 @@ async def get_instagram_conversations(
                 detail="Instagram account not found"
             )
         
-        # Get conversations from Message table (both sent and received)
-        # Also check DmLog as fallback for older conversations
+        # Sync conversations if requested
+        if sync:
+            from app.services.instagram_sync import sync_instagram_conversations
+            try:
+                sync_result = sync_instagram_conversations(user_id, account_id, db, limit)
+                print(f"✅ Sync result: {sync_result}")
+            except Exception as sync_err:
+                print(f"⚠️ Sync warning: {str(sync_err)}")
+                # Continue even if sync fails
+        
+        # Get conversations from Conversation table
+        from app.models.conversation import Conversation
         from app.models.message import Message
-        from app.models.dm_log import DmLog
         from sqlalchemy import func, or_, and_
+        
+        conversations_query = db.query(Conversation).filter(
+            Conversation.instagram_account_id == account_id,
+            Conversation.user_id == user_id
+        ).order_by(Conversation.updated_at.desc()).limit(limit)
+        
+        conversations_list = conversations_query.all()
+        
+        # Format conversations from Conversation model
+        if len(conversations_list) > 0:
+            formatted_conversations = []
+            for conv in conversations_list:
+                # Get message count for this conversation
+                message_count = db.query(func.count(Message.id)).filter(
+                    Message.conversation_id == conv.id
+                ).scalar() or 0
+                
+                formatted_conversations.append({
+                    "id": str(conv.id),
+                    "username": conv.participant_name or conv.participant_id,
+                    "user_id": conv.participant_id,
+                    "last_message_at": conv.updated_at.isoformat() if conv.updated_at else None,
+                    "last_message": conv.last_message or "",
+                    "last_message_is_from_bot": None,  # Will determine from latest message if needed
+                    "message_count": message_count
+                })
+            
+            return {
+                "success": True,
+                "conversations": formatted_conversations,
+                "count": len(formatted_conversations)
+            }
+        
+        # Fallback: If no conversations in Conversation table, use old logic
+        # This maintains backward compatibility
+        from app.models.dm_log import DmLog
         
         # Get distinct conversations (group by sender/recipient)
         # A conversation is identified by the other party's username

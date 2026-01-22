@@ -30,7 +30,7 @@ from app.db.session import engine
 from app.db.base import Base
 from sqlalchemy import text
 # Import all models to ensure they're registered with Base
-from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message
+from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message, Conversation
 
 app = FastAPI(title="Instagram Automation SaaS")
 
@@ -57,6 +57,15 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent and may already be applied
+    
+    # Run conversation migration
+    try:
+        from add_conversation_migration import run_migration as run_conv_migration
+        run_conv_migration()
+        print("✅ Conversation migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Conversation migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
     
     # Auto-migrate: Add columns if they don't exist
     try:

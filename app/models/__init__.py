@@ -8,6 +8,7 @@ from app.models.captured_lead import CapturedLead
 from app.models.automation_rule_stats import AutomationRuleStats
 from app.models.analytics_event import AnalyticsEvent, EventType
 from app.models.message import Message
+from app.models.conversation import Conversation
 
 __all__ = [
     "User",
@@ -20,5 +21,6 @@ __all__ = [
     "AutomationRuleStats",
     "AnalyticsEvent",
     "EventType",
-    "Message"
+    "Message",
+    "Conversation"
 ]
