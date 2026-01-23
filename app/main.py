@@ -30,7 +30,7 @@ from app.db.session import engine
 from app.db.base import Base
 from sqlalchemy import text
 # Import all models to ensure they're registered with Base
-from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message, Conversation
+from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message, Conversation, InstagramAudience
 
 app = FastAPI(title="Instagram Automation SaaS")
 
@@ -66,6 +66,43 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Conversation migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
+    
+    # Run InstagramAudience migration (for global conversion tracking)
+    try:
+        print("🔄 Running InstagramAudience migration...", file=sys.stderr)
+        from add_instagram_audience_migration import run_migration as run_audience_migration
+        run_audience_migration()
+        print("✅ InstagramAudience migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ InstagramAudience migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
+    
+    # Try Alembic migrations (if Alembic is configured)
+    try:
+        import subprocess
+        import os
+        print("🔄 Attempting Alembic migrations...", file=sys.stderr)
+        # Check if alembic.ini exists
+        if os.path.exists("alembic.ini"):
+            # Run alembic upgrade head
+            result = subprocess.run(
+                ["alembic", "upgrade", "head"],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            if result.returncode == 0:
+                print("✅ Alembic migrations completed successfully", file=sys.stderr)
+            else:
+                print(f"⚠️ Alembic migration output: {result.stdout}", file=sys.stderr)
+                print(f"⚠️ Alembic migration errors: {result.stderr}", file=sys.stderr)
+        else:
+            print("ℹ️ Alembic not configured (alembic.ini not found), skipping Alembic migrations", file=sys.stderr)
+    except FileNotFoundError:
+        print("ℹ️ Alembic command not found, skipping Alembic migrations", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Alembic migration warning (may not be configured): {str(e)}", file=sys.stderr)
+        # Don't raise - Alembic is optional
     
     # Auto-migrate: Add columns if they don't exist
     try:
