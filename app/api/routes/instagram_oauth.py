@@ -177,8 +177,11 @@ def get_instagram_auth_url_popup(user_id: int = Depends(get_current_user_id)):
 
 @router.get("/oauth/callback")
 async def instagram_oauth_callback(
-    code: str = Query(...),
+    code: str = Query(None),
     state: str = Query(None),  # This is the user_id
+    error: str = Query(None),  # OAuth error from Facebook
+    error_reason: str = Query(None),  # Error reason from Facebook
+    error_description: str = Query(None),  # Error description from Facebook
     db: Session = Depends(get_db),
     request: Request = None
 ):
@@ -187,6 +190,21 @@ async def instagram_oauth_callback(
     Exchange authorization code for User Access Token, fetch Pages, find Instagram Business Account.
     """
     try:
+        # Handle OAuth errors (user denied, invalid request, etc.)
+        if error:
+            error_msg = error_description or error_reason or error
+            print(f"❌ OAuth error received: {error} - {error_msg}")
+            return RedirectResponse(
+                url=f"{FRONTEND_URL}/dashboard/accounts?error=oauth_error&message={error_msg}"
+            )
+        
+        # Check if code is missing
+        if not code:
+            print("❌ OAuth callback received without code parameter")
+            return RedirectResponse(
+                url=f"{FRONTEND_URL}/dashboard/accounts?error=no_code&message=Authorization code not provided"
+            )
+        
         user_id = int(state) if state else None
         
         print(f"📥 OAuth callback received: code={code[:20]}..., user_id={user_id}")
