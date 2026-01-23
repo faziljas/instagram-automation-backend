@@ -3043,14 +3043,14 @@ async def execute_automation_action(
                     # Pre-DM actions complete, proceed to primary DM
                     if pre_dm_result.get("email"):
                         print(f"✅ Pre-DM email received: {pre_dm_result['email']}, proceeding to primary DM")
-                    # Continue to primary DM logic below
-                    message_template = None  # Will be set below
+                    # Continue to primary DM logic below - message_template will be loaded in the elif block below
+                    print(f"🔍 [DEBUG] Pre-DM complete, will load message_template in elif block")
             
             # Check if this is a lead capture flow
             is_lead_capture = rule.config.get("is_lead_capture", False)
             
-            # Skip lead capture step processing if we're coming from pre-DM actions
-            # (we just need to send the primary DM using lead_dm_messages)
+            # Skip lead capture step processing if we're coming from pre-DM actions with send_primary
+            # (we just need to send the primary DM using lead_dm_messages, which will be loaded in the elif block)
             if is_lead_capture and not (pre_dm_result and pre_dm_result.get("action") == "send_primary"):
                 # Process lead capture flow
                 from app.services.lead_capture import process_lead_capture_step, update_automation_stats
@@ -3081,7 +3081,11 @@ async def execute_automation_action(
                 # Regular DM flow (or primary DM after pre-DM actions)
                 # Get message template from config
                 # For Lead Capture rules, check lead_dm_messages first, then fallback to message_variations
-                if message_template is None:  # Only set if not already set by pre-DM
+                # CRITICAL: Always load template when action is "send_primary" (even if message_template was set to None above)
+                # This ensures template is loaded when coming from pre-DM actions with send_primary override
+                # Check if we need to load template (either None or when send_primary action)
+                should_load_template = message_template is None or (pre_dm_result and pre_dm_result.get("action") == "send_primary")
+                if should_load_template:
                     is_lead_capture = rule.config.get("is_lead_capture", False)
                     
                     # For Lead Capture rules, try lead_dm_messages first
@@ -3094,6 +3098,7 @@ async def execute_automation_action(
                                 import random
                                 message_template = random.choice(valid_messages)
                                 print(f"🎲 Selected message from {len(valid_messages)} lead_dm_messages variations")
+                                print(f"✅ [DEBUG] message_template set to: {repr(message_template)}")
                             else:
                                 print(f"⚠️ All lead_dm_messages are empty, trying fallback to message_variations")
                         else:
@@ -3117,6 +3122,9 @@ async def execute_automation_action(
                         else:
                             message_template = rule.config.get("message_template", "")
                             print(f"🔍 [DEBUG] Using message_template fallback: '{message_template[:50] if message_template else 'None'}...'")
+                
+                # Debug: Log final message_template value after loading
+                print(f"✅ [DEBUG] Final message_template after loading: {repr(message_template)}, type: {type(message_template)}")
 
                 # SOFT REMINDER: If ask_to_follow is enabled, gently remind user to stay followed
                 try:
@@ -3212,10 +3220,27 @@ async def execute_automation_action(
                 traceback.print_exc()
             
             # Now check if we have a message template for the primary DM
-            if not message_template:
+            # CRITICAL: Check both None and empty string, and ensure template was loaded
+            if not message_template or (isinstance(message_template, str) and not message_template.strip()):
                 print(f"⚠️ No message template configured for rule {rule.id}, action: {pre_dm_result.get('action') if pre_dm_result else 'None'}")
-                # Email success message was already sent above if needed, so we can return now
-                return
+                print(f"🔍 [DEBUG] message_template value: {repr(message_template)}, type: {type(message_template)}")
+                print(f"🔍 [DEBUG] Rule config - lead_dm_messages: {rule.config.get('lead_dm_messages')}, message_variations: {rule.config.get('message_variations')}, message_template: {rule.config.get('message_template')}")
+                print(f"🔍 [DEBUG] is_lead_capture: {is_lead_capture}, pre_dm_result: {pre_dm_result}")
+                # Try to load template one more time as fallback
+                if is_lead_capture:
+                    lead_dm_messages = rule.config.get("lead_dm_messages", [])
+                    if lead_dm_messages and isinstance(lead_dm_messages, list) and len(lead_dm_messages) > 0:
+                        valid_messages = [m for m in lead_dm_messages if m and str(m).strip()]
+                        if valid_messages:
+                            import random
+                            message_template = random.choice(valid_messages)
+                            print(f"🔄 [FALLBACK] Loaded message_template from lead_dm_messages: {repr(message_template)}")
+                
+                # If still no template, return
+                if not message_template or (isinstance(message_template, str) and not message_template.strip()):
+                    print(f"❌ Still no message template after fallback, returning early")
+                    # Email success message was already sent above if needed, so we can return now
+                    return
             
             # Update stats
             from app.services.lead_capture import update_automation_stats
