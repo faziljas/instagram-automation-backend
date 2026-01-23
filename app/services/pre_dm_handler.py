@@ -414,6 +414,19 @@ async def process_pre_dm_actions(
                 "send_email_success": True
             }
         else:
+            # Check if user typed a follow confirmation (like "done") while waiting for email
+            # Send friendly reminder instead of generic retry message
+            if check_if_follow_confirmation(incoming_message):
+                print(f"💬 [FRIENDLY REMINDER] User typed follow confirmation '{incoming_message}' while waiting for email")
+                friendly_reminder = config.get("email_friendly_reminder_message", 
+                    "I see you confirmed following! 👋\n\nNow I just need your email address so I can send you the guide! 📧")
+                return {
+                    "action": "send_email_retry",
+                    "message": friendly_reminder,
+                    "should_save_email": False,
+                    "email": None
+                }
+            
             # STRICT MODE: Invalid email - send retry message and WAIT
             print(f"⚠️ [STRICT MODE] Invalid email format: {incoming_message}")
             email_retry_message = config.get("email_retry_message", "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧")
