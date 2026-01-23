@@ -4,8 +4,9 @@ Handles Stripe Checkout Session creation for subscription upgrades
 """
 import os
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Body
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from app.db.session import get_db
 from app.models.user import User
 from app.models.subscription import Subscription
@@ -148,4 +149,113 @@ async def create_checkout_session(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create checkout session: {str(e)}"
+        )
+
+
+class VerifyCheckoutRequest(BaseModel):
+    session_id: str
+
+
+@router.post("/verify-checkout-session")
+async def verify_checkout_session(
+    request: VerifyCheckoutRequest = Body(...),
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    """
+    Verify and sync subscription status from Stripe checkout session.
+    Called after successful checkout to immediately update user's plan.
+    """
+    try:
+        # Retrieve checkout session from Stripe
+        checkout_session = stripe.checkout.Session.retrieve(request.session_id)
+        
+        # Verify this session belongs to the current user
+        session_user_id = checkout_session.metadata.get("user_id")
+        if not session_user_id or int(session_user_id) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This checkout session does not belong to you"
+            )
+        
+        # Check if checkout is completed
+        if checkout_session.payment_status != "paid":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Checkout session is not paid"
+            )
+        
+        # Get subscription ID from checkout session
+        subscription_id_raw = checkout_session.subscription
+        if not subscription_id_raw:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No subscription found in checkout session"
+            )
+        
+        # Handle subscription_id - it might be a string or an object
+        if isinstance(subscription_id_raw, str):
+            subscription_id_str = subscription_id_raw
+        elif hasattr(subscription_id_raw, 'id'):
+            subscription_id_str = subscription_id_raw.id
+        else:
+            subscription_id_str = str(subscription_id_raw)
+        
+        # Retrieve subscription from Stripe
+        subscription = stripe.Subscription.retrieve(subscription_id_str)
+        
+        # Get user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Create or update subscription record
+        db_subscription = db.query(Subscription).filter(
+            Subscription.user_id == user_id
+        ).first()
+        
+        if db_subscription:
+            db_subscription.stripe_subscription_id = subscription_id_str
+            db_subscription.status = subscription.status
+        else:
+            db_subscription = Subscription(
+                user_id=user_id,
+                stripe_subscription_id=subscription_id_str,
+                status=subscription.status
+            )
+            db.add(db_subscription)
+        
+        # Update user plan tier based on subscription
+        from app.api.routes.webhooks import get_plan_tier_from_subscription
+        plan_tier = get_plan_tier_from_subscription(subscription.to_dict())
+        user.plan_tier = plan_tier
+        
+        db.commit()
+        db.refresh(user)
+        db.refresh(db_subscription)
+        
+        print(f"✅ User {user_id} subscription synced: {plan_tier} plan (status: {subscription.status})")
+        
+        return {
+            "message": "Subscription verified and updated",
+            "plan_tier": plan_tier,
+            "status": subscription.status
+        }
+        
+    except stripe.error.StripeError as e:
+        print(f"❌ Stripe error verifying checkout session: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify checkout session: {str(e)}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error verifying checkout session: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify checkout session: {str(e)}"
         )
