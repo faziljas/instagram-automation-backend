@@ -3941,6 +3941,39 @@ async def get_instagram_media(
                 "comments_count": item.get("comments_count", 0),
             })
         
+        # After fetching media, check for deleted media and disable corresponding automation rules
+        # This ensures rules are automatically disabled when their associated media is deleted
+        try:
+            from app.models.automation_rule import AutomationRule
+            
+            # Get all active rules for this account with media_id set
+            active_rules_with_media = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == account_id,
+                AutomationRule.is_active == True,
+                AutomationRule.media_id.isnot(None)
+            ).all()
+            
+            # Get list of existing media IDs from Instagram
+            existing_media_ids = {str(item.get("id")) for item in media_items if item.get("id")}
+            
+            # Check each rule's media_id against existing media
+            disabled_count = 0
+            for rule in active_rules_with_media:
+                rule_media_id = str(rule.media_id) if rule.media_id else None
+                if rule_media_id and rule_media_id not in existing_media_ids:
+                    # Media no longer exists - disable the rule
+                    print(f"⚠️ Media {rule_media_id} for rule '{rule.name}' (ID: {rule.id}) no longer exists on Instagram. Auto-disabling rule...")
+                    rule.is_active = False
+                    disabled_count += 1
+            
+            if disabled_count > 0:
+                db.commit()
+                print(f"✅ Auto-disabled {disabled_count} automation rule(s) for deleted media")
+        except Exception as e:
+            print(f"⚠️ Error checking for deleted media: {str(e)}")
+            # Don't fail the request if auto-disable check fails
+            db.rollback()
+        
         return {
             "success": True,
             "media": formatted_media,

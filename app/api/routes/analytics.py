@@ -353,13 +353,14 @@ def get_analytics_dashboard(
             # This preserves previews even if media is deleted from Instagram
             cached_preview = db.query(AnalyticsEvent.media_preview_url).filter(
                 AnalyticsEvent.media_id == media_id,
-                AnalyticsEvent.media_preview_url.isnot(None)
-            ).first()
+                AnalyticsEvent.media_preview_url.isnot(None),
+                AnalyticsEvent.media_preview_url != ""  # Also exclude empty strings
+            ).order_by(AnalyticsEvent.created_at.desc()).first()  # Get most recent cached preview
             
             if cached_preview and cached_preview[0]:
                 # Use cached preview URL (preserved even if media is deleted)
                 entry["media_url"] = cached_preview[0]
-                print(f"✅ Using cached media preview for {media_id}")
+                print(f"✅ Using cached media preview for {media_id}: {cached_preview[0][:50]}...")
             elif instagram_account_id:
                 # Fallback: Try to fetch from Instagram API if no cached preview
                 try:
@@ -391,8 +392,31 @@ def get_analytics_dashboard(
                             else:
                                 # Log the error for debugging
                                 error_data = r.json() if r.content else {}
-                                print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_data.get('error', {}).get('message', r.text[:100])}")
+                                error_message = error_data.get('error', {}).get('message', r.text[:100])
+                                print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_message}")
                                 print(f"   Media may have been deleted from Instagram. Consider using cached preview from analytics events.")
+                                
+                                # If media doesn't exist, check if we should disable the rule
+                                if "does not exist" in error_message.lower() or "cannot be loaded" in error_message.lower():
+                                    try:
+                                        from app.models.automation_rule import AutomationRule
+                                        # Find and disable rules for this deleted media
+                                        deleted_rules = db.query(AutomationRule).filter(
+                                            AutomationRule.instagram_account_id == instagram_account_id,
+                                            AutomationRule.media_id == media_id,
+                                            AutomationRule.is_active == True
+                                        ).all()
+                                        
+                                        for rule in deleted_rules:
+                                            print(f"⚠️ Auto-disabling rule '{rule.name}' (ID: {rule.id}) - media {media_id} deleted from Instagram")
+                                            rule.is_active = False
+                                        
+                                        if deleted_rules:
+                                            db.commit()
+                                            print(f"✅ Auto-disabled {len(deleted_rules)} rule(s) for deleted media {media_id}")
+                                    except Exception as disable_err:
+                                        print(f"⚠️ Error auto-disabling rules: {str(disable_err)}")
+                                        db.rollback()
                 except Exception as e:
                     # Log the exception for debugging
                     print(f"⚠️ Exception fetching media info for {media_id}: {str(e)}")
