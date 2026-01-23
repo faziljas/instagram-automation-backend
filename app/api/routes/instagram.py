@@ -3700,6 +3700,12 @@ def delete_instagram_account(
         InstagramAudience.instagram_account_id == account_id
     ).delete()
     
+    # Delete associated Followers (to avoid foreign key constraint violation)
+    from app.models.follower import Follower
+    db.query(Follower).filter(
+        Follower.instagram_account_id == account_id
+    ).delete()
+    
     # Flush before deleting account
     db.flush()
     
