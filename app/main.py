@@ -170,7 +170,7 @@ async def startup_event():
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://27c33e6607f9.ngrok-free.app"],  # Local development + ngrok
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://gnathonic-lashell-unconversable.ngrok-free.dev"],  # Local development + ngrok
     allow_origin_regex=r"https://.*\.(onrender\.com|ngrok-free\.app|ngrok\.io)",  # Render deployment + ngrok patterns
     allow_credentials=True,
     allow_methods=["*"],
