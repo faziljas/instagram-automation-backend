@@ -80,10 +80,46 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
     return any(x in u for x in ("instagram", "iphone", "ipad", "android", "mobile"))
 
 
-def _html_redirect_page(dest_url: str, label: str = "Instagram") -> str:
+def _html_redirect_page(dest_url: str, label: str = "Instagram", deep_link_url: str = None) -> str:
     """Return HTML that redirects via meta refresh + fallback link.
-    Works better than 302 in Instagram in-app browser (avoids empty screen)."""
+    Works better than 302 in Instagram in-app browser (avoids empty screen).
+    If deep_link_url is provided, tries deep link first for mobile native app."""
     esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    deep_link_esc = deep_link_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;") if deep_link_url else None
+    
+    # If deep link is provided, try it first (for mobile native app)
+    # Use immediate redirect with deep link, fallback to web URL
+    if deep_link_esc:
+        return (
+            f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<title>Opening Instagram…</title>'
+            f'<meta http-equiv="refresh" content="0;url={deep_link_esc}">'
+            f'<script>'
+            f'(function() {{'
+            f'  // Try deep link immediately (mobile native app)'
+            f'  var deepLink = "{deep_link_esc}";'
+            f'  var webUrl = "{esc}";'
+            f'  '
+            f'  // Attempt deep link redirect'
+            f'  window.location.href = deepLink;'
+            f'  '
+            f'  // Fallback to web URL if deep link fails (after 1 second)'
+            f'  setTimeout(function() {{'
+            f'    // If still on this page, redirect to web URL'
+            f'    if (document.visibilityState === "visible") {{'
+            f'      window.location.href = webUrl;'
+            f'    }}'
+            f'  }}, 1000);'
+            f'})();'
+            f'</script>'
+            f'</head><body>'
+            f'<p>Opening {label}…</p>'
+            f'<p><a href="{deep_link_esc}">Open in Instagram app</a></p>'
+            f'<p><a href="{esc}">Open in browser</a></p>'
+            f"</body></html>"
+        )
+    
+    # Fallback to standard redirect
     return (
         f'<!DOCTYPE html><html><head><meta charset="utf-8">'
         f'<meta http-equiv="refresh" content="0;url={esc}">'
@@ -160,15 +196,21 @@ async def track_link_click(
             print(f"⚠️ Link click tracking skipped: missing user_id or rule_id")
 
         redirect_to = target_url
+        deep_link_url = None
+        
         if is_profile:
             username = _username_from_instagram_url(target_url)
             if username:
                 redirect_to = f"https://www.instagram.com/{username}"
+                # Generate Instagram deep link for mobile native app
+                # Format: instagram://user?username={username}
+                deep_link_url = f"instagram://user?username={username}"
 
         # Use HTML redirect page instead of 302 for profile links. Instagram in-app
         # browser often ignores 302 and shows empty screen; meta refresh + link works.
+        # For mobile, try deep link first to open in native Instagram app.
         if is_profile and redirect_to.startswith("https://www.instagram.com/"):
-            html = _html_redirect_page(redirect_to, "Instagram profile")
+            html = _html_redirect_page(redirect_to, "Instagram profile", deep_link_url)
             return HTMLResponse(content=html)
         return RedirectResponse(url=redirect_to, status_code=302)
     except HTTPException:
