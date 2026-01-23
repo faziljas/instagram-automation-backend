@@ -3358,25 +3358,25 @@ async def execute_automation_action(
                     conversation.last_message = message_preview
                     conversation.updated_at = datetime.utcnow()
                     
-                # Use precise timestamp to ensure unique timestamps for messages sent in quick succession
-                message_timestamp = datetime.utcnow()
-                sent_message = Message(
-                    user_id=user_id,
-                    instagram_account_id=account_id,
-                    conversation_id=conversation.id,
-                    sender_id=str(account.igsid or account_id),  # Our account ID
-                    sender_username=username,  # Our account username
-                    recipient_id=str(sender_id),  # Recipient ID
-                    recipient_username=recipient_username,  # Will be updated when we have it
-                    message_text=message_template,
-                    content=message_template,  # Also set content field
-                    message_id=None,  # Instagram doesn't return message ID immediately
-                    platform_message_id=None,  # Will be updated if we get it later
-                    is_from_bot=True,  # This is an outgoing message
-                    has_attachments=False,
-                    attachments=None,
-                    created_at=message_timestamp  # Explicit timestamp for precise timing
-                )
+                    # Use precise timestamp to ensure unique timestamps for messages sent in quick succession
+                    message_timestamp = datetime.utcnow()
+                    sent_message = Message(
+                        user_id=user_id,
+                        instagram_account_id=account_id,
+                        conversation_id=conversation.id,
+                        sender_id=str(account.igsid or account_id),  # Our account ID
+                        sender_username=username,  # Our account username
+                        recipient_id=str(sender_id),  # Recipient ID
+                        recipient_username=recipient_username,  # Will be updated when we have it
+                        message_text=message_template,
+                        content=message_template,  # Also set content field
+                        message_id=None,  # Instagram doesn't return message ID immediately
+                        platform_message_id=None,  # Will be updated if we get it later
+                        is_from_bot=True,  # This is an outgoing message
+                        has_attachments=False,
+                        attachments=None,
+                        created_at=message_timestamp  # Explicit timestamp for precise timing
+                    )
                     db.add(sent_message)
                 except Exception as msg_err:
                     print(f"⚠️ Failed to store message in Message table: {str(msg_err)}")
