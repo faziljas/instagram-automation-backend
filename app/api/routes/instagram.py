@@ -244,6 +244,27 @@ async def process_instagram_message(event: dict, db: Session):
         message_text = message.get("text", "")
         message_id = message.get("mid")  # Message ID for deduplication
         
+        # Extract Instagram's timestamp from webhook event (matches Instagram DM timing exactly)
+        # Instagram webhook timestamp can be in milliseconds or seconds (Unix timestamp)
+        instagram_timestamp = None
+        if "timestamp" in event:
+            try:
+                timestamp_value = event.get("timestamp", 0)
+                # Try to determine if it's milliseconds (> year 2100 in seconds) or seconds
+                # Timestamps > 4102444800 (Jan 1, 2100) are likely milliseconds
+                timestamp_int = int(timestamp_value)
+                if timestamp_int > 4102444800:
+                    # Likely milliseconds, convert to seconds
+                    instagram_timestamp = datetime.fromtimestamp(timestamp_int / 1000.0)
+                    log_print(f"📅 Using Instagram webhook timestamp (milliseconds): {instagram_timestamp.isoformat()}")
+                else:
+                    # Likely seconds
+                    instagram_timestamp = datetime.fromtimestamp(float(timestamp_int))
+                    log_print(f"📅 Using Instagram webhook timestamp (seconds): {instagram_timestamp.isoformat()}")
+            except (ValueError, TypeError, OSError) as ts_err:
+                log_print(f"⚠️ Failed to parse Instagram timestamp: {str(ts_err)}, using current time")
+                instagram_timestamp = None
+        
         # Check if message has attachments (images, videos, etc.)
         attachments = message.get("attachments", [])
         if attachments and not message_text:
@@ -344,8 +365,14 @@ async def process_instagram_message(event: dict, db: Session):
                 conversation.last_message = message_preview
                 conversation.updated_at = datetime.utcnow()
                 
-                # Use precise timestamp to ensure unique timestamps for messages received in quick succession
-                message_timestamp = datetime.utcnow()
+                # Use Instagram's timestamp from webhook (matches Instagram DM timing exactly)
+                # Fallback to current time if timestamp not available
+                message_timestamp = instagram_timestamp if instagram_timestamp else datetime.utcnow()
+                if instagram_timestamp:
+                    log_print(f"✅ Using Instagram webhook timestamp for incoming message: {message_timestamp.isoformat()}")
+                else:
+                    log_print(f"⚠️ Instagram timestamp not available, using current time: {message_timestamp.isoformat()}")
+                
                 incoming_message = Message(
                     user_id=account.user_id,
                     instagram_account_id=account.id,
@@ -361,7 +388,7 @@ async def process_instagram_message(event: dict, db: Session):
                     is_from_bot=False,  # This is an incoming message
                     has_attachments=len(attachments) > 0,
                     attachments=attachments if attachments else None,
-                    created_at=message_timestamp  # Explicit timestamp for precise timing
+                    created_at=message_timestamp  # Use Instagram's timestamp for exact match
                 )
                 db.add(incoming_message)
                 db.commit()
@@ -3271,16 +3298,23 @@ async def execute_automation_action(
                             # Small delay to ensure private reply is processed
                             await asyncio.sleep(1)
                             
+                            # Capture timestamp RIGHT BEFORE sending actual message to match Instagram's timing exactly
+                            message_timestamp = datetime.utcnow()
+                            
                             # Now send the actual message with buttons/quick replies
                             print(f"📤 Sending DM with buttons/quick replies...")
                             from app.utils.instagram_api import send_dm
                             send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
                             print(f"✅ DM with buttons/quick replies sent to {sender_id}")
                         else:
+                            # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
+                            message_timestamp = datetime.utcnow()
                             # No buttons/quick replies, send full message via private reply
                             send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
                             print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
                     else:
+                        # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
+                        message_timestamp = datetime.utcnow()
                         # For direct message triggers or when no comment_id, use regular DM
                         if page_id_for_dm:
                             print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
@@ -3358,8 +3392,7 @@ async def execute_automation_action(
                     conversation.last_message = message_preview
                     conversation.updated_at = datetime.utcnow()
                     
-                    # Use precise timestamp to ensure unique timestamps for messages sent in quick succession
-                    message_timestamp = datetime.utcnow()
+                    # Use timestamp captured before API call (matches Instagram's timing exactly)
                     sent_message = Message(
                         user_id=user_id,
                         instagram_account_id=account_id,
@@ -4391,6 +4424,11 @@ async def send_conversation_message(
         
         page_id = account.page_id
         
+        # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
+        # This ensures the timestamp is as close as possible to when Instagram receives the message
+        from datetime import datetime
+        message_timestamp = datetime.utcnow()
+        
         # Send the message via Instagram API
         from app.utils.instagram_api import send_dm
         try:
@@ -4405,15 +4443,13 @@ async def send_conversation_message(
             
             # Store the sent message in the database
             from app.models.message import Message
-            from datetime import datetime
             
             # Get sender_id (our account's Instagram ID)
             sender_id = account.igsid or str(account_id)
             
             message_id_from_api = result.get("message_id") or result.get("id")
             
-            # Use precise timestamp to ensure unique timestamps for messages sent in quick succession
-            message_timestamp = datetime.utcnow()
+            # Use timestamp captured before API call (matches Instagram's timing)
             sent_message = Message(
                 instagram_account_id=account_id,
                 user_id=user_id,
