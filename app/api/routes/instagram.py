@@ -730,6 +730,9 @@ async def process_instagram_message(event: dict, db: Session):
             # Track if we processed any rules to avoid duplicate retry messages
             processed_rules_count = 0
             sent_retry_message = False
+            sent_email_request = False  # Track if we already sent email question (only send once for "done")
+            processed_email = None  # Store processed email to use for all rules
+            rules_waiting_for_email = []  # Collect all rules waiting for email to send primary DM
             
             for rule in pre_dm_rules:
                 # If this is a Story reply, only process rules that match this Story.
@@ -764,36 +767,51 @@ async def process_instagram_message(event: dict, db: Session):
                     log_print(f"🔍 DEBUG: pre_dm_result action={pre_dm_result.get('action')}, message={pre_dm_result.get('message', '')[:50] if pre_dm_result.get('message') else 'None'}")
                     
                     if pre_dm_result["action"] == "send_email_request":
-                        # STRICT MODE: Send email request IMMEDIATELY after follow confirmation
-                        log_print(f"✅ [STRICT MODE] Follow confirmed from {sender_id} for rule {rule.id}, sending email request now")
-                        
-                        # Get email request message
-                        email_message = pre_dm_result.get("message", "")
-                        
-                        # Send email request as TEXT-ONLY (no buttons)
-                        from app.utils.encryption import decrypt_credentials
-                        from app.utils.instagram_api import send_dm
-                        
-                        try:
-                            if account.encrypted_page_token:
-                                access_token = decrypt_credentials(account.encrypted_page_token)
-                            elif account.encrypted_credentials:
-                                access_token = decrypt_credentials(account.encrypted_credentials)
-                            else:
-                                raise Exception("No access token found")
+                        # RACE CONDITION FIX: Only send ONE email question even if multiple rules are waiting
+                        if not sent_email_request:
+                            # STRICT MODE: Send email request IMMEDIATELY after follow confirmation
+                            log_print(f"✅ [STRICT MODE] Follow confirmed from {sender_id} for rule {rule.id}, sending email request now")
                             
-                            page_id = account.page_id
+                            # Get email request message
+                            email_message = pre_dm_result.get("message", "")
                             
-                            # Send email request as plain text
-                            send_dm(sender_id, email_message, access_token, page_id, buttons=None, quick_replies=None)
-                            log_print(f"✅ Email request sent for rule {rule.id} (text input only)")
-                            processed_rules_count += 1
+                            # Send email request as TEXT-ONLY (no buttons)
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_dm
                             
-                        except Exception as e:
-                            log_print(f"❌ Failed to send email request for rule {rule.id}: {str(e)}", "ERROR")
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                else:
+                                    raise Exception("No access token found")
+                                
+                                page_id = account.page_id
+                                
+                                # Send email request as plain text (ONLY ONCE)
+                                send_dm(sender_id, email_message, access_token, page_id, buttons=None, quick_replies=None)
+                                log_print(f"✅ Email request sent (single message for all rules)")
+                                sent_email_request = True
+                                processed_rules_count += 1
+                                
+                            except Exception as e:
+                                log_print(f"❌ Failed to send email request: {str(e)}", "ERROR")
+                            
+                            # Mark all matching rules as email_request_sent (they all share the same email question)
+                            for r in pre_dm_rules:
+                                if (story_id is None or str(r.media_id or "") == story_id) and r.config.get("ask_for_email", False):
+                                    from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state
+                                    r_state = get_pre_dm_state(sender_id, r.id)
+                                    if r_state.get("follow_request_sent") and not r_state.get("email_request_sent"):
+                                        update_pre_dm_state(sender_id, r.id, {
+                                            "email_request_sent": True,
+                                            "step": "email"
+                                        })
+                                        log_print(f"✅ Marked rule {r.id} as email_request_sent")
                         
-                        # Continue to process other rules that might also be waiting for follow confirmation
-                        continue
+                        # Break after processing first matching rule (only one email question)
+                        break
                     elif pre_dm_result["action"] == "send_primary":
                         # Skip to primary DM
                         log_print(f"✅ Follow confirmed from {sender_id} for rule {rule.id}, proceeding to primary DM")
@@ -826,65 +844,73 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     # Handle email request action (follow confirmed, now send email question)
                     if pre_dm_result["action"] == "send_email_request":
-                        log_print(f"✅ [STRICT MODE] Follow confirmed from {sender_id} for rule {rule.id}, sending email request now")
-                        
-                        # Get email request message
-                        email_message = pre_dm_result.get("message", "")
-                        
-                        # Send email request as TEXT-ONLY (no buttons)
-                        from app.utils.encryption import decrypt_credentials
-                        from app.utils.instagram_api import send_dm
-                        
-                        try:
-                            if account.encrypted_page_token:
-                                access_token = decrypt_credentials(account.encrypted_page_token)
-                            elif account.encrypted_credentials:
-                                access_token = decrypt_credentials(account.encrypted_credentials)
-                            else:
-                                raise Exception("No access token found")
+                        # RACE CONDITION FIX: Only send ONE email question even if multiple rules are waiting
+                        if not sent_email_request:
+                            log_print(f"✅ [STRICT MODE] Follow confirmed from {sender_id} for rule {rule.id}, sending email request now")
                             
-                            page_id = account.page_id
+                            # Get email request message
+                            email_message = pre_dm_result.get("message", "")
                             
-                            # Send email request as plain text
-                            send_dm(sender_id, email_message, access_token, page_id, buttons=None, quick_replies=None)
-                            log_print(f"✅ Email request sent for rule {rule.id} (text input only)")
-                            processed_rules_count += 1
+                            # Send email request as TEXT-ONLY (no buttons)
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_dm
                             
-                        except Exception as e:
-                            log_print(f"❌ Failed to send email request for rule {rule.id}: {str(e)}", "ERROR")
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                else:
+                                    raise Exception("No access token found")
+                                
+                                page_id = account.page_id
+                                
+                                # Send email request as plain text (ONLY ONCE)
+                                send_dm(sender_id, email_message, access_token, page_id, buttons=None, quick_replies=None)
+                                log_print(f"✅ Email request sent (single message for all rules)")
+                                sent_email_request = True
+                                processed_rules_count += 1
+                                
+                            except Exception as e:
+                                log_print(f"❌ Failed to send email request: {str(e)}", "ERROR")
+                            
+                            # Mark all matching rules as email_request_sent (they all share the same email question)
+                            for r in pre_dm_rules:
+                                if (story_id is None or str(r.media_id or "") == story_id) and r.config.get("ask_for_email", False):
+                                    from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state
+                                    r_state = get_pre_dm_state(sender_id, r.id)
+                                    if r_state.get("follow_request_sent") and not r_state.get("email_request_sent"):
+                                        update_pre_dm_state(sender_id, r.id, {
+                                            "email_request_sent": True,
+                                            "step": "email"
+                                        })
+                                        log_print(f"✅ Marked rule {r.id} as email_request_sent")
                         
-                        # Continue to process other rules that might also be waiting for follow confirmation
-                        continue
+                        # Break after processing first matching rule (only one email question)
+                        break
                     
-                    # Handle valid email - proceed to primary DM (OPTION 1: Process ALL rules)
+                    # Handle valid email - proceed to primary DM (RACE CONDITION FIX: Process email once, send primary DM for ALL rules)
                     if pre_dm_result["action"] == "send_primary" and pre_dm_result.get("email"):
-                        # STRICT MODE: Email was valid! Proceed directly to primary DM for THIS rule
-                        log_print(f"✅ [STRICT MODE] Valid email received for rule {rule.id}: {pre_dm_result.get('email')}")
-                        log_print(f"📤 Sending primary DM for rule {rule.id} (both follow + email completed)")
+                        # RACE CONDITION FIX: Process email only once, then send primary DM for ALL matching rules
+                        if processed_email is None:
+                            # First time processing email - extract and save it
+                            processed_email = pre_dm_result.get("email")
+                            log_print(f"✅ [STRICT MODE] Valid email received: {processed_email}")
+                            log_print(f"📤 Will send primary DM for ALL rules waiting for email")
+                            
+                            # Collect all rules that are waiting for email
+                            for r in pre_dm_rules:
+                                if (story_id is None or str(r.media_id or "") == story_id):
+                                    r_state = get_pre_dm_state(sender_id, r.id)
+                                    if r_state.get("email_request_sent") and not r_state.get("email_received"):
+                                        rules_waiting_for_email.append(r)
+                                        log_print(f"📋 Rule {r.id} is waiting for email, will send primary DM")
                         
-                        # Retrieve comment_id from pre-DM state if this was triggered from a comment
-                        from app.services.pre_dm_handler import get_pre_dm_state
-                        state = get_pre_dm_state(sender_id, rule.id)
-                        stored_comment_id = state.get("comment_id")  # comment_id stored when pre-DM actions started
-                        log_print(f"🔍 [COMMENT ID] Retrieved from state for rule {rule.id}: comment_id={stored_comment_id}")
+                        # Add current rule to the list if not already there
+                        if rule not in rules_waiting_for_email:
+                            rules_waiting_for_email.append(rule)
                         
-                        # Send primary DM immediately, preserving email + send_email_success flag
-                        asyncio.create_task(execute_automation_action(
-                            rule,
-                            sender_id,
-                            account,
-                            db,
-                            trigger_type="story_reply" if story_id else "new_message",
-                            message_id=message_id,
-                            comment_id=stored_comment_id,  # Pass comment_id if available (from comment trigger)
-                            pre_dm_result_override={
-                                "action": "send_primary",
-                                "email": pre_dm_result.get("email"),
-                                "send_email_success": pre_dm_result.get("send_email_success", False),
-                            }
-                        ))
-                        processed_rules_count += 1
-                        # Continue to process other rules that might also be waiting for email
+                        # Continue to collect all matching rules, then send primary DM for all at the end
                         continue
                     
                     # Handle invalid email - send retry message (only once, not per rule)
@@ -941,6 +967,43 @@ async def process_instagram_message(event: dict, db: Session):
                                 log_print(f"   Message '{message_text}' ignored - not a valid email")
                             # Continue to check other rules
                             continue
+            
+            # RACE CONDITION FIX: If we processed an email, send primary DM for ALL rules waiting for email
+            if processed_email and rules_waiting_for_email:
+                log_print(f"📤 [RACE CONDITION FIX] Sending primary DM for {len(rules_waiting_for_email)} rule(s) with email: {processed_email}")
+                for r in rules_waiting_for_email:
+                    from app.services.pre_dm_handler import get_pre_dm_state
+                    r_state = get_pre_dm_state(sender_id, r.id)
+                    stored_comment_id = r_state.get("comment_id")
+                    
+                    # Update state for this rule
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(sender_id, r.id, {
+                        "email_received": True,
+                        "email": processed_email,
+                        "primary_dm_sent": True
+                    })
+                    
+                    log_print(f"📤 Sending primary DM for rule {r.id} (email: {processed_email})")
+                    
+                    # Send primary DM for this rule
+                    asyncio.create_task(execute_automation_action(
+                        r,
+                        sender_id,
+                        account,
+                        db,
+                        trigger_type="story_reply" if story_id else "new_message",
+                        message_id=message_id,
+                        comment_id=stored_comment_id,
+                        pre_dm_result_override={
+                            "action": "send_primary",
+                            "email": processed_email,
+                            "send_email_success": True,
+                        }
+                    ))
+                    processed_rules_count += 1
+                
+                log_print(f"✅ Sent primary DM for {len(rules_waiting_for_email)} rule(s)")
             
             # If we processed any rule, don't continue to new_message rules
             if processed_rules_count > 0:
