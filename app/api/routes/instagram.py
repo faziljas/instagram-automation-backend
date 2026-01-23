@@ -703,19 +703,19 @@ async def process_instagram_message(event: dict, db: Session):
                     # Only process the first matching rule
                     return
         
-        # Extract story_id early. If this is a story reply, we must NOT run the pre_dm_rules
-        # block below: the Post/Reel rule can return "ignore" for random text and we would never
-        # reach story_post_comment_rules, so the Story would never trigger.
+        # Extract story_id early. For story replies we run pre_dm_rules but only for the
+        # matching Story rule (filter inside the loop). This lets Stories use the same
+        # state machine (done, email, retry) as Post/Reels without Post/Reel rules blocking.
         story_id = None
         if message.get("reply_to", {}).get("story", {}).get("id"):
             story_id = str(message.get("reply_to", {}).get("story", {}).get("id"))
             log_print(f"📖 Story reply detected (early) - Story ID: {story_id}")
         
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
-        # SKIP when story_id: for story replies we go straight to story_post_comment_rules so the
-        # Post rule cannot "ignore" the message and block the Story flow.
+        # Do NOT skip for story_id. Instead we filter inside the loop so Stories use the same
+        # state machine (done, email, retry) as Post/Reels, without Post/Reel rules blocking.
         # IMPORTANT: Check ALL rules with pre-DM actions, including those with media_id (for comment-based rules)
-        if not story_id and account and message_text:
+        if account and message_text:
             from app.models.automation_rule import AutomationRule
             from app.services.pre_dm_handler import process_pre_dm_actions, check_if_email_response, check_if_follow_confirmation
             
@@ -728,9 +728,14 @@ async def process_instagram_message(event: dict, db: Session):
             ).all()
             
             for rule in pre_dm_rules:
+                # If this is a Story reply, only process rules that match this Story.
+                # Post/Reel rules (different media_id) would return "ignore" and block the Story flow.
+                if story_id is not None and str(rule.media_id or "") != story_id:
+                    continue
+
                 ask_to_follow = rule.config.get("ask_to_follow", False)
                 ask_for_email = rule.config.get("ask_for_email", False)
-                
+
                 if not (ask_to_follow or ask_for_email):
                     continue
                 
@@ -749,7 +754,7 @@ async def process_instagram_message(event: dict, db: Session):
                     pre_dm_result = await process_pre_dm_actions(
                         rule, sender_id, account, db,
                         incoming_message=message_text,
-                        trigger_type="new_message"
+                        trigger_type="story_reply" if story_id else "new_message"
                     )
                     
                     log_print(f"🔍 DEBUG: pre_dm_result action={pre_dm_result.get('action')}, message={pre_dm_result.get('message', '')[:50] if pre_dm_result.get('message') else 'None'}")
@@ -791,7 +796,7 @@ async def process_instagram_message(event: dict, db: Session):
                             sender_id,
                             account,
                             db,
-                            trigger_type="new_message",
+                            trigger_type="story_reply" if story_id else "new_message",
                             message_id=message_id
                         ))
                         return
@@ -802,7 +807,7 @@ async def process_instagram_message(event: dict, db: Session):
                     pre_dm_result = await process_pre_dm_actions(
                         rule, sender_id, account, db,
                         incoming_message=message_text,
-                        trigger_type="new_message"
+                        trigger_type="story_reply" if story_id else "new_message"
                     )
                     
                     # Handle ignore action (random text while waiting for follow confirmation)
@@ -858,7 +863,7 @@ async def process_instagram_message(event: dict, db: Session):
                             sender_id,
                             account,
                             db,
-                            trigger_type="new_message",
+                            trigger_type="story_reply" if story_id else "new_message",
                             message_id=message_id,
                             comment_id=stored_comment_id,  # Pass comment_id if available (from comment trigger)
                             pre_dm_result_override={
