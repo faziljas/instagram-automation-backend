@@ -799,6 +799,41 @@ async def process_instagram_message(event: dict, db: Session):
             processed_email = None  # Store processed email to use for all rules
             rules_waiting_for_email = []  # Collect all rules waiting for email to send primary DM
             
+            # VIP USER HANDLING: If user is already converted, send primary DM for ONLY ONE matching rule
+            # This prevents duplicate primary DMs when multiple rules match
+            if is_vip_user:
+                vip_rule_processed = False
+                for rule in pre_dm_rules:
+                    # If this is a Story reply, only process rules that match this Story
+                    if story_id is not None and str(rule.media_id or "") != story_id:
+                        continue
+                    
+                    ask_to_follow = rule.config.get("ask_to_follow", False)
+                    ask_for_email = rule.config.get("ask_for_email", False)
+                    
+                    if not (ask_to_follow or ask_for_email):
+                        continue
+                    
+                    # Only process the FIRST matching rule for VIP users to avoid duplicates
+                    if not vip_rule_processed:
+                        log_print(f"⭐ [VIP] Sending primary DM for rule '{rule.name}' (ID: {rule.id}) - user is already converted")
+                        # Skip directly to primary DM for this rule (no email success message needed - they already provided email)
+                        asyncio.create_task(execute_automation_action(
+                            rule, sender_id, account, db,
+                            trigger_type="story_reply" if story_id else "new_message",
+                            message_id=message_id,
+                            pre_dm_result_override={"action": "send_primary"},
+                            skip_growth_steps=True
+                        ))
+                        vip_rule_processed = True
+                        processed_rules_count += 1
+                        break  # Exit loop after processing first matching rule
+                
+                # If we processed a VIP rule, return early to prevent duplicate processing
+                if vip_rule_processed:
+                    log_print(f"✅ [VIP] Processed primary DM for VIP user, skipping further rule processing")
+                    return
+            
             for rule in pre_dm_rules:
                 # If this is a Story reply, only process rules that match this Story.
                 # Post/Reel rules (different media_id) would return "ignore" and block the Story flow.
@@ -809,20 +844,6 @@ async def process_instagram_message(event: dict, db: Session):
                 ask_for_email = rule.config.get("ask_for_email", False)
 
                 if not (ask_to_follow or ask_for_email):
-                    continue
-                
-                # VIP USER CHECK: If user is already converted, skip growth steps and go directly to primary DM
-                if is_vip_user:
-                    log_print(f"⭐ [VIP] Skipping growth steps for rule '{rule.name}' (ID: {rule.id}) - user is already converted")
-                    # Skip directly to primary DM for this rule
-                    asyncio.create_task(execute_automation_action(
-                        rule, sender_id, account, db,
-                        trigger_type="story_reply" if story_id else "new_message",
-                        message_id=message_id,
-                        pre_dm_result_override={"action": "send_primary"},
-                        skip_growth_steps=True
-                    ))
-                    processed_rules_count += 1
                     continue
                 
                 # Check if this is a follow confirmation (only if we're actually waiting for it)
@@ -1243,6 +1264,12 @@ async def process_instagram_message(event: dict, db: Session):
                 elif rule.config.get("keyword"):
                     keywords_info = f" | Keyword: {rule.config.get('keyword')}"
             print(f"   - Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}{media_info}{keywords_info}")
+        
+        # VIP USER CHECK: If user is already converted, skip regular rule processing to avoid duplicate primary DMs
+        # (VIP users already got primary DM from pre_dm_rules section above)
+        if is_vip_user:
+            log_print(f"⭐ [VIP] User is already converted, skipping regular rule processing to prevent duplicate primary DMs")
+            return
         
         # For story DMs, first check if any story-specific post_comment rule should trigger (any comment/DM on that story)
         story_rule_matched = False
