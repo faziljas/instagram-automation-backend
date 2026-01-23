@@ -703,9 +703,19 @@ async def process_instagram_message(event: dict, db: Session):
                     # Only process the first matching rule
                     return
         
+        # Extract story_id early. If this is a story reply, we must NOT run the pre_dm_rules
+        # block below: the Post/Reel rule can return "ignore" for random text and we would never
+        # reach story_post_comment_rules, so the Story would never trigger.
+        story_id = None
+        if message.get("reply_to", {}).get("story", {}).get("id"):
+            story_id = str(message.get("reply_to", {}).get("story", {}).get("id"))
+            log_print(f"📖 Story reply detected (early) - Story ID: {story_id}")
+        
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
+        # SKIP when story_id: for story replies we go straight to story_post_comment_rules so the
+        # Post rule cannot "ignore" the message and block the Story flow.
         # IMPORTANT: Check ALL rules with pre-DM actions, including those with media_id (for comment-based rules)
-        if account and message_text:
+        if not story_id and account and message_text:
             from app.models.automation_rule import AutomationRule
             from app.services.pre_dm_handler import process_pre_dm_actions, check_if_email_response, check_if_follow_confirmation
             
@@ -908,11 +918,7 @@ async def process_instagram_message(event: dict, db: Session):
                                 log_print(f"   Message '{message_text}' ignored - not a valid email")
                             return  # Don't process random messages/images while waiting for email
         
-        # Check if this is a story reply (DMs replying to stories)
-        story_id = None
-        if message.get("reply_to", {}).get("story", {}).get("id"):
-            story_id = str(message.get("reply_to", {}).get("story", {}).get("id"))
-            log_print(f"📖 Story reply detected - Story ID: {story_id}")
+        # story_id was already extracted above (before pre_dm_rules) for story replies
         
         # Deduplication: Skip if we've already processed this message
         if message_id and message_id in _processed_message_ids:
@@ -1081,14 +1087,16 @@ async def process_instagram_message(event: dict, db: Session):
                 if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                     _processing_rules.clear()
                 # Run in background task to avoid blocking webhook handler
-                # Use trigger_type="story_reply" so pre-DM flow runs per Story separately from Post/Reel
+                # Use trigger_type="story_reply" so pre-DM flow runs per Story separately from Post/Reel.
+                # Pass incoming_message so "done"/email etc. in the Story thread are handled by process_pre_dm_actions.
                 asyncio.create_task(execute_automation_action(
                     rule, 
                     sender_id, 
                     account, 
                     db,
                     trigger_type="story_reply",  # Isolate Story flow from post_comment (Post/Reel)
-                    message_id=message_id
+                    message_id=message_id,
+                    incoming_message=message_text
                 ))
                 story_rule_matched = True
                 break  # Only trigger first matching story rule
@@ -2016,7 +2024,8 @@ async def execute_automation_action(
     trigger_type: str = None,
     comment_id: str = None,
     message_id: str = None,
-    pre_dm_result_override: dict = None  # Optional: pre-computed pre-DM result to avoid re-processing
+    pre_dm_result_override: dict = None,  # Optional: pre-computed pre-DM result to avoid re-processing
+    incoming_message: str = None  # For story/DM: user's text (follow confirmation, email, etc.)
 ):
     """
     Execute the automation action defined in the rule.
@@ -2134,7 +2143,8 @@ async def execute_automation_action(
                 
                 pre_dm_result = await process_pre_dm_actions(
                     rule, sender_id, account, db,
-                    trigger_type=trigger_type
+                    trigger_type=trigger_type,
+                    incoming_message=incoming_message
                 )
                 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
