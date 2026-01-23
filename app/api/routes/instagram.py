@@ -344,6 +344,8 @@ async def process_instagram_message(event: dict, db: Session):
                 conversation.last_message = message_preview
                 conversation.updated_at = datetime.utcnow()
                 
+                # Use precise timestamp to ensure unique timestamps for messages received in quick succession
+                message_timestamp = datetime.utcnow()
                 incoming_message = Message(
                     user_id=account.user_id,
                     instagram_account_id=account.id,
@@ -358,7 +360,8 @@ async def process_instagram_message(event: dict, db: Session):
                     platform_message_id=message_id,  # Also set platform_message_id
                     is_from_bot=False,  # This is an incoming message
                     has_attachments=len(attachments) > 0,
-                    attachments=attachments if attachments else None
+                    attachments=attachments if attachments else None,
+                    created_at=message_timestamp  # Explicit timestamp for precise timing
                 )
                 db.add(incoming_message)
                 db.commit()
@@ -971,7 +974,11 @@ async def process_instagram_message(event: dict, db: Session):
             # RACE CONDITION FIX: If we processed an email, send primary DM for ALL rules waiting for email
             if processed_email and rules_waiting_for_email:
                 log_print(f"📤 [RACE CONDITION FIX] Sending primary DM for {len(rules_waiting_for_email)} rule(s) with email: {processed_email}")
-                for r in rules_waiting_for_email:
+                for idx, r in enumerate(rules_waiting_for_email):
+                    # Add small delay between messages to ensure unique timestamps (100ms per message)
+                    if idx > 0:
+                        await asyncio.sleep(0.1 * idx)  # 100ms, 200ms, 300ms... delays
+                    
                     from app.services.pre_dm_handler import get_pre_dm_state
                     r_state = get_pre_dm_state(sender_id, r.id)
                     stored_comment_id = r_state.get("comment_id")
@@ -3351,22 +3358,25 @@ async def execute_automation_action(
                     conversation.last_message = message_preview
                     conversation.updated_at = datetime.utcnow()
                     
-                    sent_message = Message(
-                        user_id=user_id,
-                        instagram_account_id=account_id,
-                        conversation_id=conversation.id,
-                        sender_id=str(account.igsid or account_id),  # Our account ID
-                        sender_username=username,  # Our account username
-                        recipient_id=str(sender_id),  # Recipient ID
-                        recipient_username=recipient_username,  # Will be updated when we have it
-                        message_text=message_template,
-                        content=message_template,  # Also set content field
-                        message_id=None,  # Instagram doesn't return message ID immediately
-                        platform_message_id=None,  # Will be updated if we get it later
-                        is_from_bot=True,  # This is an outgoing message
-                        has_attachments=False,
-                        attachments=None
-                    )
+                # Use precise timestamp to ensure unique timestamps for messages sent in quick succession
+                message_timestamp = datetime.utcnow()
+                sent_message = Message(
+                    user_id=user_id,
+                    instagram_account_id=account_id,
+                    conversation_id=conversation.id,
+                    sender_id=str(account.igsid or account_id),  # Our account ID
+                    sender_username=username,  # Our account username
+                    recipient_id=str(sender_id),  # Recipient ID
+                    recipient_username=recipient_username,  # Will be updated when we have it
+                    message_text=message_template,
+                    content=message_template,  # Also set content field
+                    message_id=None,  # Instagram doesn't return message ID immediately
+                    platform_message_id=None,  # Will be updated if we get it later
+                    is_from_bot=True,  # This is an outgoing message
+                    has_attachments=False,
+                    attachments=None,
+                    created_at=message_timestamp  # Explicit timestamp for precise timing
+                )
                     db.add(sent_message)
                 except Exception as msg_err:
                     print(f"⚠️ Failed to store message in Message table: {str(msg_err)}")
@@ -4402,6 +4412,8 @@ async def send_conversation_message(
             
             message_id_from_api = result.get("message_id") or result.get("id")
             
+            # Use precise timestamp to ensure unique timestamps for messages sent in quick succession
+            message_timestamp = datetime.utcnow()
             sent_message = Message(
                 instagram_account_id=account_id,
                 user_id=user_id,
@@ -4417,7 +4429,7 @@ async def send_conversation_message(
                 recipient_id=recipient_id,
                 has_attachments=False,
                 attachments=None,
-                created_at=datetime.utcnow()
+                created_at=message_timestamp  # Explicit timestamp for precise timing
             )
             db.add(sent_message)
             
