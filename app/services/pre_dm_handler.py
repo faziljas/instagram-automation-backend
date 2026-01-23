@@ -157,10 +157,14 @@ async def process_pre_dm_actions(
     account: InstagramAccount,
     db: Session,
     incoming_message: str = None,
-    trigger_type: str = None
+    trigger_type: str = None,
+    skip_growth_steps: bool = False  # If True, skip follow/email steps and go directly to primary DM
 ) -> Dict[str, Any]:
     """
     Process pre-DM actions (Ask to Follow, Ask for Email) before sending primary DM.
+    
+    Args:
+        skip_growth_steps: If True, skip follow/email steps and go directly to primary DM (VIP users)
     
     Returns:
         {
@@ -170,6 +174,16 @@ async def process_pre_dm_actions(
             "email": str | None
         }
     """
+    # VIP USER CHECK: If skip_growth_steps is True, skip directly to primary DM
+    if skip_growth_steps:
+        print(f"⭐ [VIP] Skipping growth steps for rule {rule.id} - user is already converted")
+        return {
+            "action": "send_primary",
+            "message": None,
+            "should_save_email": False,
+            "email": None
+        }
+    
     config = rule.config
     state = get_pre_dm_state(sender_id, rule.id)
     
@@ -311,6 +325,14 @@ async def process_pre_dm_actions(
                 "follow_confirmed": True
             })
             
+            # Update global audience record with following status
+            try:
+                from app.services.global_conversion_check import update_audience_following
+                update_audience_following(db, sender_id, account.id, account.user_id, is_following=True)
+                print(f"✅ Follow status updated in global audience for {sender_id}")
+            except Exception as audience_err:
+                print(f"⚠️ Failed to update global audience with follow status: {str(audience_err)}")
+            
             # If email request is enabled, proceed to email request
             if ask_for_email and not state.get("email_request_sent"):
                 print(f"✅ [DEBUG] Sending email request to {sender_id} for rule {rule.id}")
@@ -374,6 +396,14 @@ async def process_pre_dm_actions(
                 db.add(captured_lead)
                 db.commit()
                 db.refresh(captured_lead)
+                
+                # Update global audience record with email
+                try:
+                    from app.services.global_conversion_check import update_audience_email
+                    update_audience_email(db, sender_id, account.id, account.user_id, email_address)
+                    print(f"✅ Email updated in global audience: {email_address}")
+                except Exception as audience_err:
+                    print(f"⚠️ Failed to update global audience with email: {str(audience_err)}")
                 
                 # Update stats
                 update_automation_stats(rule.id, "lead_captured", db)

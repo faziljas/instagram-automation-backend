@@ -747,6 +747,19 @@ async def process_instagram_message(event: dict, db: Session):
             story_id = str(message.get("reply_to", {}).get("story", {}).get("id"))
             log_print(f"📖 Story reply detected (early) - Story ID: {story_id}")
         
+        # GLOBAL CONVERSION CHECK: Check if user is already converted (VIP) before processing any rules
+        # This ensures users who have provided email + are following skip growth steps across ALL automations
+        from app.services.global_conversion_check import check_global_conversion_status
+        conversion_status = check_global_conversion_status(
+            db, sender_id, account.id, account.user_id, 
+            username=event.get("sender", {}).get("username")
+        )
+        is_vip_user = conversion_status["is_converted"]
+        
+        if is_vip_user:
+            log_print(f"⭐ [VIP USER] User {sender_id} is already converted (email + following). Skipping growth steps for all automations.")
+            log_print(f"   Email: {conversion_status['has_email']}, Following: {conversion_status['is_following']}")
+        
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
         # Do NOT skip for story_id. Instead we filter inside the loop so Stories use the same
         # state machine (done, email, retry) as Post/Reels, without Post/Reel rules blocking.
@@ -780,6 +793,20 @@ async def process_instagram_message(event: dict, db: Session):
                 ask_for_email = rule.config.get("ask_for_email", False)
 
                 if not (ask_to_follow or ask_for_email):
+                    continue
+                
+                # VIP USER CHECK: If user is already converted, skip growth steps and go directly to primary DM
+                if is_vip_user:
+                    log_print(f"⭐ [VIP] Skipping growth steps for rule '{rule.name}' (ID: {rule.id}) - user is already converted")
+                    # Skip directly to primary DM for this rule
+                    asyncio.create_task(execute_automation_action(
+                        rule, sender_id, account, db,
+                        trigger_type="story_reply" if story_id else "new_message",
+                        message_id=message_id,
+                        pre_dm_result_override={"action": "send_primary"},
+                        skip_growth_steps=True
+                    ))
+                    processed_rules_count += 1
                     continue
                 
                 # Check if this is a follow confirmation (only if we're actually waiting for it)
@@ -1777,6 +1804,18 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         print(f"   Commenter ID: {commenter_id_str}, Username: @{commenter_username}")
         print(f"   Account IGSID (stored): {account_igsid_str}, Webhook IGSID: {igsid_str}, Username: @{account.username}")
         
+        # GLOBAL CONVERSION CHECK: Check if user is already converted (VIP) before processing any rules
+        from app.services.global_conversion_check import check_global_conversion_status
+        conversion_status = check_global_conversion_status(
+            db, commenter_id_str, account.id, account.user_id,
+            username=commenter_username
+        )
+        is_vip_user = conversion_status["is_converted"]
+        
+        if is_vip_user:
+            print(f"⭐ [VIP USER] User {commenter_id_str} is already converted (email + following). Skipping growth steps for all automations.")
+            print(f"   Email: {conversion_status['has_email']}, Following: {conversion_status['is_following']}")
+        
         # Find active automation rules for comments
         # We need to check BOTH:
         # 1. Rules with trigger_type='post_comment' (with optional keyword filtering)
@@ -1909,12 +1948,13 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                     try:
                         await execute_automation_action(
                             rule, 
-                            commenter_id, 
-                            account, 
+                            str(commenter_id), 
+                            account,
                             db,
                             trigger_type="post_comment",
                             comment_id=comment_id,
-                            message_id=comment_id  # Use comment_id as identifier
+                            message_id=comment_id,  # Use comment_id as identifier
+                            skip_growth_steps=is_vip_user  # Skip growth steps for VIP users
                         )
                     except Exception as e:
                         print(f"❌ [TASK ERROR] Error in execute_automation_action task: {str(e)}")
@@ -1942,6 +1982,8 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         print(f"🎥 Live comment from @{commenter_username} ({commenter_id}): {comment_text}")
         print(f"   Live Video ID: {live_video_id}, Comment ID: {comment_id}")
         
+        # GLOBAL CONVERSION CHECK: Check if user is already converted (VIP) before processing any rules
+        # Note: We'll get account first, then check conversion status
         # Find Instagram account by IGSID (from webhook entry.id)
         # This ensures correct account matching for multi-user scenarios
         from app.models.instagram_account import InstagramAccount
@@ -2020,6 +2062,18 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         print(f"✅ Processing live comment from external user:")
         print(f"   Commenter ID: {commenter_id_str}, Username: @{commenter_username}")
         print(f"   Account IGSID (stored): {account_igsid_str}, Webhook IGSID: {igsid_str}, Username: @{account.username}")
+        
+        # GLOBAL CONVERSION CHECK: Check if user is already converted (VIP) before processing any rules
+        from app.services.global_conversion_check import check_global_conversion_status
+        conversion_status = check_global_conversion_status(
+            db, commenter_id_str, account.id, account.user_id,
+            username=commenter_username
+        )
+        is_vip_user = conversion_status["is_converted"]
+        
+        if is_vip_user:
+            print(f"⭐ [VIP USER] User {commenter_id_str} is already converted (email + following). Skipping growth steps for all automations.")
+            print(f"   Email: {conversion_status['has_email']}, Following: {conversion_status['is_following']}")
         
         # Find active automation rules for live comments
         # We need to check BOTH:
@@ -2106,12 +2160,13 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                         # Run in background task
                         asyncio.create_task(execute_automation_action(
                             rule,
-                            commenter_id,
+                            str(commenter_id),
                             account,
                             db,
                             trigger_type="keyword",
                             comment_id=comment_id,
-                            message_id=comment_id  # Use comment_id as identifier
+                            message_id=comment_id,  # Use comment_id as identifier
+                            skip_growth_steps=is_vip_user  # Skip growth steps for VIP users
                         ))
                         break  # Only trigger first matching keyword rule
         
@@ -2133,12 +2188,13 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                 # Run in background task
                 asyncio.create_task(execute_automation_action(
                     rule,
-                    commenter_id,
+                    str(commenter_id),
                     account,
                     db,
                     trigger_type="live_comment",
                     comment_id=comment_id,
-                    message_id=comment_id  # Use comment_id as identifier
+                    message_id=comment_id,  # Use comment_id as identifier
+                    skip_growth_steps=is_vip_user  # Skip growth steps for VIP users
                 ))
         else:
             print(f"⏭️ Skipping 'live_comment' rules because keyword rule matched")
@@ -2157,7 +2213,8 @@ async def execute_automation_action(
     comment_id: str = None,
     message_id: str = None,
     pre_dm_result_override: dict = None,  # Optional: pre-computed pre-DM result to avoid re-processing
-    incoming_message: str = None  # For story/DM: user's text (follow confirmation, email, etc.)
+    incoming_message: str = None,  # For story/DM: user's text (follow confirmation, email, etc.)
+    skip_growth_steps: bool = False  # If True, skip follow/email steps and go directly to primary DM
 ):
     """
     Execute the automation action defined in the rule.
@@ -2276,7 +2333,8 @@ async def execute_automation_action(
                 pre_dm_result = await process_pre_dm_actions(
                     rule, sender_id, account, db,
                     trigger_type=trigger_type,
-                    incoming_message=incoming_message
+                    incoming_message=incoming_message,
+                    skip_growth_steps=skip_growth_steps
                 )
                 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
