@@ -90,28 +90,29 @@ def _html_redirect_page(dest_url: str, label: str = "Instagram", deep_link_url: 
     # If deep link is provided, try it first (for mobile native app)
     # Use immediate redirect with deep link, fallback to web URL
     if deep_link_esc:
+        # Build JavaScript code with proper escaping
+        js_code = f"""(function() {{
+  // Try deep link immediately (mobile native app)
+  var deepLink = "{deep_link_esc}";
+  var webUrl = "{esc}";
+  
+  // Attempt deep link redirect
+  window.location.href = deepLink;
+  
+  // Fallback to web URL if deep link fails (after 1 second)
+  setTimeout(function() {{
+    // If still on this page, redirect to web URL
+    if (document.visibilityState === "visible") {{
+      window.location.href = webUrl;
+    }}
+  }}, 1000);
+}})();"""
+        
         return (
             f'<!DOCTYPE html><html><head><meta charset="utf-8">'
             f'<title>Opening Instagram…</title>'
             f'<meta http-equiv="refresh" content="0;url={deep_link_esc}">'
-            f'<script>'
-            f'(function() {{'
-            f'  // Try deep link immediately (mobile native app)'
-            f'  var deepLink = "{deep_link_esc}";'
-            f'  var webUrl = "{esc}";'
-            f'  '
-            f'  // Attempt deep link redirect'
-            f'  window.location.href = deepLink;'
-            f'  '
-            f'  // Fallback to web URL if deep link fails (after 1 second)'
-            f'  setTimeout(function() {{'
-            f'    // If still on this page, redirect to web URL'
-            f'    if (document.visibilityState === "visible") {{'
-            f'      window.location.href = webUrl;'
-            f'    }}'
-            f'  }}, 1000);'
-            f'})();'
-            f'</script>'
+            f'<script>{js_code}</script>'
             f'</head><body>'
             f'<p>Opening {label}…</p>'
             f'<p><a href="{deep_link_esc}">Open in Instagram app</a></p>'
