@@ -1227,6 +1227,27 @@ async def process_postback_event(event: dict, db: Session):
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "im_following_clicked", db)
                     
+                    # Also track profile visit (user likely visited profile before clicking "I'm following")
+                    # This compensates for not tracking URL button clicks directly
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=account.user_id,
+                            event_type=EventType.PROFILE_VISIT,
+                            rule_id=rule.id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "source": "im_following_button_click",
+                                "assumed_profile_visit": True
+                            }
+                        )
+                        update_automation_stats(rule.id, "profile_visit", db)
+                        print(f"✅ Tracked assumed profile visit (via 'I'm following' click)")
+                    except Exception as analytics_err:
+                        print(f"⚠️ Failed to track profile visit: {str(analytics_err)}")
+                    
                     # If email is enabled, send email request immediately
                     if ask_for_email:
                         ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
@@ -2102,24 +2123,17 @@ async def execute_automation_action(
                         # Check if comment-based trigger for private reply
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
-                        # Build Instagram profile URL for "Visit Profile" button (www avoids redirect quirks)
+                        # Build Instagram profile URL for "Visit Profile" button
+                        # Use direct Instagram URL (no tracking wrapper) to avoid redirect chain issues
+                        # Instagram will handle instagram.com URLs natively and open in the app
                         profile_url = f"https://www.instagram.com/{username}"
-                        
-                        # Wrap profile URL with tracking to log clicks
-                        from app.utils.analytics import generate_tracking_url
-                        tracked_profile_url = generate_tracking_url(
-                            target_url=profile_url,
-                            rule_id=rule_id,
-                            user_id=user_id,
-                            media_id=comment_id if is_comment_trigger else None,  # Use comment_id as media_id if available
-                            instagram_account_id=account.id
-                        )
                         
                         # Build URL button for "Visit Profile" (enables navigation to bio page)
                         # Note: URL buttons require generic template format (card layout)
+                        # Using direct Instagram URL ensures it opens in native app without redirect chain
                         visit_profile_button = [{
                             "text": "Visit Profile",
-                            "url": tracked_profile_url
+                            "url": profile_url
                         }]
                         
                         # Build quick reply buttons for "I'm following" and "Follow Me"
