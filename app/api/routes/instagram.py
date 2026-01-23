@@ -3455,7 +3455,6 @@ async def execute_automation_action(
                 # Also store in Message table for Messages UI
                 try:
                     from app.models.message import Message
-                    from datetime import datetime
                     # Get recipient username if available (sender_id might be username or ID)
                     recipient_username = str(sender_id)  # Default to sender_id
                     
@@ -3661,6 +3660,12 @@ def delete_instagram_account(
     from app.models.conversation import Conversation
     db.query(Conversation).filter(
         Conversation.instagram_account_id == account_id
+    ).delete()
+    
+    # Delete associated InstagramAudience records (to avoid foreign key constraint violation)
+    from app.models.instagram_audience import InstagramAudience
+    db.query(InstagramAudience).filter(
+        InstagramAudience.instagram_account_id == account_id
     ).delete()
     
     # Flush before deleting account
