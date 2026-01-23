@@ -226,9 +226,15 @@ async def process_pre_dm_actions(
         print(f"⚠️ [STRICT MODE] Failed pre-check for existing follower/email: {str(e)}")
     
     # 3) Use these flags to potentially skip pre‑DM steps
+    # IMPORTANT: Only short-circuit when THIS FLOW has already sent follow_request.
+    # This isolates Post/Reel vs Story: completing lead capture on a Post must NOT
+    # skip the full pre-DM sequence when the same user triggers a Story (different rule).
+    flow_has_sent_follow = state.get("follow_request_sent", False)
+    
     if ask_to_follow or ask_for_email:
         # Case A: user already follows AND we already have their email
-        if already_following and (already_has_email or not ask_for_email):
+        # Only skip to primary when we have already run the follow step IN THIS FLOW.
+        if already_following and (already_has_email or not ask_for_email) and flow_has_sent_follow:
             update_pre_dm_state(sender_id, rule.id, {
                 "follow_request_sent": True,
                 "follow_confirmed": True,
@@ -245,7 +251,8 @@ async def process_pre_dm_actions(
             }
         
         # Case B: already following, but no email yet and ask_for_email is enabled
-        if already_following and ask_for_email and not already_has_email:
+        # Only skip to email when we have already sent the follow request IN THIS FLOW.
+        if already_following and ask_for_email and not already_has_email and flow_has_sent_follow:
             # Skip follow step, go straight to email question
             update_pre_dm_state(sender_id, rule.id, {
                 "follow_request_sent": True,
@@ -420,7 +427,8 @@ async def process_pre_dm_actions(
     # Initial trigger - start pre-DM sequence
     # Also handle timeout trigger (5 seconds after follow button sent)
     # Handle email_timeout trigger (5 seconds after email request sent)
-    if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout"] and not state.get("primary_dm_sent"):
+    # story_reply = user replying to story via DM (each flow separate from post_comment)
+    if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout", "story_reply"] and not state.get("primary_dm_sent"):
         # Step 1: Send Follow Request (if enabled and not sent yet)
         # If both follow and email are enabled, we'll combine them in a single message
         if ask_to_follow and not state.get("follow_request_sent"):

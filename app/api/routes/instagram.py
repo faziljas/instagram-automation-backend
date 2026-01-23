@@ -1081,12 +1081,13 @@ async def process_instagram_message(event: dict, db: Session):
                 if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                     _processing_rules.clear()
                 # Run in background task to avoid blocking webhook handler
+                # Use trigger_type="story_reply" so pre-DM flow runs per Story separately from Post/Reel
                 asyncio.create_task(execute_automation_action(
                     rule, 
                     sender_id, 
                     account, 
                     db,
-                    trigger_type="post_comment",  # Keep original trigger type
+                    trigger_type="story_reply",  # Isolate Story flow from post_comment (Post/Reel)
                     message_id=message_id
                 ))
                 story_rule_matched = True
