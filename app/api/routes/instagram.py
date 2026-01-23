@@ -4,7 +4,7 @@ import os
 import sys
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -245,7 +245,8 @@ async def process_instagram_message(event: dict, db: Session):
         message_id = message.get("mid")  # Message ID for deduplication
         
         # Extract Instagram's timestamp from webhook event (matches Instagram DM timing exactly)
-        # Instagram webhook timestamp can be in milliseconds or seconds (Unix timestamp)
+        # Instagram webhook timestamp can be in milliseconds or seconds (Unix timestamp in UTC)
+        # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
         instagram_timestamp = None
         if "timestamp" in event:
             try:
@@ -254,13 +255,15 @@ async def process_instagram_message(event: dict, db: Session):
                 # Timestamps > 4102444800 (Jan 1, 2100) are likely milliseconds
                 timestamp_int = int(timestamp_value)
                 if timestamp_int > 4102444800:
-                    # Likely milliseconds, convert to seconds
-                    instagram_timestamp = datetime.fromtimestamp(timestamp_int / 1000.0)
-                    log_print(f"📅 Using Instagram webhook timestamp (milliseconds): {instagram_timestamp.isoformat()}")
+                    # Likely milliseconds, convert to seconds and use UTC
+                    instagram_timestamp = datetime.utcfromtimestamp(timestamp_int / 1000.0)
                 else:
-                    # Likely seconds
-                    instagram_timestamp = datetime.fromtimestamp(float(timestamp_int))
-                    log_print(f"📅 Using Instagram webhook timestamp (seconds): {instagram_timestamp.isoformat()}")
+                    # Likely seconds, use UTC
+                    instagram_timestamp = datetime.utcfromtimestamp(float(timestamp_int))
+                
+                # Add 8 hours to match Instagram's display timezone (UTC+8)
+                instagram_timestamp = instagram_timestamp + timedelta(hours=8)
+                log_print(f"📅 Using Instagram webhook timestamp (UTC+8): {instagram_timestamp.isoformat()}")
             except (ValueError, TypeError, OSError) as ts_err:
                 log_print(f"⚠️ Failed to parse Instagram timestamp: {str(ts_err)}, using current time")
                 instagram_timestamp = None
@@ -366,12 +369,15 @@ async def process_instagram_message(event: dict, db: Session):
                 conversation.updated_at = datetime.utcnow()
                 
                 # Use Instagram's timestamp from webhook (matches Instagram DM timing exactly)
-                # Fallback to current time if timestamp not available
-                message_timestamp = instagram_timestamp if instagram_timestamp else datetime.utcnow()
+                # Instagram timestamps are already adjusted to UTC+8 in the extraction above
+                # For fallback, add 8 hours to UTC time to match Instagram's display
                 if instagram_timestamp:
-                    log_print(f"✅ Using Instagram webhook timestamp for incoming message: {message_timestamp.isoformat()}")
+                    message_timestamp = instagram_timestamp
+                    log_print(f"✅ Using Instagram webhook timestamp (UTC+8) for incoming message: {message_timestamp.isoformat()}")
                 else:
-                    log_print(f"⚠️ Instagram timestamp not available, using current time: {message_timestamp.isoformat()}")
+                    # Fallback: add 8 hours to UTC to match Instagram's display timezone
+                    message_timestamp = datetime.utcnow() + timedelta(hours=8)
+                    log_print(f"⚠️ Instagram timestamp not available, using current time (UTC+8): {message_timestamp.isoformat()}")
                 
                 incoming_message = Message(
                     user_id=account.user_id,
@@ -3299,7 +3305,8 @@ async def execute_automation_action(
                             await asyncio.sleep(1)
                             
                             # Capture timestamp RIGHT BEFORE sending actual message to match Instagram's timing exactly
-                            message_timestamp = datetime.utcnow()
+                            # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
+                            message_timestamp = datetime.utcnow() + timedelta(hours=8)
                             
                             # Now send the actual message with buttons/quick replies
                             print(f"📤 Sending DM with buttons/quick replies...")
@@ -3308,18 +3315,20 @@ async def execute_automation_action(
                             print(f"✅ DM with buttons/quick replies sent to {sender_id}")
                         else:
                             # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
-                            message_timestamp = datetime.utcnow()
+                            # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
+                            message_timestamp = datetime.utcnow() + timedelta(hours=8)
                             # No buttons/quick replies, send full message via private reply
                             send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
                             print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
                     else:
-                        # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
-                        message_timestamp = datetime.utcnow()
                         # For direct message triggers or when no comment_id, use regular DM
                         if page_id_for_dm:
                             print(f"📤 Sending DM via Page API: Page ID={page_id_for_dm}, Recipient={sender_id}")
                         else:
                             print(f"📤 Sending DM via me/messages (no page_id): Recipient={sender_id}")
+                        # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
+                        # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
+                        message_timestamp = datetime.utcnow() + timedelta(hours=8)
                         # Import send_dm and call it with quick_replies
                         from app.utils.instagram_api import send_dm
                         send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
@@ -4425,9 +4434,9 @@ async def send_conversation_message(
         page_id = account.page_id
         
         # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
-        # This ensures the timestamp is as close as possible to when Instagram receives the message
-        from datetime import datetime
-        message_timestamp = datetime.utcnow()
+        # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
+        from datetime import datetime, timedelta
+        message_timestamp = datetime.utcnow() + timedelta(hours=8)
         
         # Send the message via Instagram API
         from app.utils.instagram_api import send_dm
