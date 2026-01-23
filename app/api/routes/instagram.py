@@ -446,6 +446,28 @@ async def process_instagram_message(event: dict, db: Session):
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "im_following_clicked", db)
                     
+                    # Log analytics event for "I'm following" button click
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=account.user_id,
+                            event_type=EventType.IM_FOLLOWING_CLICKED,
+                            rule_id=rule.id,
+                            media_id=media_id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "sender_id": sender_id,
+                                "source": "im_following_button_click",
+                                "clicked_at": datetime.utcnow().isoformat()
+                            }
+                        )
+                        log_print(f"✅ Logged IM_FOLLOWING_CLICKED analytics event for rule {rule.id}")
+                    except Exception as analytics_err:
+                        log_print(f"⚠️ Failed to log IM_FOLLOWING_CLICKED event: {str(analytics_err)}", "WARNING")
+                    
                     # If email is enabled, send email question immediately
                     if ask_for_email:
                         ask_for_email_message = rule.config.get(
@@ -603,6 +625,28 @@ async def process_instagram_message(event: dict, db: Session):
                         update_automation_stats(rule.id, "follow_button_clicked", db)
                     except Exception as e:
                         log_print(f"⚠️ Failed to update follow_button_clicked stats: {str(e)}", "WARNING")
+                    
+                    # Log analytics event for "Follow Me" button click
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=account.user_id,
+                            event_type=EventType.FOLLOW_BUTTON_CLICKED,
+                            rule_id=rule.id,
+                            media_id=media_id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "sender_id": sender_id,
+                                "source": "follow_me_button_click",
+                                "clicked_at": datetime.utcnow().isoformat()
+                            }
+                        )
+                        log_print(f"✅ Logged FOLLOW_BUTTON_CLICKED analytics event for rule {rule.id}")
+                    except Exception as analytics_err:
+                        log_print(f"⚠️ Failed to log FOLLOW_BUTTON_CLICKED event: {str(analytics_err)}", "WARNING")
                     
                     # Mark follow as confirmed in pre-DM state
                     update_pre_dm_state(str(sender_id), rule.id, {
@@ -1227,6 +1271,28 @@ async def process_postback_event(event: dict, db: Session):
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "im_following_clicked", db)
                     
+                    # Log analytics event for "I'm following" button click
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=account.user_id,
+                            event_type=EventType.IM_FOLLOWING_CLICKED,
+                            rule_id=rule.id,
+                            media_id=media_id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "sender_id": sender_id,
+                                "source": "im_following_button_click",
+                                "clicked_at": datetime.utcnow().isoformat()
+                            }
+                        )
+                        print(f"✅ Logged IM_FOLLOWING_CLICKED analytics event for rule {rule.id}")
+                    except Exception as analytics_err:
+                        print(f"⚠️ Failed to log IM_FOLLOWING_CLICKED event: {str(analytics_err)}")
+                    
                     # Also track profile visit (user likely visited profile before clicking "I'm following")
                     # This compensates for not tracking URL button clicks directly
                     try:
@@ -1396,6 +1462,28 @@ async def process_postback_event(event: dict, db: Session):
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "follow_button_clicked", db)
                     print(f"📊 Tracked follow button click for rule {rule.id}")
+                    
+                    # Log analytics event for "Follow Me" button click
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=account.user_id,
+                            event_type=EventType.FOLLOW_BUTTON_CLICKED,
+                            rule_id=rule.id,
+                            media_id=media_id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "sender_id": sender_id,
+                                "source": "follow_me_button_click",
+                                "clicked_at": datetime.utcnow().isoformat()
+                            }
+                        )
+                        print(f"✅ Logged FOLLOW_BUTTON_CLICKED analytics event for rule {rule.id}")
+                    except Exception as analytics_err:
+                        print(f"⚠️ Failed to log FOLLOW_BUTTON_CLICKED event: {str(analytics_err)}")
                     
                     # Mark that follow button was clicked in state
                     from app.services.pre_dm_handler import update_pre_dm_state
