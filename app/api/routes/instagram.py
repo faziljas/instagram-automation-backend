@@ -478,6 +478,14 @@ async def process_instagram_message(event: dict, db: Session):
                     })
                     log_print(f"✅ Marked 'I'm following' confirmation for rule {rule.id}")
                     
+                    # Update global audience record with following status (for VIP check across all automations)
+                    try:
+                        from app.services.global_conversion_check import update_audience_following
+                        update_audience_following(db, str(sender_id), account.id, account.user_id, is_following=True)
+                        log_print(f"✅ Follow status updated in global audience for {sender_id}")
+                    except Exception as audience_err:
+                        log_print(f"⚠️ Failed to update global audience with follow status: {str(audience_err)}", "WARNING")
+                    
                     # Track analytics: "I'm following" button click
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "im_following_clicked", db)
@@ -691,6 +699,14 @@ async def process_instagram_message(event: dict, db: Session):
                         "follow_button_clicked_time": str(asyncio.get_event_loop().time())
                     })
                     log_print(f"✅ Marked follow button click + confirmation for rule {rule.id}")
+                    
+                    # Update global audience record with following status (for VIP check across all automations)
+                    try:
+                        from app.services.global_conversion_check import update_audience_following
+                        update_audience_following(db, str(sender_id), account.id, account.user_id, is_following=True)
+                        log_print(f"✅ Follow status updated in global audience for {sender_id}")
+                    except Exception as audience_err:
+                        log_print(f"⚠️ Failed to update global audience with follow status: {str(audience_err)}", "WARNING")
                     
                     # If email is enabled, send email question immediately
                     if ask_for_email:
@@ -1435,6 +1451,14 @@ async def process_postback_event(event: dict, db: Session):
                     })
                     print(f"✅ Marked 'I'm following' confirmation for rule {rule.id}")
                     
+                    # Update global audience record with following status (for VIP check across all automations)
+                    try:
+                        from app.services.global_conversion_check import update_audience_following
+                        update_audience_following(db, str(sender_id), account.id, account.user_id, is_following=True)
+                        print(f"✅ Follow status updated in global audience for {sender_id}")
+                    except Exception as audience_err:
+                        print(f"⚠️ Failed to update global audience with follow status: {str(audience_err)}")
+                    
                     # Track analytics: "I'm following" button click
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "im_following_clicked", db)
@@ -1661,6 +1685,14 @@ async def process_postback_event(event: dict, db: Session):
                         "follow_button_clicked_time": str(asyncio.get_event_loop().time())
                     })
                     print(f"✅ Marked follow button click for rule {rule.id}")
+                    
+                    # Update global audience record with following status (for VIP check across all automations)
+                    try:
+                        from app.services.global_conversion_check import update_audience_following
+                        update_audience_following(db, str(sender_id), account.id, account.user_id, is_following=True)
+                        print(f"✅ Follow status updated in global audience for {sender_id}")
+                    except Exception as audience_err:
+                        print(f"⚠️ Failed to update global audience with follow status: {str(audience_err)}")
                     
                     # STRICT MODE: If email is enabled, send email request immediately
                     if ask_for_email:
