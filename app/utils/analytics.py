@@ -2,6 +2,7 @@
 Analytics utility functions for tracking events and generating tracking URLs.
 """
 import os
+import requests
 from urllib.parse import quote
 from typing import Optional
 
@@ -28,6 +29,37 @@ def get_base_url() -> str:
     
     # Default to localhost for development
     return "http://localhost:8000"
+
+
+def fetch_media_preview_url(media_id: str, access_token: str) -> Optional[str]:
+    """
+    Fetch media preview URL (thumbnail_url or media_url) from Instagram API.
+    This is cached in analytics events to preserve previews even if media is deleted.
+    
+    Args:
+        media_id: Instagram media ID
+        access_token: Instagram access token
+        
+    Returns:
+        Optional[str]: Media preview URL (thumbnail_url for videos, media_url for photos) or None if fetch fails
+    """
+    try:
+        r = requests.get(
+            f"https://graph.instagram.com/v21.0/{media_id}",
+            params={"fields": "media_type,media_url,thumbnail_url", "access_token": access_token},
+            timeout=5
+        )
+        if r.status_code == 200:
+            d = r.json()
+            # Use thumbnail_url for videos, media_url for photos
+            media_url = d.get("thumbnail_url") or d.get("media_url")
+            return media_url
+        else:
+            print(f"⚠️ Failed to fetch media preview for {media_id}: {r.status_code}")
+            return None
+    except Exception as e:
+        print(f"⚠️ Exception fetching media preview for {media_id}: {str(e)}")
+        return None
 
 
 def generate_tracking_url(
@@ -83,6 +115,8 @@ def log_analytics_event_sync(
 ) -> Optional[int]:
     """
     Synchronously log an analytics event to the database.
+    If media_id is provided, fetches and caches the media preview URL immediately
+    (while the media still exists) to preserve previews even if media is deleted later.
     
     Args:
         db: SQLAlchemy database session
@@ -98,6 +132,8 @@ def log_analytics_event_sync(
     """
     try:
         from app.models.analytics_event import AnalyticsEvent, EventType
+        from app.models.instagram_account import InstagramAccount
+        from app.utils.encryption import decrypt_credentials
         
         # Convert string to EventType enum if needed
         if isinstance(event_type, str):
@@ -107,11 +143,39 @@ def log_analytics_event_sync(
                 print(f"⚠️ Invalid event type: {event_type}")
                 return None
         
+        # Fetch and cache media preview URL if media_id is provided
+        media_preview_url = None
+        if media_id and instagram_account_id:
+            try:
+                # Get Instagram account to fetch access token
+                account = db.query(InstagramAccount).filter(
+                    InstagramAccount.id == instagram_account_id,
+                    InstagramAccount.user_id == user_id
+                ).first()
+                
+                if account:
+                    # Get access token
+                    access_token = None
+                    if account.encrypted_page_token:
+                        access_token = decrypt_credentials(account.encrypted_page_token)
+                    elif account.encrypted_credentials:
+                        access_token = decrypt_credentials(account.encrypted_credentials)
+                    
+                    if access_token:
+                        # Fetch media preview URL immediately (while media still exists)
+                        media_preview_url = fetch_media_preview_url(media_id, access_token)
+                        if media_preview_url:
+                            print(f"✅ Cached media preview URL for media_id {media_id}")
+            except Exception as e:
+                # Don't fail the event logging if preview fetch fails
+                print(f"⚠️ Failed to cache media preview for {media_id}: {str(e)}")
+        
         event = AnalyticsEvent(
             user_id=user_id,
             rule_id=rule_id,
             instagram_account_id=instagram_account_id,
             media_id=media_id,
+            media_preview_url=media_preview_url,  # Cache preview URL
             event_type=event_type,
             event_metadata=metadata or {}
         )

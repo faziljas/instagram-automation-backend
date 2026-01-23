@@ -27,6 +27,7 @@ class AnalyticsEvent(Base):
     rule_id = Column(Integer, ForeignKey("automation_rules.id"), nullable=True, index=True)  # Automation rule
     instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id"), nullable=True, index=True)
     media_id = Column(String, nullable=True, index=True)  # Instagram Post/Reel ID
+    media_preview_url = Column(String, nullable=True)  # Cached media preview URL (thumbnail_url or media_url) - preserved even if media is deleted
     
     # Event details
     event_type = Column(SQLEnum(EventType), nullable=False, index=True)

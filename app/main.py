@@ -201,6 +201,14 @@ async def startup_event():
             else:
                 print("✅ last_im_following_clicked_at column already exists", file=sys.stderr)
             
+            # Check and add media_preview_url column to analytics_events
+            if not column_exists('analytics_events', 'media_preview_url'):
+                print("🔄 Auto-migrating: Adding media_preview_url column to analytics_events...", file=sys.stderr)
+                conn.execute(text("ALTER TABLE analytics_events ADD COLUMN media_preview_url VARCHAR(500)"))
+                print("✅ Auto-migration complete: media_preview_url column added", file=sys.stderr)
+            else:
+                print("✅ media_preview_url column already exists", file=sys.stderr)
+            
     except Exception as e:
         print(f"⚠️ Auto-migration warning: {str(e)}", file=sys.stderr)
 

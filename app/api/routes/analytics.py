@@ -348,8 +348,20 @@ def get_analytics_dashboard(
                 "leads_count": media_leads,
                 "dms_count": media_dms
             }
-            # Fetch media_url and permalink from Instagram when we have an account
-            if instagram_account_id:
+            
+            # First, try to get cached media preview URL from analytics events
+            # This preserves previews even if media is deleted from Instagram
+            cached_preview = db.query(AnalyticsEvent.media_preview_url).filter(
+                AnalyticsEvent.media_id == media_id,
+                AnalyticsEvent.media_preview_url.isnot(None)
+            ).first()
+            
+            if cached_preview and cached_preview[0]:
+                # Use cached preview URL (preserved even if media is deleted)
+                entry["media_url"] = cached_preview[0]
+                print(f"✅ Using cached media preview for {media_id}")
+            elif instagram_account_id:
+                # Fallback: Try to fetch from Instagram API if no cached preview
                 try:
                     acc = db.query(InstagramAccount).filter(
                         InstagramAccount.id == instagram_account_id,
@@ -380,6 +392,7 @@ def get_analytics_dashboard(
                                 # Log the error for debugging
                                 error_data = r.json() if r.content else {}
                                 print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_data.get('error', {}).get('message', r.text[:100])}")
+                                print(f"   Media may have been deleted from Instagram. Consider using cached preview from analytics events.")
                 except Exception as e:
                     # Log the exception for debugging
                     print(f"⚠️ Exception fetching media info for {media_id}: {str(e)}")
