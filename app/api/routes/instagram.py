@@ -1265,10 +1265,11 @@ async def process_instagram_message(event: dict, db: Session):
                     keywords_info = f" | Keyword: {rule.config.get('keyword')}"
             print(f"   - Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}{media_info}{keywords_info}")
         
-        # VIP USER CHECK: If user is already converted, skip regular rule processing to avoid duplicate primary DMs
-        # (VIP users already got primary DM from pre_dm_rules section above)
+        # VIP USER CHECK: If user is already converted, skip ALL regular rule processing (keyword, new_message, story rules)
+        # This must be BEFORE processing keyword/new_message rules to prevent duplicate primary DMs
+        # VIP users already got primary DM from pre_dm_rules section above
         if is_vip_user:
-            log_print(f"⭐ [VIP] User is already converted, skipping regular rule processing to prevent duplicate primary DMs")
+            log_print(f"⭐ [VIP] User is already converted, skipping ALL regular rule processing (keyword, new_message, story) to prevent duplicate primary DMs")
             return
         
         # For story DMs, first check if any story-specific post_comment rule should trigger (any comment/DM on that story)
@@ -1979,7 +1980,8 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                             db,
                             trigger_type="keyword",
                             comment_id=comment_id,
-                            message_id=comment_id  # Use comment_id as identifier
+                            message_id=comment_id,  # Use comment_id as identifier
+                            skip_growth_steps=is_vip_user  # Skip growth steps for VIP users
                         ))
                         break  # Only trigger first matching keyword rule
                     else:
@@ -2380,13 +2382,21 @@ async def execute_automation_action(
             print(f"🔍 [DEBUG] Pre-DM check: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, pre_dm_result={pre_dm_result}")
             
             # If override says "send_primary", skip all pre-DM processing
+            # BUT: If skip_growth_steps is False, we might still need to check for email success message
             if pre_dm_result and pre_dm_result.get("action") == "send_primary":
                 # Direct primary DM - skip to primary DM logic
                 print(f"✅ Skipping pre-DM actions, proceeding directly to primary DM")
+                # For VIP users (skip_growth_steps=True), don't send email success message
+                # For non-VIP users, check if email was just provided (send_email_success flag should be in override)
+                if skip_growth_steps:
+                    # VIP user - ensure email success is not sent
+                    if "send_email_success" not in pre_dm_result:
+                        pre_dm_result["send_email_success"] = False
                 # pre_dm_result already set to override, continue to primary DM logic below
             elif (ask_to_follow or ask_for_email) and pre_dm_result is None:
-                print(f"🔍 [DEBUG] Processing pre-DM actions: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}")
+                print(f"🔍 [DEBUG] Processing pre-DM actions: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, skip_growth_steps={skip_growth_steps}")
                 # Process pre-DM actions (unless override is provided)
+                # CRITICAL: If skip_growth_steps=True (VIP user), process_pre_dm_actions will return send_primary immediately
                 from app.services.pre_dm_handler import process_pre_dm_actions
                 
                 pre_dm_result = await process_pre_dm_actions(
@@ -2395,6 +2405,10 @@ async def execute_automation_action(
                     incoming_message=incoming_message,
                     skip_growth_steps=skip_growth_steps
                 )
+                
+                # Log the result for debugging
+                if pre_dm_result:
+                    print(f"🔍 [DEBUG] Pre-DM result: action={pre_dm_result.get('action')}, send_email_success={pre_dm_result.get('send_email_success', False)}")
                 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
                     # STRICT MODE: Send follow request with text-based confirmation (most reliable)
@@ -3241,12 +3255,20 @@ async def execute_automation_action(
                 print(f"🔍 [EMAIL SUCCESS] Checking: pre_dm_result={pre_dm_result}, send_email_success={pre_dm_result.get('send_email_success') if pre_dm_result else None}")
                 
                 # Check if we should send email success message
+                # IMPORTANT: Only send for non-VIP users who just provided their email
+                # VIP users already provided email, so skip the success message
                 should_send_email_success = False
-                if pre_dm_result:
+                if pre_dm_result and not skip_growth_steps:  # Only for non-VIP users
                     send_email_success_flag = pre_dm_result.get("send_email_success", False)
-                    print(f"🔍 [EMAIL SUCCESS] send_email_success flag: {send_email_success_flag}, type: {type(send_email_success_flag)}")
+                    print(f"🔍 [EMAIL SUCCESS] send_email_success flag: {send_email_success_flag}, type: {type(send_email_success_flag)}, skip_growth_steps={skip_growth_steps}")
                     if send_email_success_flag is True or str(send_email_success_flag).lower() == 'true':
                         should_send_email_success = True
+                        print(f"✅ [EMAIL SUCCESS] Will send email success message for non-VIP user")
+                else:
+                    if skip_growth_steps:
+                        print(f"⏭️ [EMAIL SUCCESS] Skipping: VIP user (skip_growth_steps=True) - already provided email")
+                    else:
+                        print(f"⏭️ [EMAIL SUCCESS] Skipping: pre_dm_result is None or send_email_success flag not set")
                 
                 if should_send_email_success:
                     email_success_message = rule.config.get("email_success_message")

@@ -175,13 +175,16 @@ async def process_pre_dm_actions(
         }
     """
     # VIP USER CHECK: If skip_growth_steps is True, skip directly to primary DM
+    # This MUST be checked FIRST before any other processing
     if skip_growth_steps:
-        print(f"⭐ [VIP] Skipping growth steps for rule {rule.id} - user is already converted")
+        print(f"⭐ [VIP] Skipping ALL growth steps for rule {rule.id} - user is already converted (email + following)")
+        print(f"⭐ [VIP] Returning send_primary action immediately - no follow/email requests will be sent")
         return {
             "action": "send_primary",
             "message": None,
             "should_save_email": False,
-            "email": None
+            "email": None,
+            "send_email_success": False  # VIP users already provided email, no success message needed
         }
     
     config = rule.config
