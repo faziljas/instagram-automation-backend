@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.automation_rule import AutomationRule
+from app.models.automation_rule_stats import AutomationRuleStats
 from app.models.instagram_account import InstagramAccount
 from app.schemas.automation import AutomationRuleCreate, AutomationRuleUpdate, AutomationRuleResponse
 from app.utils.auth import verify_token
@@ -97,7 +98,31 @@ def list_automation_rules(
         query = query.filter(AutomationRule.instagram_account_id == instagram_account_id)
 
     rules = query.all()
-    return rules
+    rule_ids = [r.id for r in rules]
+    stats_map: dict[int, AutomationRuleStats] = {}
+    if rule_ids:
+        for s in db.query(AutomationRuleStats).filter(
+            AutomationRuleStats.automation_rule_id.in_(rule_ids)
+        ):
+            stats_map[s.automation_rule_id] = s
+
+    result: List[AutomationRuleResponse] = []
+    for r in rules:
+        st = stats_map.get(r.id)
+        result.append(AutomationRuleResponse(
+            id=r.id,
+            instagram_account_id=r.instagram_account_id,
+            name=r.name,
+            trigger_type=r.trigger_type,
+            action_type=r.action_type,
+            config=r.config,
+            media_id=r.media_id,
+            is_active=r.is_active,
+            created_at=r.created_at,
+            total_triggers=st.total_triggers if st else 0,
+            last_triggered_at=st.last_triggered_at if st else None,
+        ))
+    return result
 
 
 @router.get("/rules/{rule_id}", response_model=AutomationRuleResponse)

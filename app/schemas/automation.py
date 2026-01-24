@@ -29,6 +29,8 @@ class AutomationRuleResponse(BaseModel):
     media_id: str | None = None  # Instagram media ID (post/reel/story) this rule is tied to
     is_active: bool
     created_at: datetime
+    total_triggers: int | None = None  # Execution count from automation_rule_stats
+    last_triggered_at: datetime | None = None  # Last execution date
 
     class Config:
         from_attributes = True
