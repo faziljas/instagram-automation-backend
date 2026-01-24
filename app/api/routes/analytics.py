@@ -84,13 +84,15 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
 def _instant_deep_link_redirect(deep_link_url: str) -> str:
     """Return minimal HTML that instantly redirects to deep link without showing any content.
     Used for Instagram in-app browser to open native app immediately.
-    Uses only JavaScript (no meta refresh) to avoid Facebook redirect issues."""
+    Uses multiple redirect methods for maximum compatibility and speed."""
     esc_deep = deep_link_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
-    # Ultra-minimal HTML with immediate JavaScript redirect - no visible content, instant execution
-    # NO meta refresh - it causes Facebook redirect issues
+    # Ultra-minimal HTML with immediate redirect - execute redirect BEFORE page renders
+    # Use window.location.replace() for instant redirect (replaces history, faster than href)
+    # Also include meta redirect as fallback
     return (
         f'<!DOCTYPE html><html><head>'
         f'<script>window.location.replace("{esc_deep}");</script>'
+        f'<meta http-equiv="refresh" content="0;url={esc_deep}">'
         f'</head><body></body></html>'
     )
 
@@ -218,19 +220,28 @@ async def track_link_click(
         print(f"🔍 User-Agent: {user_agent[:100]}... | is_mobile: {is_mobile} | is_instagram_browser: {is_instagram_browser}")
         print(f"🔍 Profile URL: {redirect_to} | Deep link: {deep_link_url}")
         
-        # FIXED: For Instagram in-app browser or mobile, use deep link to open native app directly
+        # FIXED: For Instagram in-app browser or mobile, try direct 302 redirect first, then HTML fallback
         # This opens the native app immediately without showing intermediate page
         if is_profile and redirect_to.startswith("https://www.instagram.com/"):
-            # For Instagram in-app browser or mobile: use deep link (opens native app directly)
+            # For Instagram in-app browser or mobile: try direct 302 redirect to deep link first
             if (is_instagram_browser or is_mobile) and deep_link_url:
-                print(f"✅ Mobile/Instagram browser detected - using deep link: {deep_link_url}")
-                # Use instant HTML redirect (no visible page)
-                html = _instant_deep_link_redirect(deep_link_url)
-                return HTMLResponse(content=html, headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
-                })
+                print(f"✅ Mobile/Instagram browser detected - redirecting to deep link: {deep_link_url}")
+                # Try direct 302 redirect first (fastest, no page shown)
+                try:
+                    return RedirectResponse(url=deep_link_url, status_code=302, headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0"
+                    })
+                except Exception as e:
+                    print(f"⚠️ Direct redirect failed, using HTML fallback: {e}")
+                    # Fallback to instant HTML redirect if 302 doesn't work
+                    html = _instant_deep_link_redirect(deep_link_url)
+                    return HTMLResponse(content=html, headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0"
+                    })
             
             # For desktop: use HTML redirect with web URL
             html = _html_redirect_page(redirect_to, deep_link_url=None, label="Instagram profile")
