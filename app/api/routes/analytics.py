@@ -80,32 +80,21 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
     return any(x in u for x in ("instagram", "iphone", "ipad", "android", "mobile"))
 
 
-def _html_redirect_page(dest_url: str, label: str = "Instagram", deep_link_url: str = None) -> str:
+def _html_redirect_page(dest_url: str, label: str = "Instagram") -> str:
     """Return HTML that redirects via meta refresh + fallback link.
     Works better than 302 in Instagram in-app browser (avoids empty screen).
-    FIXED: Always redirect to web URL first to avoid Facebook redirect issues.
-    Deep link is provided as optional fallback link only."""
+    FIXED: No deep link — instagram:// caused redirect to Facebook when tracking
+    was added. Use only web URL (instagram.com) to avoid that."""
     esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
-    deep_link_esc = deep_link_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;") if deep_link_url else None
-    
-    # FIXED: Always redirect to web URL (Instagram.com) first
-    # This prevents the issue where deep link redirects to Facebook page
-    # Deep link is provided as an optional link for users who want to open in app
-    html_content = (
+    return (
         f'<!DOCTYPE html><html><head><meta charset="utf-8">'
         f'<title>Opening Instagram…</title>'
         f'<meta http-equiv="refresh" content="0;url={esc}">'
         f'</head><body>'
         f'<p>Redirecting to {label}…</p>'
         f'<p><a href="{esc}">Click here if you are not redirected</a>.</p>'
+        f"</body></html>"
     )
-    
-    # Add deep link as optional link (not auto-redirect)
-    if deep_link_esc:
-        html_content += f'<p><a href="{deep_link_esc}">Open in Instagram app</a></p>'
-    
-    html_content += f"</body></html>"
-    return html_content
 
 
 @router.get("/track/redirect")
@@ -174,21 +163,16 @@ async def track_link_click(
             print(f"⚠️ Link click tracking skipped: missing user_id or rule_id")
 
         redirect_to = target_url
-        deep_link_url = None
-        
         if is_profile:
             username = _username_from_instagram_url(target_url)
             if username:
                 redirect_to = f"https://www.instagram.com/{username}"
-                # Generate Instagram deep link for mobile native app
-                # Format: instagram://user?username={username}
-                deep_link_url = f"instagram://user?username={username}"
 
         # Use HTML redirect page instead of 302 for profile links. Instagram in-app
         # browser often ignores 302 and shows empty screen; meta refresh + link works.
-        # For mobile, try deep link first to open in native Instagram app.
+        # No deep link (instagram://) — it caused redirect to Facebook when tracking was added.
         if is_profile and redirect_to.startswith("https://www.instagram.com/"):
-            html = _html_redirect_page(redirect_to, "Instagram profile", deep_link_url)
+            html = _html_redirect_page(redirect_to, "Instagram profile")
             return HTMLResponse(content=html)
         return RedirectResponse(url=redirect_to, status_code=302)
     except HTTPException:

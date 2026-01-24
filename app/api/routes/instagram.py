@@ -3298,8 +3298,9 @@ async def execute_automation_action(
                         print(f"🔍 [EMAIL SUCCESS] Using default email success message")
                     
                     # FIXED: Append PDF link if configured
-                    # Check for PDF link in various possible field names
+                    # Frontend saves as lead_magnet_link (PDF/Link to Share). Also check legacy names.
                     pdf_link = (
+                        rule.config.get("lead_magnet_link") or
                         rule.config.get("pdf_link") or 
                         rule.config.get("link_to_share") or 
                         rule.config.get("share_link") or
