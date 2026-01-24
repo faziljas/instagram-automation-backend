@@ -3297,7 +3297,7 @@ async def execute_automation_action(
                         email_success_message = "Got it! Check your inbox (and maybe spam/promotions) in about 2 minutes. 🎁"
                         print(f"🔍 [EMAIL SUCCESS] Using default email success message")
                     
-                    # FIXED: Append PDF link if configured
+                    # FIXED: Send PDF link as button instead of plain text to prevent unwanted link preview card
                     # Frontend saves as lead_magnet_link (PDF/Link to Share). Also check legacy names.
                     pdf_link = (
                         rule.config.get("lead_magnet_link") or
@@ -3307,21 +3307,26 @@ async def execute_automation_action(
                         rule.config.get("pdf_link_to_share")
                     )
                     
+                    # Prepare buttons list (empty by default)
+                    pdf_buttons = None
+                    
                     if pdf_link and str(pdf_link).strip():
-                        # Append PDF link to email success message
                         pdf_link_clean = str(pdf_link).strip()
-                        if not email_success_message.endswith('\n') and not email_success_message.endswith(' '):
-                            email_success_message += "\n\n"
-                        email_success_message += f"🔗 {pdf_link_clean}"
-                        print(f"✅ [EMAIL SUCCESS] Added PDF link to message: {pdf_link_clean[:50]}...")
+                        # Send PDF link as a button instead of appending to text
+                        # This prevents Instagram from auto-creating an unwanted link preview card
+                        pdf_buttons = [{
+                            "text": "Get PDF",
+                            "url": pdf_link_clean
+                        }]
+                        print(f"✅ [EMAIL SUCCESS] Will send PDF link as button: {pdf_link_clean[:50]}...")
                     else:
                         print(f"🔍 [EMAIL SUCCESS] No PDF link configured in rule config")
                     
                     if email_success_message and str(email_success_message).strip():
                         print(f"📧 Sending email success message before primary DM")
                         try:
-                            # Always send as a regular DM (not private reply)
-                            send_dm_api(sender_id, email_success_message, access_token, account_page_id, buttons=None, quick_replies=None)
+                            # Send with PDF button if available (prevents unwanted link preview card)
+                            send_dm_api(sender_id, email_success_message, access_token, account_page_id, buttons=pdf_buttons, quick_replies=None)
                             print(f"✅ Email success message sent successfully")
                             # Small delay between messages
                             await asyncio.sleep(1)

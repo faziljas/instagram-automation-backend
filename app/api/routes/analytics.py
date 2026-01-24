@@ -81,14 +81,15 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
 
 
 def _html_redirect_page(dest_url: str, label: str = "Instagram") -> str:
-    """Return HTML that redirects via meta refresh + fallback link.
-    Works better than 302 in Instagram in-app browser (avoids empty screen).
-    FIXED: No deep link — instagram:// caused redirect to Facebook when tracking
-    was added. Use only web URL (instagram.com) to avoid that."""
+    """Return HTML that redirects via JavaScript immediate redirect.
+    FIXED: Meta refresh was causing redirect to Facebook. JavaScript window.location
+    redirect is more reliable in Instagram's in-app browser."""
     esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    # Use JavaScript immediate redirect - more reliable than meta refresh
     return (
         f'<!DOCTYPE html><html><head><meta charset="utf-8">'
         f'<title>Opening Instagram…</title>'
+        f'<script>window.location.replace("{esc}");</script>'
         f'<meta http-equiv="refresh" content="0;url={esc}">'
         f'</head><body>'
         f'<p>Redirecting to {label}…</p>'
