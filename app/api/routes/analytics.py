@@ -282,6 +282,8 @@ def get_analytics_dashboard(
             base_query = base_query.filter(AnalyticsEvent.instagram_account_id == instagram_account_id)
         
         # Aggregate counts by event type
+        # IMPORTANT: These counts include ALL events (posts, reels, stories) regardless of whether
+        # the media still exists. Deleted/expired stories are still counted based on date filters.
         total_triggers = base_query.filter(
             AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED
         ).count()
@@ -342,12 +344,13 @@ def get_analytics_dashboard(
                 AnalyticsEvent.media_id == media_id,
                 AnalyticsEvent.event_type == EventType.DM_SENT
             ).count()
-            # Fetch media from Instagram API. Stories expire after 24h, so they may fail to fetch.
-            # We still show them in Top Performing if they have analytics data (historical performance).
+            # Fetch media from Instagram API. Only show in Top Performing if media still exists.
+            # Stories expire after 24h or can be deleted by user - exclude them if they can't be fetched.
+            # Analytics counts (totals) always include all events regardless of media existence.
             media_url_val = None
             permalink_val = None
             is_deleted = False
-            is_story = False  # Track if this might be a story (stories expire after 24h)
+            is_story = False
             
             if instagram_account_id:
                 try:
@@ -379,7 +382,6 @@ def get_analytics_dashboard(
                                 error_message = (error_data.get("error") or {}).get("message", "") or r.text[:200]
                                 
                                 # Check if this might be a story by checking rules
-                                # Stories expire after 24h, so API calls fail, but we should still show them
                                 try:
                                     from app.models.automation_rule import AutomationRule
                                     story_rules = db.query(AutomationRule).filter(
@@ -397,21 +399,22 @@ def get_analytics_dashboard(
                                 except:
                                     pass
                                 
-                                # Only treat as "deleted" if it's NOT a story and explicitly says "does not exist"
-                                # Stories expire after 24h and return errors, but should still be shown
-                                if not is_story and ("does not exist" in error_message.lower() or "cannot be loaded" in error_message.lower()):
+                                # If media doesn't exist (deleted by user or expired), mark as deleted
+                                # This applies to both stories and posts/reels
+                                if "does not exist" in error_message.lower() or "cannot be loaded" in error_message.lower():
                                     is_deleted = True
-                                    print(f"⚠️ Media {media_id} deleted from Instagram; excluding from Top Performing, auto-disabling rules.")
-                                elif is_story:
-                                    print(f"ℹ️ Story {media_id} may have expired (24h limit) or is unavailable; still showing in Top Performing with analytics data.")
+                                    if is_story:
+                                        print(f"⚠️ Story {media_id} expired (24h) or deleted; excluding from Top Performing, auto-disabling rules.")
+                                    else:
+                                        print(f"⚠️ Media {media_id} deleted from Instagram; excluding from Top Performing, auto-disabling rules.")
                                 else:
                                     print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_message}")
                 except Exception as e:
                     print(f"⚠️ Exception fetching media info for {media_id}: {str(e)}")
             
-            # If media was deleted (and NOT a story): disable rules and exclude from Top Performing.
-            # Stories expire after 24h but should still be shown if they have analytics data.
-            if is_deleted and not is_story:
+            # If media was deleted/expired: disable rules and exclude from Top Performing.
+            # Note: Analytics counts (totals) still include events from deleted/expired media.
+            if is_deleted:
                 try:
                     from app.models.automation_rule import AutomationRule
                     deleted_rules = db.query(AutomationRule).filter(
@@ -420,17 +423,17 @@ def get_analytics_dashboard(
                         AutomationRule.is_active == True
                     ).all()
                     for rule in deleted_rules:
-                        print(f"⚠️ Auto-disabling rule '{rule.name}' (ID: {rule.id}) - media {media_id} deleted")
+                        print(f"⚠️ Auto-disabling rule '{rule.name}' (ID: {rule.id}) - media {media_id} deleted/expired")
                         rule.is_active = False
                     if deleted_rules:
                         db.commit()
-                        print(f"✅ Auto-disabled {len(deleted_rules)} rule(s) for deleted media {media_id}")
+                        print(f"✅ Auto-disabled {len(deleted_rules)} rule(s) for deleted/expired media {media_id}")
                 except Exception as disable_err:
                     print(f"⚠️ Error auto-disabling rules: {str(disable_err)}")
                     db.rollback()
-                continue  # Skip this media – do not add to top_posts
+                continue  # Skip this media – do not add to top_posts (exclude from Top Performing)
             
-            # Add entry (including stories that expired - they still have analytics value)
+            # Only add entry if media still exists (can be fetched)
             entry = {
                 "media_id": media_id,
                 "trigger_count": trigger_count,
