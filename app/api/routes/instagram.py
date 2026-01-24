@@ -2325,6 +2325,7 @@ async def execute_automation_action(
                 user_id = account.user_id
                 account_id = account.id
                 username = account.username
+                account_igsid = getattr(account, "igsid", None)
                 rule_id = rule.id
                 print(f"🔍 [EXECUTE] Stored values - user_id: {user_id}, account_id: {account_id}, username: {username}, rule_id: {rule_id}")
                 
@@ -2360,6 +2361,7 @@ async def execute_automation_action(
                     user_id = account.user_id
                     account_id = account.id
                     username = account.username
+                    account_igsid = getattr(account, "igsid", None)
                     rule_id = rule.id
                 except Exception as refresh_error:
                     print(f"❌ Failed to refresh account/rule: {str(refresh_error)}")
@@ -2959,6 +2961,8 @@ async def execute_automation_action(
                             dm_log = DmLog(
                                 user_id=user_id,
                                 instagram_account_id=account_id,
+                                instagram_username=username,
+                                instagram_igsid=account_igsid,
                                 recipient_username=str(sender_id),
                                 message=follow_msg
                             )
@@ -3007,6 +3011,8 @@ async def execute_automation_action(
                             dm_log = DmLog(
                                 user_id=user_id,
                                 instagram_account_id=account_id,
+                                instagram_username=username,
+                                instagram_igsid=account_igsid,
                                 recipient_username=str(sender_id),
                                 message=follow_msg
                             )
@@ -3040,6 +3046,8 @@ async def execute_automation_action(
                         dm_log = DmLog(
                             user_id=user_id,
                             instagram_account_id=account_id,
+                            instagram_username=username,
+                            instagram_igsid=account_igsid,
                             recipient_username=str(sender_id),
                             message=email_msg
                         )
@@ -3536,9 +3544,11 @@ async def execute_automation_action(
                 # Log the DM (use stored values to avoid DetachedInstanceError)
                 from app.models.dm_log import DmLog
                 dm_log = DmLog(
-                    user_id=user_id,  # Use stored user_id
-                    instagram_account_id=account_id,  # Use stored account_id
-                    recipient_username=str(sender_id),  # Using sender_id as recipient username (ID format)
+                    user_id=user_id,
+                    instagram_account_id=account_id,
+                    instagram_username=username,
+                    instagram_igsid=account_igsid,
+                    recipient_username=str(sender_id),
                     message=message_template
                 )
                 db.add(dm_log)
@@ -3736,10 +3746,19 @@ def delete_instagram_account(
         AutomationRule.instagram_account_id == account_id
     ).delete()
     
-    # IMPORTANT: Do NOT delete DM logs - keep them for usage tracking
-    # This prevents users from resetting their usage limits by removing/re-adding accounts
-    # DM logs are kept even after account deletion to maintain accurate usage history
-    
+    # Nullify instagram_account_id in dm_logs (keep rows for usage tracking)
+    # username/igsid are stored in dm_logs so usage survives account delete
+    from sqlalchemy import update
+    from app.models.dm_log import DmLog
+    db.execute(
+        update(DmLog).where(DmLog.instagram_account_id == account_id).values(
+            instagram_account_id=None,
+            instagram_username=account.username,
+            instagram_igsid=account.igsid,
+        )
+    )
+    db.flush()
+
     # Delete associated Messages (from Message table)
     from app.models.message import Message
     db.query(Message).filter(

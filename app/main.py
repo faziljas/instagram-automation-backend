@@ -86,6 +86,16 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Billing cycle migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
+
+    # Run dm_logs username/igsid migration (allows account delete while preserving usage)
+    try:
+        print("🔄 Running dm_logs username/igsid migration...", file=sys.stderr)
+        from add_dm_log_username_igsid_migration import run_migration as run_dm_log_migration
+        run_dm_log_migration()
+        print("✅ dm_logs migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ dm_logs migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
     
     # Try Alembic migrations (if Alembic is configured)
     try:

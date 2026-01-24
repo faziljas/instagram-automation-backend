@@ -104,10 +104,8 @@ def check_rule_limit(user_id: int, db: Session) -> bool:
 def get_instagram_account_usage(instagram_account_id: int, cycle_start: datetime, db: Session) -> int:
     """
     Get DM usage for a specific Instagram account (by account ID).
-    This counts DMs sent from this account across all users and all time periods,
-    but filters by billing cycle start date.
+    Counts DMs by account_id and by username/igsid in dm_logs (orphaned rows after account delete).
     """
-    # Get the Instagram account to find its username/igsid
     account = db.query(InstagramAccount).filter(
         InstagramAccount.id == instagram_account_id
     ).first()
@@ -115,43 +113,22 @@ def get_instagram_account_usage(instagram_account_id: int, cycle_start: datetime
     if not account:
         return 0
     
-    # Find all account records with the same username or igsid (to track usage across reconnections)
-    # This ensures that if an account is removed and reconnected, usage continues from where it left off
-    account_identifiers = []
-    if account.username:
-        account_identifiers.append(('username', account.username))
-    if account.igsid:
-        account_identifiers.append(('igsid', account.igsid))
+    username = account.username
+    igsid = getattr(account, "igsid", None)
     
-    if not account_identifiers:
-        # Fallback: just count by current account_id
-        return db.query(DmLog).filter(
-            DmLog.instagram_account_id == instagram_account_id,
-            DmLog.sent_at >= cycle_start
-        ).count()
+    # Build base filter: current billing cycle
+    base = db.query(DmLog).filter(DmLog.sent_at >= cycle_start)
     
-    # Find all Instagram account IDs that match this account's username or igsid
-    matching_account_ids = set()
-    matching_account_ids.add(instagram_account_id)  # Include current account
+    from sqlalchemy import or_
+    clauses = []
+    clauses.append(DmLog.instagram_account_id == instagram_account_id)
+    if username:
+        clauses.append(DmLog.instagram_username == username)
+    if igsid:
+        clauses.append(DmLog.instagram_igsid == igsid)
     
-    for identifier_type, identifier_value in account_identifiers:
-        if identifier_type == 'username':
-            matching_accounts = db.query(InstagramAccount.id).filter(
-                InstagramAccount.username == identifier_value
-            ).all()
-        else:  # igsid
-            matching_accounts = db.query(InstagramAccount.id).filter(
-                InstagramAccount.igsid == identifier_value
-            ).all()
-        
-        for acc in matching_accounts:
-            matching_account_ids.add(acc[0])
-    
-    # Count DMs sent from any of these matching accounts in the current cycle
-    return db.query(DmLog).filter(
-        DmLog.instagram_account_id.in_(list(matching_account_ids)),
-        DmLog.sent_at >= cycle_start
-    ).count()
+    q = base.filter(or_(*clauses))
+    return q.count()
 
 
 def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) -> bool:
@@ -196,16 +173,33 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
     return True
 
 
-def log_dm_sent(user_id: int, instagram_account_id: int, recipient_username: str, message: str, db: Session):
+def log_dm_sent(
+    user_id: int,
+    instagram_account_id: int,
+    recipient_username: str,
+    message: str,
+    db: Session,
+    instagram_username: str | None = None,
+    instagram_igsid: str | None = None,
+):
     """
-    Log a sent DM for tracking monthly limits.
+    Log a sent DM for tracking. Store username/igsid so usage survives account delete.
     """
+    if instagram_username is None or instagram_igsid is None:
+        acc = db.query(InstagramAccount).filter(
+            InstagramAccount.id == instagram_account_id
+        ).first()
+        if acc:
+            instagram_username = instagram_username or acc.username
+            instagram_igsid = instagram_igsid or acc.igsid
     dm_log = DmLog(
         user_id=user_id,
         instagram_account_id=instagram_account_id,
+        instagram_username=instagram_username,
+        instagram_igsid=instagram_igsid,
         recipient_username=recipient_username,
         message=message,
-        sent_at=datetime.utcnow()
+        sent_at=datetime.utcnow(),
     )
     db.add(dm_log)
     db.commit()

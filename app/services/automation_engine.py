@@ -94,7 +94,9 @@ class AutomationEngine:
                 instagram_account_id=instagram_account.id,
                 recipient_username=trigger_data.get("username", ""),
                 message=message,
-                db=self.db
+                db=self.db,
+                instagram_username=instagram_account.username,
+                instagram_igsid=getattr(instagram_account, "igsid", None),
             )
 
             return True
