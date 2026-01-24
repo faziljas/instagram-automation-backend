@@ -82,15 +82,15 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
 
 def _html_redirect_page(dest_url: str, label: str = "Instagram") -> str:
     """Return HTML that redirects via JavaScript with window.location.href.
-    FIXED: Using href instead of replace() and adding immediate execution to prevent
-    redirect through Facebook in Instagram's in-app browser."""
+    FIXED: Removed meta refresh tag - it was causing redirect through Facebook in Instagram's in-app browser.
+    Using only JavaScript redirect with immediate execution (IIFE) for reliable redirect."""
     esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
-    # Use window.location.href with immediate execution - more reliable than replace()
+    # Use window.location.href with immediate execution (IIFE) - meta refresh was causing Facebook redirect
+    # Execute JavaScript immediately before page renders to prevent Instagram browser from intercepting
     return (
         f'<!DOCTYPE html><html><head><meta charset="utf-8">'
         f'<title>Opening Instagram…</title>'
         f'<script type="text/javascript">(function(){{window.location.href="{esc}";}})();</script>'
-        f'<meta http-equiv="refresh" content="0;url={esc}">'
         f'</head><body>'
         f'<p>Redirecting to {label}…</p>'
         f'<p><a href="{esc}">Click here if you are not redirected</a>.</p>'
@@ -170,8 +170,8 @@ async def track_link_click(
                 redirect_to = f"https://www.instagram.com/{username}"
 
         # FIXED: Use HTML redirect with window.location.href for profile links.
-        # Direct 302 redirects were being intercepted by Instagram's in-app browser
-        # and routed through Facebook. HTML with immediate JavaScript execution works better.
+        # Removed meta refresh tag - it was causing redirect through Facebook in Instagram's in-app browser.
+        # JavaScript redirect with immediate execution (IIFE) works reliably without Facebook interception.
         # No deep link (instagram://) — it caused redirect to Facebook.
         if is_profile and redirect_to.startswith("https://www.instagram.com/"):
             html = _html_redirect_page(redirect_to, "Instagram profile")
