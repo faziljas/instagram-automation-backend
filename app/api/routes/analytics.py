@@ -80,22 +80,41 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
     return any(x in u for x in ("instagram", "iphone", "ipad", "android", "mobile"))
 
 
-def _html_redirect_page(dest_url: str, label: str = "Instagram") -> str:
-    """Return HTML that redirects via JavaScript with window.location.href.
+def _html_redirect_page(dest_url: str, deep_link_url: Optional[str] = None, label: str = "Instagram") -> str:
+    """Return HTML that redirects via JavaScript with smart deep link support.
+    For mobile/Instagram in-app browser: uses native app deep link to open Instagram app directly.
     FIXED: Removed meta refresh tag - it was causing redirect through Facebook in Instagram's in-app browser.
-    Using only JavaScript redirect with immediate execution (IIFE) for reliable redirect."""
-    esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
-    # Use window.location.href with immediate execution (IIFE) - meta refresh was causing Facebook redirect
-    # Execute JavaScript immediately before page renders to prevent Instagram browser from intercepting
-    return (
-        f'<!DOCTYPE html><html><head><meta charset="utf-8">'
-        f'<title>Opening Instagram…</title>'
-        f'<script type="text/javascript">(function(){{window.location.href="{esc}";}})();</script>'
-        f'</head><body>'
-        f'<p>Redirecting to {label}…</p>'
-        f'<p><a href="{esc}">Click here if you are not redirected</a>.</p>'
-        f"</body></html>"
-    )
+    Using JavaScript redirect with immediate execution (IIFE) for reliable redirect."""
+    esc_web = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    esc_deep = deep_link_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;") if deep_link_url else None
+    
+    # If we have a deep link, use it directly (Instagram in-app browser will handle it)
+    if esc_deep:
+        return (
+            f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<title>Opening Instagram…</title>'
+            f'<script type="text/javascript">'
+            f'(function(){{'
+            f'  // Use native app deep link - opens Instagram app directly'
+            f'  window.location.href = "{esc_deep}";'
+            f'}})();'
+            f'</script>'
+            f'</head><body>'
+            f'<p>Opening Instagram profile…</p>'
+            f'<p><a href="{esc_deep}">Open in Instagram App</a> | <a href="{esc_web}">Open in Browser</a></p>'
+            f"</body></html>"
+        )
+    else:
+        # No deep link, use web URL directly
+        return (
+            f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<title>Opening Instagram…</title>'
+            f'<script type="text/javascript">(function(){{window.location.href="{esc_web}";}})();</script>'
+            f'</head><body>'
+            f'<p>Redirecting to {label}…</p>'
+            f'<p><a href="{esc_web}">Click here if you are not redirected</a>.</p>'
+            f"</body></html>"
+        )
 
 
 @router.get("/track/redirect")
@@ -164,17 +183,34 @@ async def track_link_click(
             print(f"⚠️ Link click tracking skipped: missing user_id or rule_id")
 
         redirect_to = target_url
+        deep_link_url = None
+        
         if is_profile:
             username = _username_from_instagram_url(target_url)
             if username:
                 redirect_to = f"https://www.instagram.com/{username}"
-
-        # FIXED: Use HTML redirect with window.location.href for profile links.
+                # Generate Instagram native app deep link for mobile devices
+                # Format: instagram://user?username={username}
+                deep_link_url = f"instagram://user?username={username}"
+        
+        # Check if user is on mobile/Instagram in-app browser
+        user_agent = request.headers.get("user-agent", "")
+        is_mobile = _user_agent_looks_mobile(user_agent)
+        # For Instagram in-app browser, always use deep link to open native app
+        is_instagram_browser = "instagram" in user_agent.lower()
+        
+        # FIXED: Use HTML redirect with smart deep link support for profile links.
+        # For mobile/Instagram in-app browser: uses native app deep link to open Instagram app directly.
         # Removed meta refresh tag - it was causing redirect through Facebook in Instagram's in-app browser.
         # JavaScript redirect with immediate execution (IIFE) works reliably without Facebook interception.
-        # No deep link (instagram://) — it caused redirect to Facebook.
         if is_profile and redirect_to.startswith("https://www.instagram.com/"):
-            html = _html_redirect_page(redirect_to, "Instagram profile")
+            # Use deep link for mobile devices or Instagram in-app browser
+            use_deep_link = deep_link_url and (is_mobile or is_instagram_browser)
+            html = _html_redirect_page(
+                redirect_to, 
+                deep_link_url=deep_link_url if use_deep_link else None,
+                label="Instagram profile"
+            )
             return HTMLResponse(content=html)
         return RedirectResponse(url=redirect_to, status_code=302)
     except HTTPException:
