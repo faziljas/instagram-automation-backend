@@ -2835,14 +2835,13 @@ async def execute_automation_action(
                             send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                             print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger, follow enabled)")
                         else:
-                            # Email-only flow: Send minimal opener via private_reply (opens conversation)
-                            # Then send email question with quick_replies via regular DM (only once)
-                            # Use "." as minimal opener (not "Hi👋") to open conversation
-                            send_private_reply(comment_id, ".", access_token, page_id_for_dm)  # Minimal opener to open conversation
+                            # Email-only flow: Send "Hi! 👋" as first message via private_reply (opens conversation)
+                            # Then send email question with quick_replies via regular DM
+                            send_private_reply(comment_id, "Hi! 👋", access_token, page_id_for_dm)
                             await asyncio.sleep(1)  # Small delay
-                            # Send email question with quick_replies via regular DM (only once)
+                            # Send email question with quick_replies via regular DM
                             send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
-                            print(f"✅ Email request sent via private reply (minimal) + DM with quick_replies (comment trigger, email-only)")
+                            print(f"✅ Email request sent: Hi👋 first, then email question with quick_replies (comment trigger, email-only)")
                     else:
                         # For DM triggers, send directly with quick_replies
                         send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
