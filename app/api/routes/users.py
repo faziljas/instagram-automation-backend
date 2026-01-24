@@ -152,7 +152,7 @@ def get_user_accounts(
         "id": account.id,
         "username": account.username,
         "is_active": account.is_active,
-        "created_at": None  # InstagramAccount model doesn't have created_at field
+        "created_at": account.created_at.isoformat() if account.created_at else None
     } for account in accounts]
 
 

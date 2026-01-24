@@ -96,6 +96,16 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ dm_logs migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
+
+    # Run instagram_accounts created_at migration
+    try:
+        print("🔄 Running instagram_accounts created_at migration...", file=sys.stderr)
+        from add_instagram_account_created_at_migration import run_migration as run_account_created_at_migration
+        run_account_created_at_migration()
+        print("✅ instagram_accounts created_at migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ instagram_accounts created_at migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
     
     # Try Alembic migrations (if Alembic is configured)
     try:

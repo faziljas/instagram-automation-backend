@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime
+from datetime import datetime
 from app.db.base import Base
 
 
@@ -13,3 +14,4 @@ class InstagramAccount(Base):
     page_id = Column(String, nullable=True)  # Facebook Page ID
     igsid = Column(String, nullable=True, index=True)  # Instagram Business Account ID
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
