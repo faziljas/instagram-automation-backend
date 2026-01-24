@@ -86,9 +86,9 @@ def list_automation_rules(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
+    # Return all rules (active + inactive) so toggled-off rules remain visible
     query = db.query(AutomationRule).join(InstagramAccount).filter(
-        InstagramAccount.user_id == user_id,
-        AutomationRule.is_active == True  # Only return active rules (soft-deleted rules are excluded)
+        InstagramAccount.user_id == user_id
     )
 
     if instagram_account_id:
@@ -104,10 +104,10 @@ def get_automation_rule(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
+    # Allow viewing/editing inactive rules (no is_active filter)
     rule = db.query(AutomationRule).join(InstagramAccount).filter(
         AutomationRule.id == rule_id,
-        InstagramAccount.user_id == user_id,
-        AutomationRule.is_active == True  # Only return active rules (soft-deleted rules are excluded)
+        InstagramAccount.user_id == user_id
     ).first()
 
     if not rule:
