@@ -2819,30 +2819,30 @@ async def execute_automation_action(
                     print(f"🚀 [PRIMARY DM] Scheduling primary DM after 15 seconds for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
                     asyncio.create_task(delayed_primary_dm_simple())
                 elif pre_dm_result and pre_dm_result["action"] == "wait_for_follow":
-                # Follow request was sent but not confirmed - user commented again
-                # Resend follow request to remind user
-                print(f"⏳ Follow request sent but not confirmed. User commented again, resending follow request...")
-                # Reset follow_request_sent to False so it gets resent
-                from app.services.pre_dm_handler import update_pre_dm_state
-                update_pre_dm_state(str(sender_id), rule_id, {
-                    "follow_request_sent": False,
-                    "follow_confirmed": False
-                })
-                # Re-process pre-DM to get follow request action
-                pre_dm_result = await process_pre_dm_actions(
-                    rule, str(sender_id), account, db,
-                    incoming_message=None,
-                    trigger_type=trigger_type,
-                    skip_growth_steps=skip_growth_steps
-                )
-                # Now handle the follow request
-                if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
-                    # Fall through to send_follow_request handler - it will be handled by the if block above
-                    pass
-                else:
-                    # If something went wrong, just return without sending
-                    print(f"⚠️ Failed to resend follow request")
-                    return
+                    # Follow request was sent but not confirmed - user commented again
+                    # Resend follow request to remind user
+                    print(f"⏳ Follow request sent but not confirmed. User commented again, resending follow request...")
+                    # Reset follow_request_sent to False so it gets resent
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(str(sender_id), rule_id, {
+                        "follow_request_sent": False,
+                        "follow_confirmed": False
+                    })
+                    # Re-process pre-DM to get follow request action
+                    pre_dm_result = await process_pre_dm_actions(
+                        rule, str(sender_id), account, db,
+                        incoming_message=None,
+                        trigger_type=trigger_type,
+                        skip_growth_steps=skip_growth_steps
+                    )
+                    # Now handle the follow request
+                    if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
+                        # Fall through to send_follow_request handler - it will be handled by the if block above
+                        pass
+                    else:
+                        # If something went wrong, just return without sending
+                        print(f"⚠️ Failed to resend follow request")
+                        return
             elif pre_dm_result and pre_dm_result["action"] == "wait_for_email":
                     # Still waiting for email response
                     # If this is a comment/keyword trigger (not a DM), user is engaging again
