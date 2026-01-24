@@ -249,7 +249,9 @@ async def process_pre_dm_actions(
     # CRITICAL: Only skip to primary DM if THIS FLOW was completed, not just if user already follows/has email.
     # CRITICAL FIX: When ask_to_follow is False, follow is considered completed (no follow step needed)
     follow_completed_for_flow = not ask_to_follow or state.get("follow_confirmed", False)
-    flow_has_completed = follow_completed_for_flow and (not ask_for_email or state.get("email_received", False))
+    # Email is completed if: not asking for email, email received, OR email was skipped
+    email_completed_for_flow = not ask_for_email or state.get("email_received", False) or state.get("email_skipped", False)
+    flow_has_completed = follow_completed_for_flow and email_completed_for_flow
     
     if ask_to_follow or ask_for_email:
         # Case A: THIS FLOW has been completed (follow confirmed AND email received if required)
@@ -485,7 +487,8 @@ async def process_pre_dm_actions(
         # Check if flow is COMPLETED (both follow confirmed AND email received if required)
         # Only skip to primary DM if flow was completed in a previous interaction
         follow_completed = not ask_to_follow or state.get("follow_confirmed", False)
-        email_completed = not ask_for_email or state.get("email_received", False)
+        # Email is completed if: not asking for email, email received, OR email was skipped
+        email_completed = not ask_for_email or state.get("email_received", False) or state.get("email_skipped", False)
         flow_completed = follow_completed and email_completed
         
         print(f"🔍 [PRE-DM DEBUG] trigger_type={trigger_type}, ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}")

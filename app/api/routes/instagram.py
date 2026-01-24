@@ -425,13 +425,15 @@ async def process_instagram_message(event: dict, db: Session):
                         from app.services.pre_dm_handler import update_pre_dm_state
                         update_pre_dm_state(sender_id, rule.id, {
                             "email_skipped": True,
-                            "email_request_sent": True  # Mark as sent to prevent re-asking
+                            "email_request_sent": True,  # Mark as sent to prevent re-asking
+                            "email_received": False  # Explicitly mark as not received (skipped)
                         })
-                        # Proceed to primary DM
+                        # Proceed to primary DM with override to skip pre-DM processing
                         asyncio.create_task(execute_automation_action(
                             rule, sender_id, account, db,
                             trigger_type="email_skip",
-                            message_id=message_id
+                            message_id=message_id,
+                            pre_dm_result_override={"action": "send_primary"}  # Skip pre-DM, go directly to primary DM
                         ))
                 return  # Don't process as regular message
             
@@ -2754,6 +2756,48 @@ async def execute_automation_action(
                     ]
                     pre_dm_result["quick_replies"] = quick_replies
                     print(f"📧 Sending email request DM to {sender_id} with Quick Reply buttons")
+                    
+                    # CRITICAL FIX: Actually send the email request message with quick_replies
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    from app.utils.encryption import decrypt_credentials
+                    
+                    # Get access token
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                            page_id_for_dm = account.page_id
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                            page_id_for_dm = account.page_id
+                        else:
+                            raise Exception("No access token found")
+                    except Exception as e:
+                        print(f"❌ Failed to get access token for email request: {str(e)}")
+                        return
+                    
+                    # Mark email request as sent in state
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(str(sender_id), rule_id, {
+                        "email_request_sent": True,
+                        "step": "email"
+                    })
+                    
+                    # Check if comment-based trigger (use private reply)
+                    is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                    
+                    if is_comment_trigger:
+                        # For comment triggers, send via private reply first, then regular DM with quick_replies
+                        from app.utils.instagram_api import send_private_reply
+                        # Send opener via private reply to open conversation
+                        send_private_reply(comment_id, "Hi! 👋", access_token, page_id_for_dm)
+                        await asyncio.sleep(1)  # Small delay
+                        # Now send email request with quick_replies via regular DM
+                        send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                        print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger)")
+                    else:
+                        # For DM triggers, send directly with quick_replies
+                        send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                        print(f"✅ Email request sent via DM with quick_replies")
                     
                     # Schedule primary DM after 15 seconds (simplified)
                     # Store IDs for delayed task
