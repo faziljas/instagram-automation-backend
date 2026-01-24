@@ -2488,26 +2488,21 @@ async def execute_automation_action(
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
                         # Build Instagram profile URL for "Visit Profile" button
-                        # Use tracking URL to log PROFILE_VISIT analytics events
-                        from app.utils.analytics import generate_tracking_url
+                        # Use Instagram deep link directly to open native app (no tracking URL for instant opening)
+                        # Deep link format: instagram://user?username={username}
                         profile_url_direct = f"https://www.instagram.com/{username}"
+                        profile_deep_link = f"instagram://user?username={username}"
                         
-                        # Generate tracking URL that logs profile visits
-                        media_id_for_tracking = rule.config.get("media_id") if isinstance(rule.config, dict) else None
-                        profile_url = generate_tracking_url(
-                            target_url=profile_url_direct,
-                            rule_id=rule_id,
-                            user_id=account.user_id,
-                            media_id=media_id_for_tracking,
-                            instagram_account_id=account.id
-                        )
+                        # Use deep link directly in button URL for instant native app opening
+                        # Note: We'll track profile visits separately via other interactions
+                        profile_url = profile_deep_link
                         
                         # Build URL button for "Visit Profile" (enables navigation to bio page)
                         # Note: URL buttons require generic template format (card layout)
-                        # Tracking URL redirects to Instagram profile and logs PROFILE_VISIT event
+                        # Uses Instagram deep link (instagram://) to open native app directly
                         visit_profile_button = [{
                             "text": "Visit Profile",
-                            "url": profile_url
+                            "url": profile_url  # Deep link: instagram://user?username=X
                         }]
                         
                         # Build quick reply buttons for "I'm following" and "Follow Me"
