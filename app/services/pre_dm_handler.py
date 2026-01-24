@@ -486,8 +486,13 @@ async def process_pre_dm_actions(
         email_completed = not ask_for_email or state.get("email_received", False)
         flow_completed = follow_completed and email_completed
         
+        print(f"🔍 [PRE-DM DEBUG] trigger_type={trigger_type}, ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}")
+        print(f"🔍 [PRE-DM DEBUG] state: follow_request_sent={state.get('follow_request_sent')}, follow_confirmed={state.get('follow_confirmed')}, email_request_sent={state.get('email_request_sent')}, email_received={state.get('email_received')}")
+        print(f"🔍 [PRE-DM DEBUG] flow_completed={flow_completed} (follow_completed={follow_completed}, email_completed={email_completed})")
+        
         # If flow is completed, skip directly to primary DM
         if flow_completed:
+            print(f"✅ [PRE-DM] Flow completed - skipping to primary DM")
             update_pre_dm_state(sender_id, rule.id, {
                 "primary_dm_sent": True,
                 "step": "primary"
@@ -502,10 +507,12 @@ async def process_pre_dm_actions(
         # Step 1: Send Follow Request (if enabled and not sent yet OR not confirmed yet)
         # IMPORTANT: Always send follow request if not confirmed, even if it was sent before
         if ask_to_follow and not state.get("follow_confirmed"):
+            print(f"🔍 [PRE-DM] Checking follow request: follow_request_sent={state.get('follow_request_sent')}")
             # If follow request was already sent but not confirmed, user commented again
             # We should still wait for confirmation, but if this is a new comment, resend follow request
             if not state.get("follow_request_sent"):
                 # First time - send follow request
+                print(f"✅ [PRE-DM] First time - sending follow request")
                 return {
                     "action": "send_follow_request",
                     "message": ask_to_follow_message,
@@ -514,6 +521,7 @@ async def process_pre_dm_actions(
                 }
             else:
                 # Follow request was sent but not confirmed - wait for user to confirm
+                print(f"⏳ [PRE-DM] Follow request sent but not confirmed - returning wait_for_follow")
                 return {
                     "action": "wait_for_follow",
                     "message": None,
@@ -523,8 +531,10 @@ async def process_pre_dm_actions(
         
         # Step 2: Send Email Request (if enabled and follow is confirmed but email not received)
         if ask_for_email and state.get("follow_confirmed") and not state.get("email_received"):
+            print(f"🔍 [PRE-DM] Checking email request: email_request_sent={state.get('email_request_sent')}")
             if not state.get("email_request_sent"):
                 # Send email request for the first time
+                print(f"✅ [PRE-DM] Sending email request")
                 update_pre_dm_state(sender_id, rule.id, {
                     "email_request_sent": True,
                     "step": "email"
@@ -537,6 +547,7 @@ async def process_pre_dm_actions(
                 }
             else:
                 # Email request was sent but not received - wait for email
+                print(f"⏳ [PRE-DM] Email request sent but not received - returning wait_for_email")
                 return {
                     "action": "wait_for_email",
                     "message": None,
@@ -547,6 +558,7 @@ async def process_pre_dm_actions(
         # Step 3: Send Primary DM (if pre-DM actions are done)
         # This should only happen if both follow and email are completed
         if follow_completed and email_completed:
+            print(f"✅ [PRE-DM] Both follow and email completed - sending primary DM")
             update_pre_dm_state(sender_id, rule.id, {
                 "primary_dm_sent": True,
                 "step": "primary"
@@ -559,6 +571,7 @@ async def process_pre_dm_actions(
             }
         
         # If we reach here, something unexpected - wait for user action
+        print(f"⚠️ [PRE-DM] Unexpected state - returning wait action")
         return {
             "action": "wait",
             "message": None,

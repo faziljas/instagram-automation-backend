@@ -2835,14 +2835,59 @@ async def execute_automation_action(
                         trigger_type=trigger_type,
                         skip_growth_steps=skip_growth_steps
                     )
-                    # Now handle the follow request
+                    print(f"🔍 [DEBUG] After wait_for_follow reset, pre_dm_result action={pre_dm_result.get('action')}")
+                    # Now handle the follow request - if it's send_follow_request, it will be handled by the if block above
                     if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
-                        # Fall through to send_follow_request handler - it will be handled by the if block above
-                        pass
-                    else:
-                        # If something went wrong, just return without sending
-                        print(f"⚠️ Failed to resend follow request")
+                        # Re-process to send follow request - this will be handled by the send_follow_request block above
+                        # We need to manually trigger it since we're in an elif block
+                        # Actually, we can't easily fall through, so let's handle it here
+                        follow_message = pre_dm_result.get("message") or rule.config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
+                        follow_message_with_instructions = f"{follow_message}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!"
+                        
+                        # Mark follow as sent
+                        update_pre_dm_state(str(sender_id), rule_id, {
+                            "follow_request_sent": True,
+                            "step": "follow"
+                        })
+                        
+                        # Send follow request message
+                        from app.utils.instagram_api import send_dm as send_dm_api
+                        from app.utils.encryption import decrypt_credentials
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                                page_id_for_dm = account.page_id
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                                page_id_for_dm = account.page_id
+                            else:
+                                raise Exception("No access token found")
+                        except Exception as e:
+                            print(f"❌ Failed to get access token: {str(e)}")
+                            return
+                        
+                        # Check if comment-based trigger
+                        is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                        
+                        if is_comment_trigger:
+                            from app.utils.instagram_api import send_private_reply
+                            send_private_reply(comment_id, follow_message_with_instructions, access_token, page_id_for_dm)
+                            print(f"✅ Follow request resent via private reply")
+                        else:
+                            send_dm_api(str(sender_id), follow_message_with_instructions, access_token, page_id_for_dm)
+                            print(f"✅ Follow request resent via DM")
+                        
+                        # Don't continue to primary DM - wait for user response
                         return
+                    else:
+                        # If something went wrong, don't send primary DM
+                        print(f"⚠️ Failed to resend follow request, action={pre_dm_result.get('action') if pre_dm_result else 'None'}")
+                        return
+            elif pre_dm_result and pre_dm_result["action"] == "wait":
+                # Waiting for user action - don't send anything
+                print(f"⏳ Waiting for user action, not sending primary DM")
+                return
             elif pre_dm_result and pre_dm_result["action"] == "wait_for_email":
                     # Still waiting for email response
                     # If this is a comment/keyword trigger (not a DM), user is engaging again
@@ -3150,10 +3195,17 @@ async def execute_automation_action(
                 return
             elif pre_dm_result and pre_dm_result["action"] == "send_primary":
                     # Pre-DM actions complete, proceed to primary DM
+                    # IMPORTANT: Only proceed if flow is actually completed (not just skipped)
                     if pre_dm_result.get("email"):
                         print(f"✅ Pre-DM email received: {pre_dm_result['email']}, proceeding to primary DM")
                     # Continue to primary DM logic below - message_template will be loaded in the elif block below
                     print(f"🔍 [DEBUG] Pre-DM complete, will load message_template in elif block")
+            
+            # CRITICAL CHECK: Don't send primary DM if pre-DM actions are waiting for user response
+            # This prevents primary DM from being sent when flow is not completed
+            if pre_dm_result and pre_dm_result["action"] in ["wait", "wait_for_follow", "wait_for_email", "ignore"]:
+                print(f"⏳ Pre-DM action is '{pre_dm_result['action']}' - waiting for user response, NOT sending primary DM")
+                return
             
             # Check if this is a lead capture flow
             is_lead_capture = rule.config.get("is_lead_capture", False)
