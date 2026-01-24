@@ -233,6 +233,12 @@ async def verify_checkout_session(
         plan_tier = get_plan_tier_from_subscription(subscription.to_dict())
         user.plan_tier = plan_tier
         
+        # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
+        if plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:
+            from datetime import datetime
+            db_subscription.billing_cycle_start_date = datetime.utcnow()
+            print(f"✅ Set billing cycle start date for user {user_id}: {db_subscription.billing_cycle_start_date}")
+        
         db.commit()
         db.refresh(user)
         db.refresh(db_subscription)

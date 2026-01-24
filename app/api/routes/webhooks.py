@@ -1,5 +1,6 @@
 import os
 import stripe
+from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -95,6 +96,11 @@ def handle_checkout_session_completed(session_data: dict, db: Session):
         plan_tier = get_plan_tier_from_subscription(subscription.to_dict())
         user.plan_tier = plan_tier
         
+        # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
+        if plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:
+            db_subscription.billing_cycle_start_date = datetime.utcnow()
+            print(f"✅ Set billing cycle start date for user {user_id}: {db_subscription.billing_cycle_start_date}")
+        
         db.commit()
         print(f"✅ User {user_id} upgraded to {plan_tier} plan")
         
@@ -138,6 +144,11 @@ def handle_subscription_created(subscription_data: dict, db: Session):
     # Update user plan tier based on subscription
     plan_tier = get_plan_tier_from_subscription(subscription_data)
     user.plan_tier = plan_tier
+    
+    # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
+    if plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
+        subscription.billing_cycle_start_date = datetime.utcnow()
+        print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
 
     db.commit()
 
@@ -162,8 +173,15 @@ def handle_subscription_updated(subscription_data: dict, db: Session):
         if status == "active":
             plan_tier = get_plan_tier_from_subscription(subscription_data)
             user.plan_tier = plan_tier
+            
+            # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
+            if plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
+                subscription.billing_cycle_start_date = datetime.utcnow()
+                print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
         elif status in ["canceled", "incomplete_expired", "past_due"]:
             user.plan_tier = "free"
+            # Clear billing cycle start date when downgraded
+            subscription.billing_cycle_start_date = None
 
     db.commit()
 

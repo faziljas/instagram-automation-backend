@@ -10,5 +10,6 @@ class Subscription(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
     stripe_subscription_id = Column(String, unique=True, nullable=True)
     status = Column(String, nullable=False, default="inactive")
+    billing_cycle_start_date = Column(DateTime, nullable=True)  # For Pro users: 30-day billing cycle start
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

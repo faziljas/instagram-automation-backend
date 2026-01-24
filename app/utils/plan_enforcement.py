@@ -1,11 +1,44 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.models.user import User
 from app.models.instagram_account import InstagramAccount
 from app.models.dm_log import DmLog
 from app.models.automation_rule import AutomationRule
+from app.models.subscription import Subscription
 from app.core.plan_limits import get_plan_limit
+
+
+def get_billing_cycle_start(user_id: int, db: Session) -> datetime:
+    """
+    Get the billing cycle start date for Pro/Enterprise users.
+    For Pro users: Returns billing_cycle_start_date from subscription (30-day cycle from upgrade)
+    For Free/Basic users: Returns start of current calendar month
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    # For Pro/Enterprise users, use billing cycle start date
+    if user.plan_tier in ["pro", "enterprise"]:
+        subscription = db.query(Subscription).filter(
+            Subscription.user_id == user_id
+        ).first()
+        
+        if subscription and subscription.billing_cycle_start_date:
+            # Calculate current billing cycle start (30 days from original start)
+            cycle_start = subscription.billing_cycle_start_date
+            now = datetime.utcnow()
+            
+            # Find the most recent cycle start date (every 30 days)
+            days_since_start = (now - cycle_start).days
+            cycles_passed = days_since_start // 30
+            current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
+            
+            return current_cycle_start
+    
+    # For Free/Basic users, use calendar month
+    return datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
 def check_account_limit(user_id: int, db: Session) -> bool:
@@ -70,8 +103,9 @@ def check_rule_limit(user_id: int, db: Session) -> bool:
 
 def check_dm_limit(user_id: int, db: Session) -> bool:
     """
-    Check if user can send another DM this month based on their plan.
-    Raises HTTPException if limit exceeded.
+    Check if user can send another DM based on their plan.
+    For Pro/Enterprise users: Uses 30-day billing cycle from upgrade date
+    For Free/Basic users: Uses calendar month
     Returns True if limit not reached, logs warning if at limit but doesn't raise exception.
     """
     user = db.query(User).filter(User.id == user_id).first()
@@ -83,15 +117,17 @@ def check_dm_limit(user_id: int, db: Session) -> bool:
 
     max_dms = get_plan_limit(user.plan_tier, "max_dms_per_month")
 
-    # Count DMs sent this month (from first day of current month)
-    start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    dms_this_month = db.query(DmLog).filter(
+    # Get billing cycle start (calendar month for free/basic, 30-day cycle for pro/enterprise)
+    cycle_start = get_billing_cycle_start(user_id, db)
+    
+    # Count DMs sent in current billing cycle
+    dms_this_cycle = db.query(DmLog).filter(
         DmLog.user_id == user_id,
-        DmLog.sent_at >= start_of_month
+        DmLog.sent_at >= cycle_start
     ).count()
 
-    if dms_this_month >= max_dms:
-        print(f"⚠️ Monthly DM limit reached for user {user_id}: {dms_this_month}/{max_dms} DMs sent this month")
+    if dms_this_cycle >= max_dms:
+        print(f"⚠️ DM limit reached for user {user_id}: {dms_this_cycle}/{max_dms} DMs sent in current cycle")
         # Don't raise exception, just log and return False
         # This prevents API calls but doesn't break the webhook flow
         return False
@@ -116,7 +152,9 @@ def log_dm_sent(user_id: int, instagram_account_id: int, recipient_username: str
 
 def get_remaining_dms(user_id: int, db: Session) -> int:
     """
-    Get the number of remaining DMs user can send this month.
+    Get the number of remaining DMs user can send in current billing cycle.
+    For Pro/Enterprise users: Uses 30-day billing cycle from upgrade date
+    For Free/Basic users: Uses calendar month
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -124,14 +162,16 @@ def get_remaining_dms(user_id: int, db: Session) -> int:
 
     max_dms = get_plan_limit(user.plan_tier, "max_dms_per_month")
 
-    # Count DMs sent this month
-    start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    dms_this_month = db.query(DmLog).filter(
+    # Get billing cycle start (calendar month for free/basic, 30-day cycle for pro/enterprise)
+    cycle_start = get_billing_cycle_start(user_id, db)
+    
+    # Count DMs sent in current billing cycle
+    dms_this_cycle = db.query(DmLog).filter(
         DmLog.user_id == user_id,
-        DmLog.sent_at >= start_of_month
+        DmLog.sent_at >= cycle_start
     ).count()
 
-    return max(0, max_dms - dms_this_month)
+    return max(0, max_dms - dms_this_cycle)
 
 
 def check_pro_plan_access(user_id: int, db: Session) -> bool:

@@ -248,11 +248,12 @@ def get_subscription(
             AutomationRule.instagram_account_id.in_(user_account_ids)
         ).count()
     
-    # Count DMs sent this month
-    start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Count DMs sent - use billing cycle for Pro/Enterprise, calendar month for Free/Basic
+    from app.utils.plan_enforcement import get_billing_cycle_start
+    cycle_start = get_billing_cycle_start(user_id, db)
     dms_this_month = db.query(DmLog).filter(
         DmLog.user_id == user_id,
-        DmLog.sent_at >= start_of_month
+        DmLog.sent_at >= cycle_start
     ).count()
     
     # Free plan users should show as "active" (they have an active free plan)

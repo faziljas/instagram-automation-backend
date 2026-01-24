@@ -3736,10 +3736,9 @@ def delete_instagram_account(
         AutomationRule.instagram_account_id == account_id
     ).delete()
     
-    # Delete associated DM logs
-    db.query(DmLog).filter(
-        DmLog.instagram_account_id == account_id
-    ).delete()
+    # IMPORTANT: Do NOT delete DM logs - keep them for usage tracking
+    # This prevents users from resetting their usage limits by removing/re-adding accounts
+    # DM logs are kept even after account deletion to maintain accurate usage history
     
     # Delete associated Messages (from Message table)
     from app.models.message import Message
