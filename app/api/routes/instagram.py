@@ -2835,81 +2835,90 @@ async def execute_automation_action(
                             send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                             print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger, follow enabled)")
                         else:
-                            # Email-only flow: Send email request message via private_reply (opens conversation + sends message)
-                            # Then send same message with quick_replies via regular DM
-                            send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
+                            # Email-only flow: Send minimal opener via private_reply (opens conversation)
+                            # Then send email question with quick_replies via regular DM (only once)
+                            # Use "." as minimal opener (not "Hi👋") to open conversation
+                            send_private_reply(comment_id, ".", access_token, page_id_for_dm)  # Minimal opener to open conversation
                             await asyncio.sleep(1)  # Small delay
-                            # Send same message with quick_replies via regular DM
+                            # Send email question with quick_replies via regular DM (only once)
                             send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
-                            print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger, email-only, no Hi👋)")
+                            print(f"✅ Email request sent via private reply (minimal) + DM with quick_replies (comment trigger, email-only)")
                     else:
                         # For DM triggers, send directly with quick_replies
                         send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                         print(f"✅ Email request sent via DM with quick_replies")
                     
-                    # Schedule primary DM after 15 seconds (simplified)
-                    # Store IDs for delayed task
-                    sender_id_for_dm = str(sender_id)
-                    rule_id_for_dm = int(rule_id)
-                    user_id_for_dm = int(user_id)
-                    account_id_for_dm = int(account_id)
+                    # CRITICAL FIX: Don't schedule delayed primary DM for email flows
+                    # Email flows should wait for user interaction (button click or email input)
+                    # Only schedule delayed primary DM for follow-only flows
+                    ask_to_follow = rule.config.get("ask_to_follow", False)
+                    ask_for_email = rule.config.get("ask_for_email", False)
                     
-                    async def delayed_primary_dm_simple():
-                        """Simplified background task to send primary DM after 15 seconds."""
-                        from app.db.session import SessionLocal
-                        from app.models.automation_rule import AutomationRule
-                        from app.models.instagram_account import InstagramAccount
+                    if ask_to_follow and not ask_for_email:
+                        # Follow-only flow: Schedule delayed primary DM after 15 seconds
+                        sender_id_for_dm = str(sender_id)
+                        rule_id_for_dm = int(rule_id)
+                        user_id_for_dm = int(user_id)
+                        account_id_for_dm = int(account_id)
                         
-                        db_session = SessionLocal()
-                        try:
-                            print(f"⏰ [PRIMARY DM] Starting 15-second delay for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
-                            await asyncio.sleep(15)  # Wait 15 seconds
-                            print(f"⏰ [PRIMARY DM] 15 seconds elapsed, checking if primary DM already sent")
+                        async def delayed_primary_dm_simple():
+                            """Simplified background task to send primary DM after 15 seconds."""
+                            from app.db.session import SessionLocal
+                            from app.models.automation_rule import AutomationRule
+                            from app.models.instagram_account import InstagramAccount
                             
-                            # Re-fetch rule and account
-                            rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
-                            account_refresh = db_session.query(InstagramAccount).filter(
-                                InstagramAccount.user_id == user_id_for_dm,
-                                InstagramAccount.id == account_id_for_dm
-                            ).first()
-                            
-                            if not rule_refresh or not account_refresh:
-                                print(f"⚠️ [PRIMARY DM] Rule or account not found")
-                                return
-                            
-                            # Simple check: if primary DM already sent, skip
-                            from app.services.pre_dm_handler import get_pre_dm_state
-                            current_state = get_pre_dm_state(sender_id_for_dm, rule_id_for_dm)
-                            if current_state.get("primary_dm_sent"):
-                                print(f"⏭️ [PRIMARY DM] Primary DM already sent, skipping")
-                                return
-                            
-                            # Mark as sent to prevent duplicates
-                            from app.services.pre_dm_handler import update_pre_dm_state
-                            update_pre_dm_state(sender_id_for_dm, rule_id_for_dm, {
-                                "primary_dm_sent": True
-                            })
-                            
-                            # Send primary DM directly from rule config (no pre-DM state checking)
-                            print(f"✅ [PRIMARY DM] Sending primary DM from rule config")
-                            await execute_automation_action(
-                                rule_refresh, sender_id_for_dm, account_refresh, db_session,
-                                trigger_type="primary_timeout",
-                                message_id=None,
-                                pre_dm_result_override={"action": "send_primary"}  # Skip pre-DM processing
-                            )
-                            print(f"✅ [PRIMARY DM] Primary DM sent successfully")
-                        except Exception as e:
-                            print(f"❌ [PRIMARY DM] Error in delayed primary DM: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-                        finally:
-                            db_session.close()
-                            print(f"🔒 [PRIMARY DM] Database session closed")
-                    
-                    # Start the delayed primary DM task
-                    print(f"🚀 [PRIMARY DM] Scheduling primary DM after 15 seconds for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
-                    asyncio.create_task(delayed_primary_dm_simple())
+                            db_session = SessionLocal()
+                            try:
+                                print(f"⏰ [PRIMARY DM] Starting 15-second delay for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
+                                await asyncio.sleep(15)  # Wait 15 seconds
+                                print(f"⏰ [PRIMARY DM] 15 seconds elapsed, checking if primary DM already sent")
+                                
+                                # Re-fetch rule and account
+                                rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
+                                account_refresh = db_session.query(InstagramAccount).filter(
+                                    InstagramAccount.user_id == user_id_for_dm,
+                                    InstagramAccount.id == account_id_for_dm
+                                ).first()
+                                
+                                if not rule_refresh or not account_refresh:
+                                    print(f"⚠️ [PRIMARY DM] Rule or account not found")
+                                    return
+                                
+                                # Check if primary DM already sent
+                                from app.services.pre_dm_handler import get_pre_dm_state
+                                current_state = get_pre_dm_state(sender_id_for_dm, rule_id_for_dm)
+                                if current_state.get("primary_dm_sent"):
+                                    print(f"⏭️ [PRIMARY DM] Primary DM already sent, skipping")
+                                    return
+                                
+                                # Mark as sent to prevent duplicates
+                                from app.services.pre_dm_handler import update_pre_dm_state
+                                update_pre_dm_state(sender_id_for_dm, rule_id_for_dm, {
+                                    "primary_dm_sent": True
+                                })
+                                
+                                # Send primary DM directly from rule config
+                                print(f"✅ [PRIMARY DM] Sending primary DM from rule config")
+                                await execute_automation_action(
+                                    rule_refresh, sender_id_for_dm, account_refresh, db_session,
+                                    trigger_type="primary_timeout",
+                                    message_id=None,
+                                    pre_dm_result_override={"action": "send_primary"}
+                                )
+                                print(f"✅ [PRIMARY DM] Primary DM sent successfully")
+                            except Exception as e:
+                                print(f"❌ [PRIMARY DM] Error in delayed primary DM: {str(e)}")
+                                import traceback
+                                traceback.print_exc()
+                            finally:
+                                db_session.close()
+                                print(f"🔒 [PRIMARY DM] Database session closed")
+                        
+                        print(f"🚀 [PRIMARY DM] Scheduling primary DM after 15 seconds for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
+                        asyncio.create_task(delayed_primary_dm_simple())
+                    else:
+                        # Email flow: Don't schedule delayed primary DM - wait for user interaction
+                        print(f"⏳ [EMAIL FLOW] Not scheduling delayed primary DM - waiting for user to click button or provide email")
                 elif pre_dm_result and pre_dm_result["action"] == "wait_for_follow":
                     # Follow request was sent but not confirmed - user commented again
                     # Resend follow request to remind user
@@ -2982,72 +2991,11 @@ async def execute_automation_action(
                 return
             elif pre_dm_result and pre_dm_result["action"] == "wait_for_email":
                     # Still waiting for email response
-                    # If this is a comment/keyword trigger (not a DM), user is engaging again
-                    # Schedule primary DM after timeout instead of waiting forever
-                    if trigger_type in ["post_comment", "keyword", "live_comment"]:
-                        print(f"⏳ Email requested but not received yet. User commented again, scheduling primary DM after timeout...")
-                        # Schedule primary DM after 15 seconds (same as normal flow)
-                        sender_id_for_dm = str(sender_id)
-                        rule_id_for_dm = int(rule_id)
-                        user_id_for_dm = int(user_id)
-                        account_id_for_dm = int(account_id)
-                        
-                        async def delayed_primary_dm_for_comment():
-                            """Send primary DM after timeout when user comments again."""
-                            from app.db.session import SessionLocal
-                            from app.models.automation_rule import AutomationRule
-                            from app.models.instagram_account import InstagramAccount
-                            
-                            db_session = SessionLocal()
-                            try:
-                                await asyncio.sleep(15)  # Wait 15 seconds
-                                # Re-fetch rule and account
-                                rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
-                                account_refresh = db_session.query(InstagramAccount).filter(
-                                    InstagramAccount.user_id == user_id_for_dm,
-                                    InstagramAccount.id == account_id_for_dm
-                                ).first()
-                                
-                                if not rule_refresh or not account_refresh:
-                                    print(f"⚠️ [PRIMARY DM] Rule or account not found for comment trigger")
-                                    return
-                                
-                                # Check if primary DM already sent
-                                from app.services.pre_dm_handler import get_pre_dm_state
-                                current_state = get_pre_dm_state(sender_id_for_dm, rule_id_for_dm)
-                                if current_state.get("primary_dm_sent"):
-                                    print(f"⏭️ [PRIMARY DM] Primary DM already sent, skipping")
-                                    return
-                                
-                                # Mark as sent and send primary DM
-                                from app.services.pre_dm_handler import update_pre_dm_state
-                                update_pre_dm_state(sender_id_for_dm, rule_id_for_dm, {
-                                    "primary_dm_sent": True
-                                })
-                                
-                                # Send primary DM directly from rule config
-                                print(f"✅ [PRIMARY DM] Sending primary DM from rule config (comment trigger)")
-                                await execute_automation_action(
-                                    rule_refresh, sender_id_for_dm, account_refresh, db_session,
-                                    trigger_type="primary_timeout",
-                                    message_id=None,
-                                    pre_dm_result_override={"action": "send_primary"}
-                                )
-                                print(f"✅ [PRIMARY DM] Primary DM sent successfully (comment trigger)")
-                            except Exception as e:
-                                print(f"❌ [PRIMARY DM] Error in delayed primary DM for comment: {str(e)}")
-                                import traceback
-                                traceback.print_exc()
-                            finally:
-                                db_session.close()
-                        
-                        # Start the delayed primary DM
-                        asyncio.create_task(delayed_primary_dm_for_comment())
-                        print(f"🚀 [PRIMARY DM] Scheduled primary DM after 15 seconds (user engaged via comment)")
-                    else:
-                        # For DM triggers, just wait
-                        print(f"⏳ Waiting for email response from {sender_id}")
-                        return
+                    # Don't schedule delayed primary DM - wait for user to click button or provide email
+                    # User can click "Share Email" or "Skip for Now" button, or type their email
+                    print(f"⏳ Email requested but not received yet. Waiting for user interaction (button click or email input)")
+                    print(f"   User can: 1) Click 'Share Email' button, 2) Click 'Skip for Now' button, or 3) Type their email")
+                    return  # Don't send anything, just wait
             elif pre_dm_result and pre_dm_result["action"] == "send_combined_pre_dm":
                 # Send TWO separate messages: follow question first, then email question
                 # This ensures vertical (portrait) display instead of carousel (side-by-side)
