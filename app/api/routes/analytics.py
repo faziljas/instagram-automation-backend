@@ -239,6 +239,7 @@ class AnalyticsSummary(BaseModel):
     profile_visits: int
     comment_replies: int
     top_posts: List[dict]
+    daily_breakdown: List[dict]  # Daily activity breakdown
     
     class Config:
         from_attributes = True
@@ -448,6 +449,43 @@ def get_analytics_dashboard(
                 entry["media_type"] = "STORY"  # Mark as story for frontend display
             top_posts.append(entry)
         
+        # Calculate daily breakdown for activity chart
+        daily_breakdown = []
+        for i in range(days):
+            day_start = start_date + timedelta(days=i)
+            day_end = day_start + timedelta(days=1)
+            
+            # Count events for this day
+            day_query = base_query.filter(
+                AnalyticsEvent.created_at >= day_start,
+                AnalyticsEvent.created_at < day_end
+            )
+            
+            day_triggers = day_query.filter(
+                AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED
+            ).count()
+            
+            day_dms = day_query.filter(
+                AnalyticsEvent.event_type == EventType.DM_SENT
+            ).count()
+            
+            day_leads = day_query.filter(
+                AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED
+            ).count()
+            
+            # Format date for display
+            date_str = day_start.strftime('%b %d')
+            date_label = day_start.strftime('%m/%d')
+            
+            daily_breakdown.append({
+                "date": date_str,  # "Jan 18"
+                "date_label": date_label,  # "01/18"
+                "triggers": day_triggers,
+                "dms_sent": day_dms,
+                "leads": day_leads,
+                "total": day_triggers + day_dms + day_leads  # Total activity for the day
+            })
+        
         return AnalyticsSummary(
             total_triggers=total_triggers,
             total_dms_sent=total_dms_sent,
@@ -457,7 +495,8 @@ def get_analytics_dashboard(
             im_following_clicks=im_following_clicks,
             profile_visits=profile_visits,
             comment_replies=comment_replies,
-            top_posts=top_posts
+            top_posts=top_posts,
+            daily_breakdown=daily_breakdown
         )
         
     except Exception as e:
