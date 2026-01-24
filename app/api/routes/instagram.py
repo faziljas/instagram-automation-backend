@@ -2488,27 +2488,19 @@ async def execute_automation_action(
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
                         # Build Instagram profile URL for "Visit Profile" button
-                        # Instagram URL buttons require HTTPS URLs (not deep links)
-                        # Use tracking URL that will redirect to deep link for Instagram in-app browser
-                        from app.utils.analytics import generate_tracking_url
+                        # Use direct Instagram URL - Instagram's in-app browser will open it in native app automatically
+                        # No tracking URL needed - Instagram handles the native app opening
                         profile_url_direct = f"https://www.instagram.com/{username}"
                         
-                        # Generate tracking URL that logs profile visits and redirects to deep link
-                        media_id_for_tracking = rule.config.get("media_id") if isinstance(rule.config, dict) else None
-                        profile_url = generate_tracking_url(
-                            target_url=profile_url_direct,
-                            rule_id=rule_id,
-                            user_id=account.user_id,
-                            media_id=media_id_for_tracking,
-                            instagram_account_id=account.id
-                        )
+                        # Use direct Instagram URL (no tracking) - Instagram in-app browser opens native app automatically
+                        profile_url = profile_url_direct
                         
                         # Build URL button for "Visit Profile" (enables navigation to bio page)
                         # Note: URL buttons require generic template format (card layout)
-                        # Tracking URL redirects to Instagram deep link for native app opening
+                        # Direct Instagram URL opens in native app when clicked from Instagram's in-app browser
                         visit_profile_button = [{
                             "text": "Visit Profile",
-                            "url": profile_url  # HTTPS tracking URL (required by Instagram API)
+                            "url": profile_url  # Direct Instagram URL - opens native app automatically
                         }]
                         
                         # Build quick reply buttons for "I'm following" and "Follow Me"
