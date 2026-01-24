@@ -247,7 +247,9 @@ async def process_pre_dm_actions(
     # This isolates Post/Reel vs Story: completing lead capture on a Post must NOT
     # skip the full pre-DM sequence when the same user triggers a Story (different rule).
     # CRITICAL: Only skip to primary DM if THIS FLOW was completed, not just if user already follows/has email.
-    flow_has_completed = state.get("follow_confirmed", False) and (not ask_for_email or state.get("email_received", False))
+    # CRITICAL FIX: When ask_to_follow is False, follow is considered completed (no follow step needed)
+    follow_completed_for_flow = not ask_to_follow or state.get("follow_confirmed", False)
+    flow_has_completed = follow_completed_for_flow and (not ask_for_email or state.get("email_received", False))
     
     if ask_to_follow or ask_for_email:
         # Case A: THIS FLOW has been completed (follow confirmed AND email received if required)
@@ -529,12 +531,15 @@ async def process_pre_dm_actions(
                     "email": None
                 }
         
-        # Step 2: Send Email Request (if enabled and follow is confirmed but email not received)
-        if ask_for_email and state.get("follow_confirmed") and not state.get("email_received"):
-            print(f"🔍 [PRE-DM] Checking email request: email_request_sent={state.get('email_request_sent')}")
+        # Step 2: Send Email Request (if enabled and follow is completed but email not received)
+        # CRITICAL FIX: When ask_to_follow is False, follow_completed is True, so we should send email request immediately
+        # When ask_to_follow is True, we need to wait for follow_confirmed before sending email request
+        # Note: follow_completed is already calculated above at line 485
+        if ask_for_email and follow_completed and not state.get("email_received"):
+            print(f"🔍 [PRE-DM] Checking email request: email_request_sent={state.get('email_request_sent')}, follow_completed={follow_completed}")
             if not state.get("email_request_sent"):
                 # Send email request for the first time
-                print(f"✅ [PRE-DM] Sending email request")
+                print(f"✅ [PRE-DM] Sending email request (ask_to_follow={ask_to_follow}, follow_completed={follow_completed})")
                 update_pre_dm_state(sender_id, rule.id, {
                     "email_request_sent": True,
                     "step": "email"
