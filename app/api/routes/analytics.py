@@ -342,27 +342,12 @@ def get_analytics_dashboard(
                 AnalyticsEvent.media_id == media_id,
                 AnalyticsEvent.event_type == EventType.DM_SENT
             ).count()
-            entry = {
-                "media_id": media_id,
-                "trigger_count": trigger_count,
-                "leads_count": media_leads,
-                "dms_count": media_dms
-            }
+            # Fetch media from Instagram API. No cached preview: deleted media are excluded from Top Performing.
+            media_url_val = None
+            permalink_val = None
+            is_deleted = False
             
-            # First, try to get cached media preview URL from analytics events
-            # This preserves previews even if media is deleted from Instagram
-            cached_preview = db.query(AnalyticsEvent.media_preview_url).filter(
-                AnalyticsEvent.media_id == media_id,
-                AnalyticsEvent.media_preview_url.isnot(None),
-                AnalyticsEvent.media_preview_url != ""  # Also exclude empty strings
-            ).order_by(AnalyticsEvent.created_at.desc()).first()  # Get most recent cached preview
-            
-            if cached_preview and cached_preview[0]:
-                # Use cached preview URL (preserved even if media is deleted)
-                entry["media_url"] = cached_preview[0]
-                print(f"✅ Using cached media preview for {media_id}: {cached_preview[0][:50]}...")
-            elif instagram_account_id:
-                # Fallback: Try to fetch from Instagram API if no cached preview
+            if instagram_account_id:
                 try:
                     acc = db.query(InstagramAccount).filter(
                         InstagramAccount.id == instagram_account_id,
@@ -375,7 +360,6 @@ def get_analytics_dashboard(
                         elif acc.encrypted_credentials:
                             tok = decrypt_credentials(acc.encrypted_credentials)
                         if tok:
-                            # Try to fetch media info - use thumbnail_url for videos, media_url for photos
                             r = requests.get(
                                 f"https://graph.instagram.com/v21.0/{media_id}",
                                 params={"fields": "media_type,media_url,thumbnail_url,permalink", "access_token": tok},
@@ -383,44 +367,49 @@ def get_analytics_dashboard(
                             )
                             if r.status_code == 200:
                                 d = r.json()
-                                # Use thumbnail_url for videos, media_url for photos
-                                media_url = d.get("thumbnail_url") or d.get("media_url")
-                                if media_url:
-                                    entry["media_url"] = media_url
-                                if d.get("permalink"):
-                                    entry["permalink"] = d["permalink"]
+                                media_url_val = d.get("thumbnail_url") or d.get("media_url")
+                                permalink_val = d.get("permalink")
                             else:
-                                # Log the error for debugging
                                 error_data = r.json() if r.content else {}
-                                error_message = error_data.get('error', {}).get('message', r.text[:100])
-                                print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_message}")
-                                print(f"   Media may have been deleted from Instagram. Consider using cached preview from analytics events.")
-                                
-                                # If media doesn't exist, check if we should disable the rule
+                                error_message = (error_data.get("error") or {}).get("message", "") or r.text[:200]
                                 if "does not exist" in error_message.lower() or "cannot be loaded" in error_message.lower():
-                                    try:
-                                        from app.models.automation_rule import AutomationRule
-                                        # Find and disable rules for this deleted media
-                                        deleted_rules = db.query(AutomationRule).filter(
-                                            AutomationRule.instagram_account_id == instagram_account_id,
-                                            AutomationRule.media_id == media_id,
-                                            AutomationRule.is_active == True
-                                        ).all()
-                                        
-                                        for rule in deleted_rules:
-                                            print(f"⚠️ Auto-disabling rule '{rule.name}' (ID: {rule.id}) - media {media_id} deleted from Instagram")
-                                            rule.is_active = False
-                                        
-                                        if deleted_rules:
-                                            db.commit()
-                                            print(f"✅ Auto-disabled {len(deleted_rules)} rule(s) for deleted media {media_id}")
-                                    except Exception as disable_err:
-                                        print(f"⚠️ Error auto-disabling rules: {str(disable_err)}")
-                                        db.rollback()
+                                    is_deleted = True
+                                    print(f"⚠️ Media {media_id} deleted from Instagram; excluding from Top Performing, auto-disabling rules.")
+                                else:
+                                    print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_message}")
                 except Exception as e:
-                    # Log the exception for debugging
                     print(f"⚠️ Exception fetching media info for {media_id}: {str(e)}")
-                    # keep entry without media_url/permalink
+            
+            # If media was deleted: disable rules and exclude from Top Performing (do not show).
+            if is_deleted:
+                try:
+                    from app.models.automation_rule import AutomationRule
+                    deleted_rules = db.query(AutomationRule).filter(
+                        AutomationRule.instagram_account_id == instagram_account_id,
+                        AutomationRule.media_id == media_id,
+                        AutomationRule.is_active == True
+                    ).all()
+                    for rule in deleted_rules:
+                        print(f"⚠️ Auto-disabling rule '{rule.name}' (ID: {rule.id}) - media {media_id} deleted")
+                        rule.is_active = False
+                    if deleted_rules:
+                        db.commit()
+                        print(f"✅ Auto-disabled {len(deleted_rules)} rule(s) for deleted media {media_id}")
+                except Exception as disable_err:
+                    print(f"⚠️ Error auto-disabling rules: {str(disable_err)}")
+                    db.rollback()
+                continue  # Skip this media – do not add to top_posts
+            
+            entry = {
+                "media_id": media_id,
+                "trigger_count": trigger_count,
+                "leads_count": media_leads,
+                "dms_count": media_dms
+            }
+            if media_url_val:
+                entry["media_url"] = media_url_val
+            if permalink_val:
+                entry["permalink"] = permalink_val
             top_posts.append(entry)
         
         return AnalyticsSummary(
