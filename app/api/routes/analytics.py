@@ -342,10 +342,12 @@ def get_analytics_dashboard(
                 AnalyticsEvent.media_id == media_id,
                 AnalyticsEvent.event_type == EventType.DM_SENT
             ).count()
-            # Fetch media from Instagram API. No cached preview: deleted media are excluded from Top Performing.
+            # Fetch media from Instagram API. Stories expire after 24h, so they may fail to fetch.
+            # We still show them in Top Performing if they have analytics data (historical performance).
             media_url_val = None
             permalink_val = None
             is_deleted = False
+            is_story = False  # Track if this might be a story (stories expire after 24h)
             
             if instagram_account_id:
                 try:
@@ -362,26 +364,54 @@ def get_analytics_dashboard(
                         if tok:
                             r = requests.get(
                                 f"https://graph.instagram.com/v21.0/{media_id}",
-                                params={"fields": "media_type,media_url,thumbnail_url,permalink", "access_token": tok},
+                                params={"fields": "media_type,media_url,thumbnail_url,permalink,media_product_type", "access_token": tok},
                                 timeout=10
                             )
                             if r.status_code == 200:
                                 d = r.json()
                                 media_url_val = d.get("thumbnail_url") or d.get("media_url")
                                 permalink_val = d.get("permalink")
+                                # Check if this is a story
+                                if d.get("media_product_type") == "STORY":
+                                    is_story = True
                             else:
                                 error_data = r.json() if r.content else {}
                                 error_message = (error_data.get("error") or {}).get("message", "") or r.text[:200]
-                                if "does not exist" in error_message.lower() or "cannot be loaded" in error_message.lower():
+                                
+                                # Check if this might be a story by checking rules
+                                # Stories expire after 24h, so API calls fail, but we should still show them
+                                try:
+                                    from app.models.automation_rule import AutomationRule
+                                    story_rules = db.query(AutomationRule).filter(
+                                        AutomationRule.instagram_account_id == instagram_account_id,
+                                        AutomationRule.media_id == media_id,
+                                        AutomationRule.is_active == True
+                                    ).all()
+                                    
+                                    # Check rule names/config to detect if it's a story rule
+                                    for rule in story_rules:
+                                        rule_name_lower = (rule.name or "").lower()
+                                        if "story" in rule_name_lower:
+                                            is_story = True
+                                            break
+                                except:
+                                    pass
+                                
+                                # Only treat as "deleted" if it's NOT a story and explicitly says "does not exist"
+                                # Stories expire after 24h and return errors, but should still be shown
+                                if not is_story and ("does not exist" in error_message.lower() or "cannot be loaded" in error_message.lower()):
                                     is_deleted = True
                                     print(f"⚠️ Media {media_id} deleted from Instagram; excluding from Top Performing, auto-disabling rules.")
+                                elif is_story:
+                                    print(f"ℹ️ Story {media_id} may have expired (24h limit) or is unavailable; still showing in Top Performing with analytics data.")
                                 else:
                                     print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_message}")
                 except Exception as e:
                     print(f"⚠️ Exception fetching media info for {media_id}: {str(e)}")
             
-            # If media was deleted: disable rules and exclude from Top Performing (do not show).
-            if is_deleted:
+            # If media was deleted (and NOT a story): disable rules and exclude from Top Performing.
+            # Stories expire after 24h but should still be shown if they have analytics data.
+            if is_deleted and not is_story:
                 try:
                     from app.models.automation_rule import AutomationRule
                     deleted_rules = db.query(AutomationRule).filter(
@@ -400,6 +430,7 @@ def get_analytics_dashboard(
                     db.rollback()
                 continue  # Skip this media – do not add to top_posts
             
+            # Add entry (including stories that expired - they still have analytics value)
             entry = {
                 "media_id": media_id,
                 "trigger_count": trigger_count,
@@ -410,6 +441,8 @@ def get_analytics_dashboard(
                 entry["media_url"] = media_url_val
             if permalink_val:
                 entry["permalink"] = permalink_val
+            if is_story:
+                entry["media_type"] = "STORY"  # Mark as story for frontend display
             top_posts.append(entry)
         
         return AnalyticsSummary(
