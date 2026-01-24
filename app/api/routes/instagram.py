@@ -437,6 +437,61 @@ async def process_instagram_message(event: dict, db: Session):
                         ))
                 return  # Don't process as regular message
             
+            # 1.5) Handle "Share Email" quick reply button
+            if quick_reply_payload == "email_shared":
+                # User clicked "Share Email" - prompt them to type their email
+                log_print(f"📧 User clicked 'Share Email', prompting for email input for {sender_id}")
+                from app.models.automation_rule import AutomationRule
+                from app.services.pre_dm_handler import update_pre_dm_state
+                from app.utils.instagram_api import send_dm
+                from app.utils.encryption import decrypt_credentials
+                
+                # Find active rules that have email enabled
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True,
+                    AutomationRule.action_type == "send_dm"
+                ).all()
+                
+                for rule in rules:
+                    if rule.config.get("ask_for_email", False):
+                        # Get access token
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                                page_id_for_dm = account.page_id
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                                page_id_for_dm = account.page_id
+                            else:
+                                raise Exception("No access token found")
+                        except Exception as e:
+                            log_print(f"❌ Failed to get access token for email prompt: {str(e)}", "ERROR")
+                            continue
+                        
+                        # Get the email request message (the configured one)
+                        ask_for_email_message = rule.config.get(
+                            "ask_for_email_message",
+                            "Quick question - what's your email? I'd love to send you something special! 📧"
+                        )
+                        
+                        # Mark email request as sent and set state to wait for email
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "email_request_sent": True,
+                            "step": "email",
+                            "waiting_for_email": True
+                        })
+                        
+                        # Send prompt message asking for email (plain text, no buttons)
+                        send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        log_print(f"✅ Email prompt sent to {sender_id} for rule {rule.id}")
+                        
+                        # Don't process further - wait for user to type their email
+                        return  # Exit early, don't process as regular message
+                
+                # If no rules found, return anyway to prevent further processing
+                return
+            
             # 2) Handle "I'm following" quick reply button (payload: im_following_{rule_id})
             if quick_reply_payload.startswith("im_following_"):
                 log_print(f"✅ [STRICT MODE] User clicked 'I'm following' button! Payload={quick_reply_payload}")
