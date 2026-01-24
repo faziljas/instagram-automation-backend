@@ -243,34 +243,39 @@ async def process_pre_dm_actions(
         print(f"⚠️ [STRICT MODE] Failed pre-check for existing follower/email: {str(e)}")
     
     # 3) Use these flags to potentially skip pre‑DM steps
-    # IMPORTANT: Only short-circuit when THIS FLOW has already sent follow_request.
+    # IMPORTANT: Only short-circuit when THIS FLOW has been COMPLETED (both follow confirmed AND email received).
     # This isolates Post/Reel vs Story: completing lead capture on a Post must NOT
     # skip the full pre-DM sequence when the same user triggers a Story (different rule).
-    flow_has_sent_follow = state.get("follow_request_sent", False)
+    # CRITICAL: Only skip to primary DM if THIS FLOW was completed, not just if user already follows/has email.
+    flow_has_completed = state.get("follow_confirmed", False) and (not ask_for_email or state.get("email_received", False))
     
     if ask_to_follow or ask_for_email:
-        # Case A: user already follows AND we already have their email
-        # Only skip to primary when we have already run the follow step IN THIS FLOW.
-        if already_following and (already_has_email or not ask_for_email) and flow_has_sent_follow:
+        # Case A: THIS FLOW has been completed (follow confirmed AND email received if required)
+        # Only skip to primary when THIS FLOW was completed in a previous interaction
+        if flow_has_completed:
             update_pre_dm_state(sender_id, rule.id, {
-                "follow_request_sent": True,
-                "follow_confirmed": True,
-                "email_request_sent": bool(ask_for_email),
-                "email_received": bool(existing_email),
-                "email": existing_email,
                 "primary_dm_sent": True
             })
             return {
                 "action": "send_primary",
                 "message": None,
                 "should_save_email": False,
-                "email": existing_email
+                "email": state.get("email")
             }
         
-        # Case B: already following, but no email yet and ask_for_email is enabled
-        # Only skip to email when we have already sent the follow request IN THIS FLOW.
-        if already_following and ask_for_email and not already_has_email and flow_has_sent_follow:
-            # Skip follow step, go straight to email question
+        # Case B: User already follows AND already has email, but THIS FLOW hasn't been completed
+        # Don't skip - still need to go through the flow to mark it as completed
+        # This ensures the flow is tracked properly even if user already follows/has email
+        if already_following and already_has_email and not flow_has_completed:
+            # User already follows and has email, but flow not completed - still send follow request
+            # This will mark the flow as completed when they confirm
+            pass  # Continue to normal flow below
+        
+        # Case C: already following, but no email yet and ask_for_email is enabled
+        # Only skip to email when THIS FLOW has already sent the follow request
+        flow_has_sent_follow = state.get("follow_request_sent", False)
+        if already_following and ask_for_email and not already_has_email and flow_has_sent_follow and state.get("follow_confirmed", False):
+            # Skip follow step, go straight to email question (flow already started)
             update_pre_dm_state(sender_id, rule.id, {
                 "follow_request_sent": True,
                 "follow_confirmed": True
@@ -282,7 +287,7 @@ async def process_pre_dm_actions(
                 "email": None
             }
         
-        # Case C: not following, but we already have email → only ask to follow (no email step)
+        # Case D: not following, but we already have email → only ask to follow (no email step)
         if ask_to_follow and already_has_email and not ask_for_email:
             # Mark email as satisfied so we don't try to re‑ask later
             update_pre_dm_state(sender_id, rule.id, {
@@ -475,26 +480,51 @@ async def process_pre_dm_actions(
     # Handle email_timeout trigger (5 seconds after email request sent)
     # story_reply = user replying to story via DM (each flow separate from post_comment)
     if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout", "story_reply"] and not state.get("primary_dm_sent"):
-        # Step 1: Send Follow Request (if enabled and not sent yet)
-        # If both follow and email are enabled, we'll combine them in a single message
-        if ask_to_follow and not state.get("follow_request_sent"):
-            # If email is also enabled, the handler will combine both messages
-            # We return send_follow_request action and let the handler combine them
-            # IMPORTANT: Don't update state here - let the handler update it after combining
+        # Check if flow is COMPLETED (both follow confirmed AND email received if required)
+        # Only skip to primary DM if flow was completed in a previous interaction
+        follow_completed = not ask_to_follow or state.get("follow_confirmed", False)
+        email_completed = not ask_for_email or state.get("email_received", False)
+        flow_completed = follow_completed and email_completed
+        
+        # If flow is completed, skip directly to primary DM
+        if flow_completed:
+            update_pre_dm_state(sender_id, rule.id, {
+                "primary_dm_sent": True,
+                "step": "primary"
+            })
             return {
-                "action": "send_follow_request",
-                "message": ask_to_follow_message,
+                "action": "send_primary",
+                "message": None,
                 "should_save_email": False,
-                "email": None
+                "email": state.get("email")
             }
         
-        # Step 2: Send Email Request (if enabled and follow request was already sent, or follow is disabled)
-        # NOTE: This should only trigger if follow is disabled OR if follow was sent separately (not combined)
-        if ask_for_email and not state.get("email_request_sent"):
-            # Only send separate email request if:
-            # 1. Follow is disabled, OR
-            # 2. Follow was already sent separately (not combined)
-            if not ask_to_follow or (state.get("follow_request_sent") and not ask_to_follow):
+        # Step 1: Send Follow Request (if enabled and not sent yet OR not confirmed yet)
+        # IMPORTANT: Always send follow request if not confirmed, even if it was sent before
+        if ask_to_follow and not state.get("follow_confirmed"):
+            # If follow request was already sent but not confirmed, user commented again
+            # We should still wait for confirmation, but if this is a new comment, resend follow request
+            if not state.get("follow_request_sent"):
+                # First time - send follow request
+                return {
+                    "action": "send_follow_request",
+                    "message": ask_to_follow_message,
+                    "should_save_email": False,
+                    "email": None
+                }
+            else:
+                # Follow request was sent but not confirmed - wait for user to confirm
+                return {
+                    "action": "wait_for_follow",
+                    "message": None,
+                    "should_save_email": False,
+                    "email": None
+                }
+        
+        # Step 2: Send Email Request (if enabled and follow is confirmed but email not received)
+        if ask_for_email and state.get("follow_confirmed") and not state.get("email_received"):
+            if not state.get("email_request_sent"):
+                # Send email request for the first time
                 update_pre_dm_state(sender_id, rule.id, {
                     "email_request_sent": True,
                     "step": "email"
@@ -505,39 +535,32 @@ async def process_pre_dm_actions(
                     "should_save_email": False,
                     "email": None
                 }
-        
-        # Step 3: Send Primary DM (if pre-DM actions are done or disabled)
-        # If email is enabled and email was requested, check if we should wait or proceed
-        if ask_for_email and state.get("email_request_sent") and not state.get("email_received"):
-            # If trigger is email_timeout, proceed to primary DM (timeout occurred)
-            if trigger_type == "email_timeout":
-                update_pre_dm_state(sender_id, rule.id, {
-                    "primary_dm_sent": True,
-                    "step": "primary"
-                })
+            else:
+                # Email request was sent but not received - wait for email
                 return {
-                    "action": "send_primary",
+                    "action": "wait_for_email",
                     "message": None,
                     "should_save_email": False,
                     "email": None
                 }
-            # If this is a subsequent comment/keyword trigger (user engaged again), still return wait_for_email
-            # The execute_automation_action will handle scheduling primary DM after timeout
-            # This gives user a chance to provide email via DM, but won't wait forever
+        
+        # Step 3: Send Primary DM (if pre-DM actions are done)
+        # This should only happen if both follow and email are completed
+        if follow_completed and email_completed:
+            update_pre_dm_state(sender_id, rule.id, {
+                "primary_dm_sent": True,
+                "step": "primary"
+            })
             return {
-                "action": "wait_for_email",
+                "action": "send_primary",
                 "message": None,
                 "should_save_email": False,
-                "email": None
+                "email": state.get("email")
             }
         
-        # All pre-DM actions done (or disabled), send primary DM
-        update_pre_dm_state(sender_id, rule.id, {
-            "primary_dm_sent": True,
-            "step": "primary"
-        })
+        # If we reach here, something unexpected - wait for user action
         return {
-            "action": "send_primary",
+            "action": "wait",
             "message": None,
             "should_save_email": False,
             "email": None
