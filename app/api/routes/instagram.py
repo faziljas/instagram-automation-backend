@@ -3297,6 +3297,25 @@ async def execute_automation_action(
                         email_success_message = "Got it! Check your inbox (and maybe spam/promotions) in about 2 minutes. 🎁"
                         print(f"🔍 [EMAIL SUCCESS] Using default email success message")
                     
+                    # FIXED: Append PDF link if configured
+                    # Check for PDF link in various possible field names
+                    pdf_link = (
+                        rule.config.get("pdf_link") or 
+                        rule.config.get("link_to_share") or 
+                        rule.config.get("share_link") or
+                        rule.config.get("pdf_link_to_share")
+                    )
+                    
+                    if pdf_link and str(pdf_link).strip():
+                        # Append PDF link to email success message
+                        pdf_link_clean = str(pdf_link).strip()
+                        if not email_success_message.endswith('\n') and not email_success_message.endswith(' '):
+                            email_success_message += "\n\n"
+                        email_success_message += f"🔗 {pdf_link_clean}"
+                        print(f"✅ [EMAIL SUCCESS] Added PDF link to message: {pdf_link_clean[:50]}...")
+                    else:
+                        print(f"🔍 [EMAIL SUCCESS] No PDF link configured in rule config")
+                    
                     if email_success_message and str(email_success_message).strip():
                         print(f"📧 Sending email success message before primary DM")
                         try:

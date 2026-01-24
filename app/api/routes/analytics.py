@@ -83,52 +83,29 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
 def _html_redirect_page(dest_url: str, label: str = "Instagram", deep_link_url: str = None) -> str:
     """Return HTML that redirects via meta refresh + fallback link.
     Works better than 302 in Instagram in-app browser (avoids empty screen).
-    If deep_link_url is provided, tries deep link first for mobile native app."""
+    FIXED: Always redirect to web URL first to avoid Facebook redirect issues.
+    Deep link is provided as optional fallback link only."""
     esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
     deep_link_esc = deep_link_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;") if deep_link_url else None
     
-    # If deep link is provided, try it first (for mobile native app)
-    # Use immediate redirect with deep link, fallback to web URL
-    if deep_link_esc:
-        # Build JavaScript code with proper escaping
-        js_code = f"""(function() {{
-  // Try deep link immediately (mobile native app)
-  var deepLink = "{deep_link_esc}";
-  var webUrl = "{esc}";
-  
-  // Attempt deep link redirect
-  window.location.href = deepLink;
-  
-  // Fallback to web URL if deep link fails (after 1 second)
-  setTimeout(function() {{
-    // If still on this page, redirect to web URL
-    if (document.visibilityState === "visible") {{
-      window.location.href = webUrl;
-    }}
-  }}, 1000);
-}})();"""
-        
-        return (
-            f'<!DOCTYPE html><html><head><meta charset="utf-8">'
-            f'<title>Opening Instagram…</title>'
-            f'<meta http-equiv="refresh" content="0;url={deep_link_esc}">'
-            f'<script>{js_code}</script>'
-            f'</head><body>'
-            f'<p>Opening {label}…</p>'
-            f'<p><a href="{deep_link_esc}">Open in Instagram app</a></p>'
-            f'<p><a href="{esc}">Open in browser</a></p>'
-            f"</body></html>"
-        )
-    
-    # Fallback to standard redirect
-    return (
+    # FIXED: Always redirect to web URL (Instagram.com) first
+    # This prevents the issue where deep link redirects to Facebook page
+    # Deep link is provided as an optional link for users who want to open in app
+    html_content = (
         f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+        f'<title>Opening Instagram…</title>'
         f'<meta http-equiv="refresh" content="0;url={esc}">'
-        f'<title>Redirecting…</title></head><body>'
+        f'</head><body>'
         f'<p>Redirecting to {label}…</p>'
         f'<p><a href="{esc}">Click here if you are not redirected</a>.</p>'
-        f"</body></html>"
     )
+    
+    # Add deep link as optional link (not auto-redirect)
+    if deep_link_esc:
+        html_content += f'<p><a href="{deep_link_esc}">Open in Instagram app</a></p>'
+    
+    html_content += f"</body></html>"
+    return html_content
 
 
 @router.get("/track/redirect")
