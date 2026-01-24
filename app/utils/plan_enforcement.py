@@ -89,7 +89,8 @@ def check_rule_limit(user_id: int, db: Session) -> bool:
     current_rules = 0
     if user_account_ids:
         current_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id.in_(user_account_ids)
+            AutomationRule.instagram_account_id.in_(user_account_ids),
+            AutomationRule.deleted_at.is_(None)
         ).count()
 
     if current_rules >= max_rules:

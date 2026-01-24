@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
@@ -86,9 +87,10 @@ def list_automation_rules(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    # Return all rules (active + inactive) so toggled-off rules remain visible
+    # Return all non-deleted rules (active + inactive) so toggled-off rules remain visible
     query = db.query(AutomationRule).join(InstagramAccount).filter(
-        InstagramAccount.user_id == user_id
+        InstagramAccount.user_id == user_id,
+        AutomationRule.deleted_at.is_(None)
     )
 
     if instagram_account_id:
@@ -104,10 +106,11 @@ def get_automation_rule(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    # Allow viewing/editing inactive rules (no is_active filter)
+    # Allow viewing/editing inactive rules; exclude deleted
     rule = db.query(AutomationRule).join(InstagramAccount).filter(
         AutomationRule.id == rule_id,
-        InstagramAccount.user_id == user_id
+        InstagramAccount.user_id == user_id,
+        AutomationRule.deleted_at.is_(None)
     ).first()
 
     if not rule:
@@ -128,7 +131,8 @@ def update_automation_rule(
 ):
     rule = db.query(AutomationRule).join(InstagramAccount).filter(
         AutomationRule.id == rule_id,
-        InstagramAccount.user_id == user_id
+        InstagramAccount.user_id == user_id,
+        AutomationRule.deleted_at.is_(None)
     ).first()
 
     if not rule:
@@ -172,34 +176,18 @@ def delete_automation_rule(
             detail="Automation rule not found"
         )
 
-    # IMPORTANT: Do NOT delete analytics, stats, or leads when deleting a rule
-    # Analytics and leads should only be deleted when the entire account is disconnected
-    # This preserves historical data and VIP user information (follow-up/email data)
-    # 
-    # Strategy: Use soft delete (set is_active=False) instead of hard delete
-    # This preserves all analytics, stats, and leads while making the rule inactive
-    
-    # Set rule_id to NULL for analytics events (preserve analytics history at account level)
-    # AnalyticsEvent.rule_id is nullable=True, so we can safely set it to NULL
-    # This allows analytics to remain but not be tied to a specific deleted rule
+    # Soft delete: set deleted_at so rule is excluded from list (toggled-off rules stay visible).
+    # Preserve analytics, stats, and leads; set rule_id to NULL on analytics events.
     from app.models.analytics_event import AnalyticsEvent
+
     updated_analytics = db.query(AnalyticsEvent).filter(
         AnalyticsEvent.rule_id == rule_id
     ).update({"rule_id": None})
-    print(f"📊 Set rule_id to NULL for {updated_analytics} analytics events (preserving analytics history)")
-    
-    # Note: AutomationRuleStats and CapturedLead have non-nullable foreign keys (nullable=False)
-    # We cannot delete these or set their rule_id to NULL
-    # Solution: Use soft delete - mark rule as inactive instead of deleting it
-    # This preserves all stats and leads while making the rule inactive
-    # The rule won't appear in active rule queries but all historical data is preserved
-    
-    # Soft delete: Mark rule as inactive instead of hard deleting
     rule.is_active = False
+    rule.deleted_at = datetime.utcnow()
     db.commit()
-    
-    print(f"✅ Rule {rule_id} soft deleted (is_active=False) - analytics, stats, and leads preserved")
-    print(f"   Analytics events: {updated_analytics} events preserved (rule_id set to NULL)")
-    print(f"   Rule stats and captured leads: Preserved with rule_id reference")
+
+    print(f"✅ Rule {rule_id} soft deleted (deleted_at set) - excluded from list, analytics preserved")
+    print(f"   Analytics events: {updated_analytics} preserved (rule_id set to NULL)")
 
     return None

@@ -184,7 +184,8 @@ def get_dashboard_stats(
     if user_account_ids:
         active_rules_count = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id.in_(user_account_ids),
-            AutomationRule.is_active == True
+            AutomationRule.is_active == True,
+            AutomationRule.deleted_at.is_(None)
         ).count()
     
     # Count DMs sent in last 24 hours
@@ -245,7 +246,8 @@ def get_subscription(
     rules_count = 0
     if user_account_ids:
         rules_count = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id.in_(user_account_ids)
+            AutomationRule.instagram_account_id.in_(user_account_ids),
+            AutomationRule.deleted_at.is_(None)
         ).count()
     
     # Count DMs sent - use billing cycle for Pro/Enterprise, calendar month for Free/Basic

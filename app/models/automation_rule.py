@@ -15,3 +15,4 @@ class AutomationRule(Base):
     media_id = Column(String, nullable=True)  # Instagram media ID (post/reel/story) this rule is tied to
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True)  # Set when user deletes rule; exclude from list

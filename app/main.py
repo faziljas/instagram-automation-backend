@@ -187,6 +187,14 @@ async def startup_event():
             else:
                 print("✅ media_id column already exists", file=sys.stderr)
             
+            # Check and add deleted_at column to automation_rules (soft-delete; exclude from list)
+            if not column_exists('automation_rules', 'deleted_at'):
+                print("🔄 Auto-migrating: Adding deleted_at column to automation_rules...", file=sys.stderr)
+                conn.execute(text("ALTER TABLE automation_rules ADD COLUMN deleted_at TIMESTAMP"))
+                print("✅ Auto-migration complete: deleted_at column added", file=sys.stderr)
+            else:
+                print("✅ deleted_at column already exists", file=sys.stderr)
+            
             # Check and add follow_button_clicks columns to automation_rule_stats
             if not column_exists('automation_rule_stats', 'total_follow_button_clicks'):
                 print("🔄 Auto-migrating: Adding total_follow_button_clicks column...", file=sys.stderr)
