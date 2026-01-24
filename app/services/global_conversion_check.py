@@ -75,24 +75,30 @@ def check_global_conversion_status(db: Session, sender_id: str, instagram_accoun
     has_email = bool(audience.email)
     
     # If no email in audience, check CapturedLead table (backward compatibility)
-    # Check if any lead exists with this sender_id in metadata
+    # OPTIMIZED: Use JSONB query instead of loading all leads into memory
     if not has_email:
-        leads = db.query(CapturedLead).filter(
-            CapturedLead.instagram_account_id == instagram_account_id,
-            CapturedLead.email.isnot(None)
-        ).all()
-        
-        # Check if any lead has this sender_id in extra_metadata
-        sender_id_str = str(sender_id)
-        for lead in leads:
-            meta = lead.extra_metadata or {}
-            if str(meta.get("sender_id")) == sender_id_str:
+        try:
+            from sqlalchemy import cast
+            from sqlalchemy.dialects.postgresql import JSONB
+            
+            sender_id_str = str(sender_id)
+            # Use PostgreSQL JSONB query to find lead with matching sender_id in metadata
+            # This is much faster than loading all leads into memory
+            lead = db.query(CapturedLead).filter(
+                CapturedLead.instagram_account_id == instagram_account_id,
+                CapturedLead.email.isnot(None),
+                cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == sender_id_str
+            ).first()
+            
+            if lead:
                 has_email = True
                 # Update audience with email for future lookups
                 audience.email = lead.email
                 audience.email_captured_at = lead.captured_at
                 db.commit()
-                break
+        except Exception as e:
+            # Fallback: If JSONB query fails, skip the check (don't block the request)
+            print(f"⚠️ Error checking CapturedLead for email: {str(e)}")
     
     # Check following status
     is_following = audience.is_following

@@ -143,39 +143,16 @@ def log_analytics_event_sync(
                 print(f"⚠️ Invalid event type: {event_type}")
                 return None
         
-        # Fetch and cache media preview URL if media_id is provided
-        media_preview_url = None
-        if media_id and instagram_account_id:
-            try:
-                # Get Instagram account to fetch access token
-                account = db.query(InstagramAccount).filter(
-                    InstagramAccount.id == instagram_account_id,
-                    InstagramAccount.user_id == user_id
-                ).first()
-                
-                if account:
-                    # Get access token
-                    access_token = None
-                    if account.encrypted_page_token:
-                        access_token = decrypt_credentials(account.encrypted_page_token)
-                    elif account.encrypted_credentials:
-                        access_token = decrypt_credentials(account.encrypted_credentials)
-                    
-                    if access_token:
-                        # Fetch media preview URL immediately (while media still exists)
-                        media_preview_url = fetch_media_preview_url(media_id, access_token)
-                        if media_preview_url:
-                            print(f"✅ Cached media preview URL for media_id {media_id}")
-            except Exception as e:
-                # Don't fail the event logging if preview fetch fails
-                print(f"⚠️ Failed to cache media preview for {media_id}: {str(e)}")
-        
+        # CRITICAL PERFORMANCE FIX: Don't fetch media preview URL synchronously
+        # This blocks the async event loop with a 5-second HTTP request
+        # Media preview can be fetched later in a background task if needed
+        # For now, log the event immediately without blocking
         event = AnalyticsEvent(
             user_id=user_id,
             rule_id=rule_id,
             instagram_account_id=instagram_account_id,
             media_id=media_id,
-            media_preview_url=media_preview_url,  # Cache preview URL
+            media_preview_url=None,  # Will be fetched in background if needed
             event_type=event_type,
             event_metadata=metadata or {}
         )
