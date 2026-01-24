@@ -381,7 +381,24 @@ async def process_pre_dm_actions(
             }
     
     # Check if this is a response to an email request
+    # IMPORTANT: Only process emails from DMs, NOT from comments
+    # Comments should only trigger resending the email question as a reminder
     if incoming_message and state.get("email_request_sent") and not state.get("email_received"):
+        # Skip email processing for comment triggers - they should only resend email question
+        is_comment_trigger = trigger_type in ["post_comment", "keyword", "live_comment"]
+        
+        if is_comment_trigger:
+            # Comment received while waiting for email - don't process as email, just return wait_for_email
+            # The execute_automation_action will handle resending the email question
+            print(f"💬 Comment received while waiting for email: '{incoming_message}' - will resend email question as reminder")
+            return {
+                "action": "wait_for_email",
+                "message": None,
+                "should_save_email": False,
+                "email": None
+            }
+        
+        # For DM triggers, check if it's an email
         is_email, email_address = check_if_email_response(incoming_message)
         if is_email:
             # STRICT MODE: Valid email received! Save it and proceed DIRECTLY to primary DM

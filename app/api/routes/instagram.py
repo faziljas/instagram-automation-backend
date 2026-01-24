@@ -2052,6 +2052,7 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                             trigger_type="post_comment",
                             comment_id=comment_id,
                             message_id=comment_id,  # Use comment_id as identifier
+                            incoming_message=comment_text,  # Pass comment text to check if it's an email
                             skip_growth_steps=is_vip_user  # Skip growth steps for VIP users
                         )
                     except Exception as e:
@@ -2988,10 +2989,117 @@ async def execute_automation_action(
                 # Waiting for user action - don't send anything
                 print(f"⏳ Waiting for user action, not sending primary DM")
                 return
+            elif pre_dm_result and pre_dm_result["action"] == "send_email_retry":
+                    # Invalid email format received - send retry message
+                    # NOTE: This should only happen for DM triggers, not comment triggers
+                    # Comment triggers should resend email question, not retry message
+                    retry_message = pre_dm_result.get("message", "")
+                    if not retry_message or not retry_message.strip():
+                        retry_message = "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧"
+                    
+                    print(f"⚠️ Invalid email format detected, sending retry message")
+                    
+                    # Get access token
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                            page_id_for_dm = account.page_id
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                            page_id_for_dm = account.page_id
+                        else:
+                            raise Exception("No access token found for account")
+                    except (AttributeError, Exception) as e:
+                        try:
+                            db.refresh(account)
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                                page_id_for_dm = account.page_id
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                                page_id_for_dm = account.page_id
+                            else:
+                                raise Exception("No access token found for account")
+                        except Exception as refresh_error:
+                            print(f"❌ Failed to get access token: {str(refresh_error)}")
+                            return
+                    
+                    # Only send retry message for DM triggers (not comment triggers)
+                    is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                    if is_comment_trigger:
+                        # For comment triggers, don't send retry - should have been handled as wait_for_email
+                        print(f"⏭️ Comment trigger - skipping retry message, will resend email question instead")
+                        return
+                    else:
+                        # For DM triggers, send retry message
+                        send_dm_api(str(sender_id), retry_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        print(f"✅ Email retry message sent via DM")
+                    
+                    return  # Wait for valid email input
             elif pre_dm_result and pre_dm_result["action"] == "wait_for_email":
                     # Still waiting for email response
-                    # Don't schedule delayed primary DM - wait for user to click button or provide email
-                    # User can click "Share Email" or "Skip for Now" button, or type their email
+                    # For comment triggers, resend email question as reminder (if comment matches keywords)
+                    # For DM triggers, just wait silently
+                    is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                    
+                    if is_comment_trigger:
+                        # Comment received while waiting for email - resend email question as reminder
+                        print(f"💬 Comment received while waiting for email: '{incoming_message}' - resending email question as reminder")
+                        
+                        # Get email request message from config
+                        ask_for_email_message = rule.config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
+                        quick_replies = [
+                            {
+                                "content_type": "text",
+                                "title": "Share Email",
+                                "payload": "email_shared"
+                            },
+                            {
+                                "content_type": "text",
+                                "title": "Skip for Now",
+                                "payload": "email_skip"
+                            }
+                        ]
+                        
+                        # Get access token
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm as send_dm_api, send_private_reply
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                                page_id_for_dm = account.page_id
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                                page_id_for_dm = account.page_id
+                            else:
+                                raise Exception("No access token found for account")
+                        except (AttributeError, Exception) as e:
+                            try:
+                                db.refresh(account)
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                    page_id_for_dm = account.page_id
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                    page_id_for_dm = account.page_id
+                                else:
+                                    raise Exception("No access token found for account")
+                            except Exception as refresh_error:
+                                print(f"❌ Failed to get access token: {str(refresh_error)}")
+                                return
+                        
+                        # Send reminder via private reply + DM
+                        send_private_reply(comment_id, ask_for_email_message, access_token, page_id_for_dm)
+                        await asyncio.sleep(1)
+                        send_dm_api(str(sender_id), ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                        print(f"✅ Email question resent as reminder via private reply + DM (comment trigger)")
+                        return
+                    
+                    # For non-comment triggers (DMs), just wait silently
                     print(f"⏳ Email requested but not received yet. Waiting for user interaction (button click or email input)")
                     print(f"   User can: 1) Click 'Share Email' button, 2) Click 'Skip for Now' button, or 3) Type their email")
                     return  # Don't send anything, just wait
