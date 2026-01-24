@@ -81,15 +81,15 @@ def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
 
 
 def _html_redirect_page(dest_url: str, label: str = "Instagram") -> str:
-    """Return HTML that redirects via JavaScript immediate redirect.
-    FIXED: Meta refresh was causing redirect to Facebook. JavaScript window.location
-    redirect is more reliable in Instagram's in-app browser."""
+    """Return HTML that redirects via JavaScript with window.location.href.
+    FIXED: Using href instead of replace() and adding immediate execution to prevent
+    redirect through Facebook in Instagram's in-app browser."""
     esc = dest_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
-    # Use JavaScript immediate redirect - more reliable than meta refresh
+    # Use window.location.href with immediate execution - more reliable than replace()
     return (
         f'<!DOCTYPE html><html><head><meta charset="utf-8">'
         f'<title>Opening Instagram…</title>'
-        f'<script>window.location.replace("{esc}");</script>'
+        f'<script type="text/javascript">(function(){{window.location.href="{esc}";}})();</script>'
         f'<meta http-equiv="refresh" content="0;url={esc}">'
         f'</head><body>'
         f'<p>Redirecting to {label}…</p>'
@@ -169,9 +169,10 @@ async def track_link_click(
             if username:
                 redirect_to = f"https://www.instagram.com/{username}"
 
-        # Use HTML redirect page instead of 302 for profile links. Instagram in-app
-        # browser often ignores 302 and shows empty screen; meta refresh + link works.
-        # No deep link (instagram://) — it caused redirect to Facebook when tracking was added.
+        # FIXED: Use HTML redirect with window.location.href for profile links.
+        # Direct 302 redirects were being intercepted by Instagram's in-app browser
+        # and routed through Facebook. HTML with immediate JavaScript execution works better.
+        # No deep link (instagram://) — it caused redirect to Facebook.
         if is_profile and redirect_to.startswith("https://www.instagram.com/"):
             html = _html_redirect_page(redirect_to, "Instagram profile")
             return HTMLResponse(content=html)
