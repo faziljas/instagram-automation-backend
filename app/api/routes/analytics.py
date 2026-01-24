@@ -73,11 +73,16 @@ def _username_from_instagram_url(url: str) -> Optional[str]:
         return None
 
 
-def _user_agent_looks_mobile(ua: Optional[str]) -> bool:
-    if not ua:
-        return False
-    u = ua.lower()
-    return any(x in u for x in ("instagram", "iphone", "ipad", "android", "mobile"))
+def _instant_deep_link_redirect(deep_link_url: str) -> str:
+    """Return minimal HTML that instantly redirects to deep link without showing any content.
+    Used for Instagram in-app browser to open native app immediately."""
+    esc_deep = deep_link_url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+    # Minimal HTML with immediate redirect - no visible content, instant execution
+    return (
+        f'<!DOCTYPE html><html><head>'
+        f'<script>window.location.href="{esc_deep}";</script>'
+        f'</head><body></body></html>'
+    )
 
 
 def _html_redirect_page(dest_url: str, deep_link_url: Optional[str] = None, label: str = "Instagram") -> str:
@@ -199,13 +204,19 @@ async def track_link_click(
         # For Instagram in-app browser, always use deep link to open native app
         is_instagram_browser = "instagram" in user_agent.lower()
         
-        # FIXED: Use HTML redirect with smart deep link support for profile links.
-        # For mobile/Instagram in-app browser: uses native app deep link to open Instagram app directly.
-        # Removed meta refresh tag - it was causing redirect through Facebook in Instagram's in-app browser.
-        # JavaScript redirect with immediate execution (IIFE) works reliably without Facebook interception.
+        # FIXED: For Instagram in-app browser, use instant HTML redirect to deep link (no visible page)
+        # This opens the native app immediately without showing intermediate page
+        # For other browsers, use HTML redirect with fallback options
         if is_profile and redirect_to.startswith("https://www.instagram.com/"):
-            # Use deep link for mobile devices or Instagram in-app browser
-            use_deep_link = deep_link_url and (is_mobile or is_instagram_browser)
+            # For Instagram in-app browser: instant redirect to deep link (no page shown, opens app immediately)
+            if is_instagram_browser and deep_link_url:
+                print(f"✅ Instagram in-app browser detected - instant redirect to deep link: {deep_link_url}")
+                html = _instant_deep_link_redirect(deep_link_url)
+                return HTMLResponse(content=html)
+            
+            # For other mobile browsers: use HTML redirect with deep link
+            # For desktop: use HTML redirect with web URL
+            use_deep_link = deep_link_url and is_mobile
             html = _html_redirect_page(
                 redirect_to, 
                 deep_link_url=deep_link_url if use_deep_link else None,
