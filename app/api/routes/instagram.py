@@ -1078,8 +1078,10 @@ async def process_instagram_message(event: dict, db: Session):
                             except Exception as e:
                                 log_print(f"❌ Failed to send retry message: {str(e)}", "ERROR")
                         
-                        # Continue to check other rules, but we've already sent the retry message
-                        continue
+                        # CRITICAL: After sending retry message, return early to prevent primary DM from being sent
+                        # Don't continue processing other rules - we're waiting for valid email
+                        log_print(f"⏳ Waiting for valid email, skipping primary DM")
+                        return  # Exit early - don't send primary DM when email is invalid
                     
                     # If we're waiting for something and got random text, ignore it
                         from app.services.pre_dm_handler import get_pre_dm_state
@@ -2818,15 +2820,28 @@ async def execute_automation_action(
                     # Check if comment-based trigger (use private reply)
                     is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                     
+                    # Only send "Hi👋" opener if follow request is enabled (needed for follow flow)
+                    # For email-only flows, send email request directly via private_reply to open conversation
+                    ask_to_follow = rule.config.get("ask_to_follow", False)
+                    
                     if is_comment_trigger:
-                        # For comment triggers, send via private reply first, then regular DM with quick_replies
+                        # For comment triggers, use private reply to bypass 24-hour window
                         from app.utils.instagram_api import send_private_reply
-                        # Send opener via private reply to open conversation
-                        send_private_reply(comment_id, "Hi! 👋", access_token, page_id_for_dm)
-                        await asyncio.sleep(1)  # Small delay
-                        # Now send email request with quick_replies via regular DM
-                        send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
-                        print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger)")
+                        if ask_to_follow:
+                            # Follow flow: Send opener first, then email request via regular DM
+                            send_private_reply(comment_id, "Hi! 👋", access_token, page_id_for_dm)
+                            await asyncio.sleep(1)  # Small delay
+                            # Send email request with quick_replies via regular DM
+                            send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                            print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger, follow enabled)")
+                        else:
+                            # Email-only flow: Send email request message via private_reply (opens conversation + sends message)
+                            # Then send same message with quick_replies via regular DM
+                            send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
+                            await asyncio.sleep(1)  # Small delay
+                            # Send same message with quick_replies via regular DM
+                            send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                            print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger, email-only, no Hi👋)")
                     else:
                         # For DM triggers, send directly with quick_replies
                         send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
