@@ -2486,13 +2486,23 @@ async def execute_automation_action(
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
                         
                         # Build Instagram profile URL for "Visit Profile" button
-                        # Use direct Instagram URL (no tracking wrapper) to avoid redirect chain issues
-                        # Instagram will handle instagram.com URLs natively and open in the app
-                        profile_url = f"https://www.instagram.com/{username}"
+                        # Use tracking URL to log PROFILE_VISIT analytics events
+                        from app.utils.analytics import generate_tracking_url
+                        profile_url_direct = f"https://www.instagram.com/{username}"
+                        
+                        # Generate tracking URL that logs profile visits
+                        media_id_for_tracking = rule.config.get("media_id") if isinstance(rule.config, dict) else None
+                        profile_url = generate_tracking_url(
+                            target_url=profile_url_direct,
+                            rule_id=rule_id,
+                            user_id=account.user_id,
+                            media_id=media_id_for_tracking,
+                            instagram_account_id=account.id
+                        )
                         
                         # Build URL button for "Visit Profile" (enables navigation to bio page)
                         # Note: URL buttons require generic template format (card layout)
-                        # Using direct Instagram URL ensures it opens in native app without redirect chain
+                        # Tracking URL redirects to Instagram profile and logs PROFILE_VISIT event
                         visit_profile_button = [{
                             "text": "Visit Profile",
                             "url": profile_url
