@@ -56,9 +56,9 @@ class AutomationEngine:
         Execute send_dm action using rule configuration.
         """
         try:
-            # Check DM limit
+            # Check DM limit (per Instagram account to track usage across reconnections)
             try:
-                check_dm_limit(instagram_account.user_id, self.db)
+                check_dm_limit(instagram_account.user_id, self.db, instagram_account_id=instagram_account.id)
             except Exception as e:
                 print(f"DM limit reached: {str(e)}")
                 return False

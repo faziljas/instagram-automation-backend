@@ -77,6 +77,16 @@ async def startup_event():
         print(f"⚠️ InstagramAudience migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
     
+    # Run billing cycle migration
+    try:
+        print("🔄 Running billing cycle migration...", file=sys.stderr)
+        from add_billing_cycle_migration import run_migration as run_billing_cycle_migration
+        run_billing_cycle_migration()
+        print("✅ Billing cycle migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Billing cycle migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
+    
     # Try Alembic migrations (if Alembic is configured)
     try:
         import subprocess

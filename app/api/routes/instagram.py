@@ -2367,8 +2367,8 @@ async def execute_automation_action(
             
             # Check monthly DM limit BEFORE sending
             from app.utils.plan_enforcement import check_dm_limit
-            if not check_dm_limit(user_id, db):
-                print(f"⚠️ Monthly DM limit reached for user {user_id}. Skipping DM send.")
+            if not check_dm_limit(user_id, db, instagram_account_id=account_id):
+                print(f"⚠️ Monthly DM limit reached for user {user_id} on account {account_id}. Skipping DM send.")
                 return  # Don't send DM if limit reached
             
             # Initialize message_template

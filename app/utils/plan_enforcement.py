@@ -101,11 +101,68 @@ def check_rule_limit(user_id: int, db: Session) -> bool:
     return True
 
 
-def check_dm_limit(user_id: int, db: Session) -> bool:
+def get_instagram_account_usage(instagram_account_id: int, cycle_start: datetime, db: Session) -> int:
+    """
+    Get DM usage for a specific Instagram account (by account ID).
+    This counts DMs sent from this account across all users and all time periods,
+    but filters by billing cycle start date.
+    """
+    # Get the Instagram account to find its username/igsid
+    account = db.query(InstagramAccount).filter(
+        InstagramAccount.id == instagram_account_id
+    ).first()
+    
+    if not account:
+        return 0
+    
+    # Find all account records with the same username or igsid (to track usage across reconnections)
+    # This ensures that if an account is removed and reconnected, usage continues from where it left off
+    account_identifiers = []
+    if account.username:
+        account_identifiers.append(('username', account.username))
+    if account.igsid:
+        account_identifiers.append(('igsid', account.igsid))
+    
+    if not account_identifiers:
+        # Fallback: just count by current account_id
+        return db.query(DmLog).filter(
+            DmLog.instagram_account_id == instagram_account_id,
+            DmLog.sent_at >= cycle_start
+        ).count()
+    
+    # Find all Instagram account IDs that match this account's username or igsid
+    matching_account_ids = set()
+    matching_account_ids.add(instagram_account_id)  # Include current account
+    
+    for identifier_type, identifier_value in account_identifiers:
+        if identifier_type == 'username':
+            matching_accounts = db.query(InstagramAccount.id).filter(
+                InstagramAccount.username == identifier_value
+            ).all()
+        else:  # igsid
+            matching_accounts = db.query(InstagramAccount.id).filter(
+                InstagramAccount.igsid == identifier_value
+            ).all()
+        
+        for acc in matching_accounts:
+            matching_account_ids.add(acc[0])
+    
+    # Count DMs sent from any of these matching accounts in the current cycle
+    return db.query(DmLog).filter(
+        DmLog.instagram_account_id.in_(list(matching_account_ids)),
+        DmLog.sent_at >= cycle_start
+    ).count()
+
+
+def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) -> bool:
     """
     Check if user can send another DM based on their plan.
     For Pro/Enterprise users: Uses 30-day billing cycle from upgrade date
     For Free/Basic users: Uses calendar month
+    
+    If instagram_account_id is provided, checks usage for that specific account.
+    Otherwise, checks total usage across all user's accounts.
+    
     Returns True if limit not reached, logs warning if at limit but doesn't raise exception.
     """
     user = db.query(User).filter(User.id == user_id).first()
@@ -120,11 +177,15 @@ def check_dm_limit(user_id: int, db: Session) -> bool:
     # Get billing cycle start (calendar month for free/basic, 30-day cycle for pro/enterprise)
     cycle_start = get_billing_cycle_start(user_id, db)
     
-    # Count DMs sent in current billing cycle
-    dms_this_cycle = db.query(DmLog).filter(
-        DmLog.user_id == user_id,
-        DmLog.sent_at >= cycle_start
-    ).count()
+    # If checking for a specific account, use account-level tracking
+    if instagram_account_id:
+        dms_this_cycle = get_instagram_account_usage(instagram_account_id, cycle_start, db)
+    else:
+        # Count DMs sent in current billing cycle across all user's accounts
+        dms_this_cycle = db.query(DmLog).filter(
+            DmLog.user_id == user_id,
+            DmLog.sent_at >= cycle_start
+        ).count()
 
     if dms_this_cycle >= max_dms:
         print(f"⚠️ DM limit reached for user {user_id}: {dms_this_cycle}/{max_dms} DMs sent in current cycle")
