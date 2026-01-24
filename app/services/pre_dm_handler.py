@@ -471,7 +471,10 @@ async def process_pre_dm_actions(
             
             # STRICT MODE: Invalid email - send retry message and WAIT
             print(f"⚠️ [STRICT MODE] Invalid email format: {incoming_message}")
-            email_retry_message = config.get("email_retry_message", "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧")
+            email_retry_message = config.get("email_retry_message", "")
+            # Ensure we have a valid retry message - use default if empty or not configured
+            if not email_retry_message or not email_retry_message.strip():
+                email_retry_message = "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧"
             return {
                 "action": "send_email_retry",
                 "message": email_retry_message,

@@ -1090,7 +1090,11 @@ async def process_instagram_message(event: dict, db: Session):
                                     raise Exception("No access token found")
                                 
                                 page_id = account.page_id
-                                retry_msg = pre_dm_result["message"]
+                                retry_msg = pre_dm_result.get("message", "")
+                                
+                                # Ensure retry message is not empty - use default if empty
+                                if not retry_msg or not retry_msg.strip():
+                                    retry_msg = "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧"
                                 
                                 send_dm(sender_id, retry_msg, access_token, page_id, buttons=None, quick_replies=None)
                                 log_print(f"✅ Retry message sent, waiting for valid email")
