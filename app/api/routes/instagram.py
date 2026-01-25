@@ -1112,9 +1112,18 @@ async def process_instagram_message(event: dict, db: Session):
                                         rules_waiting_for_email.append(r)
                                         log_print(f"📋 Rule {r.id} is waiting for email, will send primary DM")
                         
-                        # Add current rule to the list if not already there
+                        # Add current rule to the list if not already there (CRITICAL FIX)
                         if rule not in rules_waiting_for_email:
                             rules_waiting_for_email.append(rule)
+                            log_print(f"📋 Added current rule {rule.id} to waiting list for primary DM")
+                        
+                        # CRITICAL FIX: Also mark this rule's state as email_received immediately
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "email_received": True,
+                            "email": processed_email
+                        })
+                        log_print(f"✅ Marked rule {rule.id} as email_received: {processed_email}")
                         
                         # Continue to collect all matching rules, then send primary DM for all at the end
                         continue
@@ -1447,15 +1456,31 @@ async def process_instagram_message(event: dict, db: Session):
                 if keywords_list:
                     message_text_lower = message_text.strip().lower()
                     # Check if message is EXACTLY any of the keywords (case-insensitive)
+                    # Also check if message CONTAINS the keyword (for flexibility)
                     matched_keyword = None
                     for keyword in keywords_list:
-                        if keyword == message_text_lower:
+                        keyword_clean = keyword.strip().lower()
+                        message_clean = message_text_lower.strip()
+                        
+                        # Exact match (case-insensitive)
+                        if keyword_clean == message_clean:
                             matched_keyword = keyword
+                            log_print(f"✅ Keyword '{matched_keyword}' EXACTLY matches message '{message_text}'")
                             break
+                        # Also check if message contains keyword as whole word (for flexibility)
+                        elif keyword_clean in message_clean:
+                            # Check if it's a whole word match (not part of another word)
+                            import re
+                            pattern = r'\b' + re.escape(keyword_clean) + r'\b'
+                            if re.search(pattern, message_clean):
+                                matched_keyword = keyword
+                                log_print(f"✅ Keyword '{matched_keyword}' found as whole word in message '{message_text}'")
+                                break
                     
                     if matched_keyword:
                         keyword_rule_matched = True
-                        print(f"✅ Keyword '{matched_keyword}' exactly matches message, triggering keyword rule!")
+                        log_print(f"✅ Keyword '{matched_keyword}' matches message, triggering keyword rule!")
+                        log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
                         # Check if this rule is already being processed for this message
                         processing_key = f"{message_id}_{rule.id}"
                         if processing_key in _processing_rules:
@@ -2049,19 +2074,26 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         # CRITICAL: Only trigger rules that match the specific media_id
         # Rules with media_id set should ONLY work on that specific post/reel
         # For strict matching: only include rules where media_id exactly matches
+        # BUT: Also include rules with NO media_id (global rules) if media_id is provided
         if media_id_str:
             post_comment_rules = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
             AutomationRule.trigger_type == "post_comment",
                 AutomationRule.is_active == True,
-                AutomationRule.media_id == media_id_str  # Strict match: only rules for this specific media
+                or_(
+                    AutomationRule.media_id == media_id_str,  # Rules for this specific media
+                    AutomationRule.media_id.is_(None)  # Global rules (no media_id)
+                )
         ).all()
         
             keyword_rules = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id == account.id,
                 AutomationRule.trigger_type == "keyword",
                 AutomationRule.is_active == True,
-                AutomationRule.media_id == media_id_str  # Strict match: only rules for this specific media
+                or_(
+                    AutomationRule.media_id == media_id_str,  # Rules for this specific media
+                    AutomationRule.media_id.is_(None)  # Global rules (no media_id)
+                )
             ).all()
         else:
             # If media_id is not provided in webhook, fallback to rules without media_id (backward compatibility)
@@ -2110,15 +2142,31 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                 if keywords_list:
                     comment_text_lower = comment_text.strip().lower()
                     # Check if comment is EXACTLY any of the keywords (case-insensitive)
+                    # Also check if comment CONTAINS the keyword (for flexibility)
                     matched_keyword = None
                     for keyword in keywords_list:
-                        if keyword == comment_text_lower:
+                        keyword_clean = keyword.strip().lower()
+                        comment_clean = comment_text_lower.strip()
+                        
+                        # Exact match (case-insensitive)
+                        if keyword_clean == comment_clean:
                             matched_keyword = keyword
+                            print(f"✅ Keyword '{matched_keyword}' EXACTLY matches comment '{comment_text}'")
                             break
+                        # Also check if comment contains keyword as whole word (for flexibility)
+                        elif keyword_clean in comment_clean:
+                            # Check if it's a whole word match (not part of another word)
+                            import re
+                            pattern = r'\b' + re.escape(keyword_clean) + r'\b'
+                            if re.search(pattern, comment_clean):
+                                matched_keyword = keyword
+                                print(f"✅ Keyword '{matched_keyword}' found as whole word in comment '{comment_text}'")
+                                break
                     
                     if matched_keyword:
                         keyword_rule_matched = True
-                        print(f"✅ Keyword '{matched_keyword}' exactly matches comment, triggering keyword rule!")
+                        print(f"✅ Keyword '{matched_keyword}' matches comment, triggering keyword rule!")
+                        print(f"   Comment: '{comment_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
                         # Check if this rule is already being processed for this comment
                         processing_key = f"{comment_id}_{rule.id}"
                         if processing_key in _processing_rules:
@@ -2307,19 +2355,26 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         print(f"🔍 Filtering live comment rules by live_video_id: {live_video_id_str}")
         
         # CRITICAL: Only trigger rules that match the specific live_video_id
+        # BUT: Also include rules with NO media_id (global rules) if live_video_id is provided
         if live_video_id_str:
             live_comment_rules = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
             AutomationRule.trigger_type == "live_comment",
                 AutomationRule.is_active == True,
-                AutomationRule.media_id == live_video_id_str  # Strict match: only rules for this specific live video
+                or_(
+                    AutomationRule.media_id == live_video_id_str,  # Rules for this specific live video
+                    AutomationRule.media_id.is_(None)  # Global rules (no media_id)
+                )
         ).all()
         
             keyword_rules = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id == account.id,
                 AutomationRule.trigger_type == "keyword",
                 AutomationRule.is_active == True,
-                AutomationRule.media_id == live_video_id_str  # Strict match: only rules for this specific live video
+                or_(
+                    AutomationRule.media_id == live_video_id_str,  # Rules for this specific live video
+                    AutomationRule.media_id.is_(None)  # Global rules (no media_id)
+                )
             ).all()
         else:
             # If live_video_id is not provided, fallback to rules without media_id (backward compatibility)
@@ -2357,15 +2412,31 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
                 if keywords_list:
                     comment_text_lower = comment_text.strip().lower()
                     # Check if comment is EXACTLY any of the keywords (case-insensitive)
+                    # Also check if comment CONTAINS the keyword (for flexibility)
                     matched_keyword = None
                     for keyword in keywords_list:
-                        if keyword == comment_text_lower:
+                        keyword_clean = keyword.strip().lower()
+                        comment_clean = comment_text_lower.strip()
+                        
+                        # Exact match (case-insensitive)
+                        if keyword_clean == comment_clean:
                             matched_keyword = keyword
+                            print(f"✅ Keyword '{matched_keyword}' EXACTLY matches live comment '{comment_text}'")
                             break
+                        # Also check if comment contains keyword as whole word (for flexibility)
+                        elif keyword_clean in comment_clean:
+                            # Check if it's a whole word match (not part of another word)
+                            import re
+                            pattern = r'\b' + re.escape(keyword_clean) + r'\b'
+                            if re.search(pattern, comment_clean):
+                                matched_keyword = keyword
+                                print(f"✅ Keyword '{matched_keyword}' found as whole word in live comment '{comment_text}'")
+                                break
                     
                     if matched_keyword:
                         keyword_rule_matched = True
-                        print(f"✅ Keyword '{matched_keyword}' exactly matches live comment, triggering keyword rule!")
+                        print(f"✅ Keyword '{matched_keyword}' matches live comment, triggering keyword rule!")
+                        print(f"   Comment: '{comment_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
                         # Check if this rule is already being processed for this comment
                         processing_key = f"{comment_id}_{rule.id}"
                         if processing_key in _processing_rules:
