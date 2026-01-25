@@ -260,42 +260,31 @@ def get_subscription(
         InstagramAccount.user_id == user_id
     ).all()
     
-    # Calculate usage stats - track per user (email), not globally by Instagram account
-    # Simple MVP approach: One email = One user, fresh start when account reconnected
+    # Calculate usage stats - use tracker for rules (total created, even if deleted)
+    # For free tier: Show lifetime total rules created (persists even after deletion)
     from app.utils.plan_enforcement import get_billing_cycle_start
+    from app.services.instagram_usage_tracker import get_or_create_tracker
     rules_count = 0
     dms_display_count = 0
     
     # Only calculate usage if user has connected accounts
     if all_user_accounts:
         user_account_ids = [acc.id for acc in all_user_accounts]
-        user_account_igsids = {str(acc.igsid) for acc in all_user_accounts if acc.igsid}
         
-        # Rules count: Count active rules for this user's accounts (user-based tracking)
-        # Include both: rules linked to current accounts AND disconnected rules matching current account IGSIDs
-        from sqlalchemy import or_
-        all_rules = db.query(AutomationRule).filter(
-            AutomationRule.deleted_at.is_(None),
-            or_(
-                # Rules linked to current connected accounts
-                AutomationRule.instagram_account_id.in_(user_account_ids),
-                # OR disconnected rules (instagram_account_id is NULL) - we'll filter by IGSID in Python
-                AutomationRule.instagram_account_id.is_(None)
-            )
-        ).all()
+        # Rules count: Use tracker's rules_created_count (total rules ever created, even if deleted)
+        # This ensures the count persists even after deletion, matching the limit enforcement
+        max_rules_created = 0
+        for account in all_user_accounts:
+            if account.igsid:
+                try:
+                    tracker = get_or_create_tracker(user_id, account.igsid, db)
+                    if tracker.rules_created_count > max_rules_created:
+                        max_rules_created = tracker.rules_created_count
+                except Exception as e:
+                    # If tracker doesn't exist or error, fall back to counting active rules
+                    print(f"⚠️ Error getting tracker for account {account.igsid}: {str(e)}")
         
-        # Filter disconnected rules by IGSID match (stored in config.disconnected_igsid)
-        # Also filter by user_id to ensure we only count this user's rules
-        connected_rules = [r for r in all_rules if r.instagram_account_id and r.instagram_account_id in user_account_ids]
-        disconnected_rules = [
-            r for r in all_rules 
-            if r.instagram_account_id is None 
-            and r.config 
-            and isinstance(r.config, dict)
-            and str(r.config.get("disconnected_igsid", "")) in user_account_igsids
-            and r.config.get("disconnected_user_id") == user_id  # Only count this user's disconnected rules
-        ]
-        rules_count = len(connected_rules) + len(disconnected_rules)
+        rules_count = max_rules_created
         
         # DMs count: Count DMs sent by this user in current billing cycle (user-based tracking)
         cycle_start = get_billing_cycle_start(user_id, db)
@@ -314,7 +303,7 @@ def get_subscription(
         "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
         "usage": {
             "accounts": accounts_count,
-            "rules": rules_count,  # Active rules count for this user (user-based tracking)
+            "rules": rules_count,  # Total rules created (from tracker, persists even after deletion)
             "dms_sent_this_month": dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
         }
     }
