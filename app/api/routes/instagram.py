@@ -868,6 +868,14 @@ async def process_instagram_message(event: dict, db: Session):
                 AutomationRule.action_type == "send_dm"
             ).all()
             
+            # FIX: After primary DM is complete (simple reply or lead capture), do NOT process pre_dm_rules.
+            # User typing gibberish → no automation, no reminders, no retries. Handled by real user only.
+            from app.services.pre_dm_handler import get_pre_dm_state, sender_primary_dm_complete
+            if sender_primary_dm_complete(sender_id, account.id, pre_dm_rules, db):
+                log_print(f"🚫 [FIX] Primary DM already complete. Skipping pre_dm_rules (no reply to gibberish).")
+                log_print(f"   💬 User messages handled by real user only.")
+                return
+            
             # Track if we processed any rules to avoid duplicate retry messages
             processed_rules_count = 0
             sent_retry_message = False

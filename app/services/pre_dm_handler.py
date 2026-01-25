@@ -451,6 +451,28 @@ async def process_pre_dm_actions(
             except Exception as stats_err:
                 print(f"⚠️ Failed to update follower gain count: {str(stats_err)}")
             
+            # Log IM_FOLLOWING_CLICKED so "Followers Gained via AutoDM" increases on analytics dashboard
+            try:
+                from app.utils.analytics import log_analytics_event_sync
+                from app.models.analytics_event import EventType
+                media_id = (rule.config or {}).get("media_id")
+                log_analytics_event_sync(
+                    db=db,
+                    user_id=account.user_id,
+                    event_type=EventType.IM_FOLLOWING_CLICKED,
+                    rule_id=rule.id,
+                    media_id=media_id,
+                    instagram_account_id=account.id,
+                    metadata={
+                        "sender_id": str(sender_id),
+                        "confirmed_via": "text",
+                        "message": incoming_message[:200] if incoming_message else None,
+                    },
+                )
+                print(f"✅ [FIX] IM_FOLLOWING_CLICKED analytics event logged for text confirmation: '{incoming_message}'")
+            except Exception as analytics_err:
+                print(f"⚠️ Failed to log IM_FOLLOWING_CLICKED for text confirmation: {str(analytics_err)}")
+            
             # Update global audience record with following status
             try:
                 from app.services.global_conversion_check import update_audience_following
