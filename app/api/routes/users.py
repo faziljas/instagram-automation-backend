@@ -289,10 +289,11 @@ def get_subscription(
             ).count()
         
         # DMs count: ALWAYS use DmLog filtered by billing cycle start for accurate display
-        # This ensures consistency with dashboard and shows actual DMs sent this billing cycle
+        # Filter by user_id (not just instagram_account_id) to include DMs even after account disconnect
+        # When account is disconnected, instagram_account_id is set to NULL but user_id remains
         cycle_start = get_billing_cycle_start(user_id, db)
         dms_display_count = db.query(DmLog).filter(
-            DmLog.instagram_account_id.in_(user_account_ids),
+            DmLog.user_id == user_id,
             DmLog.sent_at >= cycle_start
         ).count()
     
