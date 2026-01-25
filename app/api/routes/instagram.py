@@ -1469,6 +1469,21 @@ async def process_instagram_message(event: dict, db: Session):
                 rule_state = get_pre_dm_state(sender_id, rule.id)
                 # If primary DM was sent and user sends a message, process it through lead capture flow
                 if rule_state.get("primary_dm_sent") and message_text and message_text.strip():
+                    # Check if lead was already captured - if yes, don't send any messages
+                    from app.models.captured_lead import CapturedLead
+                    from sqlalchemy import cast, JSONB
+                    existing_lead = db.query(CapturedLead).filter(
+                        CapturedLead.automation_rule_id == rule.id,
+                        CapturedLead.instagram_account_id == account.id,
+                        cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
+                    ).first()
+                    
+                    if existing_lead:
+                        # Lead already captured - flow is complete, don't send any messages
+                        log_print(f"🚫 [FIX] Lead already captured for rule {rule.id}, ignoring random text - no messages will be sent")
+                        lead_capture_processed = True  # Mark as processed to skip further rule processing
+                        break
+                    
                     log_print(f"📧 [LEAD CAPTURE] Processing message '{message_text}' for lead capture rule {rule.id} (primary DM already sent)")
                     lead_result = process_lead_capture_step(rule, message_text, sender_id, db)
                     
@@ -2750,19 +2765,36 @@ async def execute_automation_action(
                 from app.services.pre_dm_handler import get_pre_dm_state
                 rule_state = get_pre_dm_state(str(sender_id), rule_id)
                 if rule_state.get("primary_dm_sent"):
-                    # Primary DM was already sent - only allow lead capture flow to process incoming messages
+                    # Primary DM was already sent - check if lead capture flow is also completed
                     is_lead_capture = rule.config.get("is_lead_capture", False)
                     has_incoming_message = incoming_message and incoming_message.strip()
                     
-                    # Only allow processing if it's a lead capture flow AND there's an incoming message to process
-                    if is_lead_capture and has_incoming_message:
+                    # Check if lead was already captured for this sender and rule
+                    lead_already_captured = False
+                    if is_lead_capture:
+                        from app.models.captured_lead import CapturedLead
+                        from sqlalchemy import cast, JSONB
+                        existing_lead = db.query(CapturedLead).filter(
+                            CapturedLead.automation_rule_id == rule_id,
+                            CapturedLead.instagram_account_id == account_id,
+                            cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
+                        ).first()
+                        if existing_lead:
+                            lead_already_captured = True
+                            print(f"✅ Lead already captured for sender {sender_id} and rule {rule_id}")
+                    
+                    # Only allow processing if it's a lead capture flow AND there's an incoming message AND lead not yet captured
+                    if is_lead_capture and has_incoming_message and not lead_already_captured:
                         print(f"📧 [LEAD CAPTURE] Primary DM already sent, but processing incoming message for lead capture flow")
                         # Continue to process lead capture flow
                     else:
-                        # Not a lead capture flow OR no incoming message - skip primary DM completely
-                        print(f"🚫 [FIX ISSUE 1] Primary DM already sent for rule {rule_id}, skipping to prevent re-triggering")
-                        print(f"   trigger_type={trigger_type}, is_lead_capture={is_lead_capture}, has_incoming_message={has_incoming_message}")
-                        return  # Exit early - don't send primary DM again
+                        # Not a lead capture flow OR no incoming message OR lead already captured - skip completely
+                        if lead_already_captured:
+                            print(f"🚫 [FIX] Lead already captured for rule {rule_id}, skipping to prevent any messages")
+                        else:
+                            print(f"🚫 [FIX ISSUE 1] Primary DM already sent for rule {rule_id}, skipping to prevent re-triggering")
+                        print(f"   trigger_type={trigger_type}, is_lead_capture={is_lead_capture}, has_incoming_message={has_incoming_message}, lead_already_captured={lead_already_captured}")
+                        return  # Exit early - don't send any messages
                 
                 # Log TRIGGER_MATCHED analytics event
                 try:
@@ -3998,10 +4030,24 @@ async def execute_automation_action(
                     user_message = ""  # Will be extracted from webhook context
                 
                 # FIX ISSUE 2: Check if primary DM was already sent and user is sending random text
-                # If so, send reminder instead of processing lead capture
+                # If lead was already captured, don't send any reminders - flow is complete
                 from app.services.pre_dm_handler import get_pre_dm_state
                 lead_state = get_pre_dm_state(str(sender_id), rule.id)
                 if lead_state.get("primary_dm_sent") and user_message and user_message.strip():
+                    # Check if lead was already captured
+                    from app.models.captured_lead import CapturedLead
+                    from sqlalchemy import cast, JSONB
+                    existing_lead = db.query(CapturedLead).filter(
+                        CapturedLead.automation_rule_id == rule.id,
+                        CapturedLead.instagram_account_id == account_id,
+                        cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
+                    ).first()
+                    
+                    if existing_lead:
+                        # Lead already captured - flow is complete, don't send any messages
+                        print(f"🚫 [FIX] Lead already captured for rule {rule.id}, ignoring random text - no messages will be sent")
+                        return  # Exit - flow is complete, don't send anything
+                    
                     # Primary DM was sent, check if this is a valid lead capture response
                     lead_result = process_lead_capture_step(rule, user_message, sender_id, db)
                     
