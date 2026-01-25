@@ -389,11 +389,14 @@ async def instagram_oauth_callback(
                 AutomationRule.deleted_at.is_(None)
             ).all()
             
+            print(f"🔍 [RECONNECT] Found {len(disconnected_rules)} disconnected rules. Looking for IGSID: {new_account.igsid}, user_id: {user_id}")
+            
             reconnected_count = 0
             for rule in disconnected_rules:
                 if rule.config and isinstance(rule.config, dict):
                     disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
                     disconnected_user_id = rule.config.get("disconnected_user_id")
+                    print(f"🔍 [RECONNECT] Rule {rule.id}: disconnected_igsid={disconnected_igsid}, disconnected_user_id={disconnected_user_id}, new_igsid={new_account.igsid}, user_id={user_id}")
                     # Match by IGSID AND user_id to ensure we only reconnect rules for the same user
                     if disconnected_igsid == str(new_account.igsid) and disconnected_user_id == user_id:
                         # Reconnect this rule to the new account
@@ -405,11 +408,17 @@ async def instagram_oauth_callback(
                             del rule.config["disconnected_username"]
                         if "disconnected_user_id" in rule.config:
                             del rule.config["disconnected_user_id"]
+                        # Mark JSON column as modified so SQLAlchemy saves the changes
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(rule, "config")
                         reconnected_count += 1
+                        print(f"✅ [RECONNECT] Reconnecting rule {rule.id} to account {new_account.id}")
             
             if reconnected_count > 0:
                 db.commit()
                 print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {new_account.username}")
+            else:
+                print(f"⚠️ [RECONNECT] No rules matched for reconnection (IGSID: {new_account.igsid}, user_id: {user_id})")
         
         print(f"✅ Account saved successfully! Redirecting to dashboard...")
         
@@ -1009,7 +1018,9 @@ async def exchange_instagram_code(
             for rule in disconnected_rules:
                 if rule.config and isinstance(rule.config, dict):
                     disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
-                    if disconnected_igsid == str(existing_account_same_user.igsid):
+                    disconnected_user_id = rule.config.get("disconnected_user_id")
+                    # Match by IGSID AND user_id to ensure we only reconnect rules for the same user
+                    if disconnected_igsid == str(existing_account_same_user.igsid) and disconnected_user_id == user_id:
                         # Reconnect this rule to the existing account
                         rule.instagram_account_id = existing_account_same_user.id
                         # Remove disconnected_igsid from config
@@ -1019,6 +1030,9 @@ async def exchange_instagram_code(
                             del rule.config["disconnected_username"]
                         if "disconnected_user_id" in rule.config:
                             del rule.config["disconnected_user_id"]
+                        # Mark JSON column as modified so SQLAlchemy saves the changes
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(rule, "config")
                         reconnected_count += 1
             
             if reconnected_count > 0:
@@ -1079,11 +1093,16 @@ async def exchange_instagram_code(
             AutomationRule.deleted_at.is_(None)
         ).all()
         
+        print(f"🔍 [RECONNECT] Found {len(disconnected_rules)} disconnected rules. Looking for IGSID: {new_account.igsid}, user_id: {user_id}")
+        
         reconnected_count = 0
         for rule in disconnected_rules:
             if rule.config and isinstance(rule.config, dict):
                 disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
-                if disconnected_igsid == str(new_account.igsid):
+                disconnected_user_id = rule.config.get("disconnected_user_id")
+                print(f"🔍 [RECONNECT] Rule {rule.id}: disconnected_igsid={disconnected_igsid}, disconnected_user_id={disconnected_user_id}, new_igsid={new_account.igsid}, user_id={user_id}")
+                # Match by IGSID AND user_id to ensure we only reconnect rules for the same user
+                if disconnected_igsid == str(new_account.igsid) and disconnected_user_id == user_id:
                     # Reconnect this rule to the new account
                     rule.instagram_account_id = new_account.id
                     # Remove disconnected_igsid from config
@@ -1091,11 +1110,19 @@ async def exchange_instagram_code(
                         del rule.config["disconnected_igsid"]
                     if "disconnected_username" in rule.config:
                         del rule.config["disconnected_username"]
+                    if "disconnected_user_id" in rule.config:
+                        del rule.config["disconnected_user_id"]
+                    # Mark JSON column as modified so SQLAlchemy saves the changes
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(rule, "config")
                     reconnected_count += 1
+                    print(f"✅ [RECONNECT] Reconnecting rule {rule.id} to account {new_account.id}")
         
         if reconnected_count > 0:
             db.commit()
             print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {new_account.username}")
+        else:
+            print(f"⚠️ [RECONNECT] No rules matched for reconnection (IGSID: {new_account.igsid}, user_id: {user_id})")
         
         print(f"✅ Instagram account {new_account.username} connected successfully for user {user_id}!")
         

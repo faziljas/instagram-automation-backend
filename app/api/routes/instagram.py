@@ -4406,23 +4406,31 @@ def delete_instagram_account(
     # This allows rules to persist across disconnect/reconnect (per user per Instagram account tracking)
     # Similar to how DmLog preserves records by nullifying instagram_account_id
     from sqlalchemy import update
+    from sqlalchemy.orm.attributes import flag_modified
     account_igsid = account.igsid
     if account_igsid:
         # Store igsid and user_id in rule config for reconnection matching
+        print(f"🔍 [DISCONNECT] Storing disconnected info for {len(automation_rules)} rules. IGSID: {account_igsid}, user_id: {account.user_id}")
         for rule in automation_rules:
             if rule.config and isinstance(rule.config, dict):
                 rule.config["disconnected_igsid"] = str(account_igsid)
                 rule.config["disconnected_username"] = account.username
                 rule.config["disconnected_user_id"] = account.user_id
-        db.flush()
+                # Mark JSON column as modified so SQLAlchemy saves the changes
+                flag_modified(rule, "config")
+                print(f"✅ [DISCONNECT] Stored disconnected info for rule {rule.id}: igsid={account_igsid}, user_id={account.user_id}")
+        db.commit()  # Commit config changes before nullifying instagram_account_id
+        print(f"✅ [DISCONNECT] Committed config changes for {len(automation_rules)} rules")
     
     # Nullify instagram_account_id instead of deleting rules (preserves rule count per user per Instagram)
+    print(f"🔍 [DISCONNECT] Nullifying instagram_account_id for {len(automation_rules)} rules")
     db.execute(
         update(AutomationRule).where(AutomationRule.instagram_account_id == account_id).values(
             instagram_account_id=None
         )
     )
     db.flush()
+    print(f"✅ [DISCONNECT] Nullified instagram_account_id for rules")
     
     # Nullify instagram_account_id in dm_logs (keep rows for usage tracking)
     # username/igsid are stored in dm_logs so usage survives account delete
