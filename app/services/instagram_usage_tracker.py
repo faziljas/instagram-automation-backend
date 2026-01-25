@@ -19,25 +19,35 @@ def get_or_create_tracker(user_id: int, instagram_id: str, db: Session) -> Insta
     if not user_id:
         raise ValueError("user_id is required")
     
-    tracker = db.query(InstagramGlobalTracker).filter(
-        InstagramGlobalTracker.user_id == user_id,
-        InstagramGlobalTracker.instagram_id == instagram_id
-    ).first()
-    
-    if not tracker:
-        tracker = InstagramGlobalTracker(
-            user_id=user_id,
-            instagram_id=instagram_id,
-            dms_sent_count=0,
-            rules_created_count=0,
-            last_reset_date=datetime.utcnow()
-        )
-        db.add(tracker)
-        db.commit()
-        db.refresh(tracker)
-        print(f"✅ Created new InstagramGlobalTracker for user {user_id}, IGSID: {instagram_id}")
-    
-    return tracker
+    try:
+        tracker = db.query(InstagramGlobalTracker).filter(
+            InstagramGlobalTracker.user_id == user_id,
+            InstagramGlobalTracker.instagram_id == instagram_id
+        ).first()
+        
+        if not tracker:
+            tracker = InstagramGlobalTracker(
+                user_id=user_id,
+                instagram_id=instagram_id,
+                dms_sent_count=0,
+                rules_created_count=0,
+                last_reset_date=datetime.utcnow()
+            )
+            db.add(tracker)
+            db.commit()
+            db.refresh(tracker)
+            print(f"✅ Created new InstagramGlobalTracker for user {user_id}, IGSID: {instagram_id}")
+        
+        return tracker
+    except Exception as e:
+        # Check if error is due to missing user_id column (migration not run)
+        error_msg = str(e).lower()
+        if "column" in error_msg and "user_id" in error_msg:
+            raise ValueError(
+                f"Database migration not completed. The instagram_global_trackers table "
+                f"does not have the user_id column. Please restart the server to run migrations."
+            ) from e
+        raise
 
 
 def check_and_reset_usage(tracker: InstagramGlobalTracker, subscription_plan: str, db: Session) -> None:
