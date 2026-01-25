@@ -18,7 +18,7 @@ def run_migration():
     engine = create_engine(DATABASE_URL)
 
     try:
-        with engine.connect() as conn:
+        with engine.begin() as conn:  # Use begin() for automatic transaction management
             # Check if table exists
             inspector = inspect(engine)
             table_exists = "instagram_global_trackers" in inspector.get_table_names()
@@ -50,7 +50,6 @@ def run_migration():
                 """))
                 
                 print("✅ Created instagram_global_trackers table with user_id")
-                conn.commit()
                 return True
             
             # Table exists - check if user_id column exists
@@ -139,7 +138,6 @@ def run_migration():
                 ON instagram_global_trackers(instagram_id)
             """))
             
-            conn.commit()
             print(f"✅ Migrated instagram_global_trackers table: {migrated_count} entries migrated")
             print("✅ Instagram global tracker user_id migration completed successfully")
             return True
@@ -148,7 +146,6 @@ def run_migration():
         print(f"❌ Instagram global tracker user_id migration failed: {str(e)}")
         import traceback
         traceback.print_exc()
-        conn.rollback()
         return False
 
 
