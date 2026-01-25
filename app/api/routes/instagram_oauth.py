@@ -382,17 +382,25 @@ async def instagram_oauth_callback(
             from app.models.instagram_account import InstagramAccount as IGAccount
             
             if new_account.igsid:
-                # Check if this IGSID was previously connected to a different user
+                tracker = get_or_create_tracker(new_account.igsid, db)
+                
+                # Check if this Instagram account was previously used by a different user
                 previous_account = db.query(IGAccount).filter(
                     IGAccount.igsid == new_account.igsid,
                     IGAccount.user_id != user_id
                 ).first()
                 
-                tracker = get_or_create_tracker(new_account.igsid, db)
+                # Also check if tracker has usage (rules or DMs) - indicates previous usage
+                tracker_has_usage = (tracker.rules_created_count > 0 or tracker.dms_sent_count > 0)
                 
-                # If this Instagram account was previously used by a different user, reset tracker
-                if previous_account:
-                    print(f"🔄 Instagram account {new_account.igsid} was previously used by user {previous_account.user_id}. Resetting tracker for new user {user_id}.")
+                # Reset tracker if:
+                # 1. Currently connected to a different user, OR
+                # 2. Tracker has usage (meaning it was used before, even if account was deleted)
+                if previous_account or tracker_has_usage:
+                    if previous_account:
+                        print(f"🔄 Instagram account {new_account.igsid} was previously used by user {previous_account.user_id}. Resetting tracker for new user {user_id}.")
+                    else:
+                        print(f"🔄 Instagram account {new_account.igsid} has previous usage (rules: {tracker.rules_created_count}, DMs: {tracker.dms_sent_count}). Resetting tracker for new user {user_id}.")
                     reset_tracker_for_new_user(tracker, db)
             
             # Reconnect any disconnected automation rules for this user + IGSID
@@ -619,17 +627,25 @@ def save_or_update_instagram_account(
         from app.models.instagram_account import InstagramAccount as IGAccount
         
         if new_account.igsid:
-            # Check if this IGSID was previously connected to a different user
+            tracker = get_or_create_tracker(new_account.igsid, db)
+            
+            # Check if this Instagram account was previously used by a different user
             previous_account = db.query(IGAccount).filter(
                 IGAccount.igsid == new_account.igsid,
                 IGAccount.user_id != user_id
             ).first()
             
-            tracker = get_or_create_tracker(new_account.igsid, db)
+            # Also check if tracker has usage (rules or DMs) - indicates previous usage
+            tracker_has_usage = (tracker.rules_created_count > 0 or tracker.dms_sent_count > 0)
             
-            # If this Instagram account was previously used by a different user, reset tracker
-            if previous_account:
-                print(f"🔄 Instagram account {new_account.igsid} was previously used by user {previous_account.user_id}. Resetting tracker for new user {user_id}.")
+            # Reset tracker if:
+            # 1. Currently connected to a different user, OR
+            # 2. Tracker has usage (meaning it was used before, even if account was deleted)
+            if previous_account or tracker_has_usage:
+                if previous_account:
+                    print(f"🔄 Instagram account {new_account.igsid} was previously used by user {previous_account.user_id}. Resetting tracker for new user {user_id}.")
+                else:
+                    print(f"🔄 Instagram account {new_account.igsid} has previous usage (rules: {tracker.rules_created_count}, DMs: {tracker.dms_sent_count}). Resetting tracker for new user {user_id}.")
                 reset_tracker_for_new_user(tracker, db)
         
         return new_account
@@ -1115,19 +1131,26 @@ async def exchange_instagram_code(
         from app.models.instagram_account import InstagramAccount as IGAccount
         
         if new_account.igsid:
-            # Check if this IGSID was previously connected to a different user
-            # Note: We already checked for existing_account_other_user above, but that only checks currently connected accounts
-            # We need to check if ANY account with this IGSID was ever connected to a different user
+            tracker = get_or_create_tracker(new_account.igsid, db)
+            
+            # Check if this Instagram account was previously used by a different user
+            # We check both: currently connected accounts AND tracker usage
             previous_account = db.query(IGAccount).filter(
                 IGAccount.igsid == str(user_id_from_token),
                 IGAccount.user_id != user_id
             ).first()
             
-            tracker = get_or_create_tracker(new_account.igsid, db)
+            # Also check if tracker has usage (rules or DMs) - indicates previous usage
+            tracker_has_usage = (tracker.rules_created_count > 0 or tracker.dms_sent_count > 0)
             
-            # If this Instagram account was previously used by a different user, reset tracker
-            if previous_account:
-                print(f"🔄 Instagram account {new_account.igsid} was previously used by user {previous_account.user_id}. Resetting tracker for new user {user_id}.")
+            # Reset tracker if:
+            # 1. Currently connected to a different user, OR
+            # 2. Tracker has usage (meaning it was used before, even if account was deleted)
+            if previous_account or tracker_has_usage:
+                if previous_account:
+                    print(f"🔄 Instagram account {new_account.igsid} was previously used by user {previous_account.user_id}. Resetting tracker for new user {user_id}.")
+                else:
+                    print(f"🔄 Instagram account {new_account.igsid} has previous usage (rules: {tracker.rules_created_count}, DMs: {tracker.dms_sent_count}). Resetting tracker for new user {user_id}.")
                 reset_tracker_for_new_user(tracker, db)
         
         # Reconnect any disconnected automation rules for this user + IGSID
