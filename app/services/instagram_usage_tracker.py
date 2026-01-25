@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.models.instagram_global_tracker import InstagramGlobalTracker
 from app.models.user import User
+from app.models.instagram_account import InstagramAccount
 from app.core.plan_limits import FREE_DM_LIMIT, PRO_DM_LIMIT, FREE_RULE_LIMIT, PRO_RULE_LIMIT
 
 
@@ -160,3 +161,50 @@ def reset_tracker_for_new_user(tracker: InstagramGlobalTracker, db: Session) -> 
     tracker.last_reset_date = datetime.utcnow()
     db.commit()
     print(f"✅ Reset tracker for new user connection - IGSID {tracker.instagram_id}")
+
+
+def reset_tracker_for_pro_upgrade(user_id: int, db: Session) -> None:
+    """
+    Reset all InstagramGlobalTracker instances for a user when they upgrade to Pro.
+    This resets usage quotas for all Instagram accounts linked to the user.
+    
+    Args:
+        user_id: The user ID whose trackers should be reset
+        db: Database session
+    """
+    # Query all InstagramAccount rows linked to the user_id
+    user_accounts = db.query(InstagramAccount).filter(
+        InstagramAccount.user_id == user_id,
+        InstagramAccount.igsid.isnot(None)
+    ).all()
+    
+    if not user_accounts:
+        print(f"ℹ️ No Instagram accounts found for user {user_id} to reset trackers")
+        return
+    
+    reset_count = 0
+    # For each account, find the corresponding InstagramGlobalTracker by instagram_id
+    for account in user_accounts:
+        if account.igsid:
+            try:
+                tracker = db.query(InstagramGlobalTracker).filter(
+                    InstagramGlobalTracker.user_id == user_id,
+                    InstagramGlobalTracker.instagram_id == account.igsid
+                ).first()
+                
+                if tracker:
+                    # Reset dms_sent_count and rules_created_count to 0
+                    tracker.dms_sent_count = 0
+                    tracker.rules_created_count = 0
+                    # Update last_reset_date to datetime.utcnow()
+                    tracker.last_reset_date = datetime.utcnow()
+                    reset_count += 1
+                    print(f"✅ Reset tracker for Pro upgrade - User {user_id}, IGSID {account.igsid}")
+                else:
+                    print(f"ℹ️ No tracker found for User {user_id}, IGSID {account.igsid} - will be created on first use")
+            except Exception as e:
+                print(f"⚠️ Failed to reset tracker for User {user_id}, IGSID {account.igsid}: {str(e)}")
+    
+    # Commit the changes
+    db.commit()
+    print(f"✅ Reset {reset_count} tracker(s) for Pro upgrade - User {user_id}")
