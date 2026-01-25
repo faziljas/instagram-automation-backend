@@ -3228,18 +3228,20 @@ async def execute_automation_action(
                             )
                             print(f"✅ Follow request DM sent successfully")
                             
-                            # Log the DM
-                            from app.models.dm_log import DmLog
-                            dm_log = DmLog(
-                                user_id=user_id,
-                                instagram_account_id=account_id,
-                                instagram_username=username,
-                                instagram_igsid=account_igsid,
-                                recipient_username=str(sender_id),
-                                message=follow_msg
-                            )
-                            db.add(dm_log)
-                            db.commit()
+                            # Log the DM (tracks in DmLog and increments global tracker)
+                            from app.utils.plan_enforcement import log_dm_sent
+                            try:
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=follow_msg,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
                         except Exception as e:
                             print(f"❌ Failed to send follow request DM: {str(e)}")
                             import traceback
@@ -3263,18 +3265,20 @@ async def execute_automation_action(
                         )
                         print(f"✅ Email request DM sent successfully")
                         
-                        # Log the DM
-                        from app.models.dm_log import DmLog
-                        dm_log = DmLog(
-                            user_id=user_id,
-                            instagram_account_id=account_id,
-                            instagram_username=username,
-                            instagram_igsid=account_igsid,
-                            recipient_username=str(sender_id),
-                            message=email_msg
-                        )
-                        db.add(dm_log)
-                        db.commit()
+                        # Log the DM (tracks in DmLog and increments global tracker)
+                        from app.utils.plan_enforcement import log_dm_sent
+                        try:
+                            log_dm_sent(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=email_msg,
+                                db=db,
+                                instagram_username=username,
+                                instagram_igsid=account_igsid
+                            )
+                        except Exception as log_err:
+                            print(f"⚠️ Failed to log DM: {str(log_err)}")
                         
                         # Update stats for both DMs
                         from app.services.lead_capture import update_automation_stats
@@ -3756,8 +3760,23 @@ async def execute_automation_action(
                             # Now send the actual message with buttons/quick replies
                             print(f"📤 Sending DM with buttons/quick replies...")
                             from app.utils.instagram_api import send_dm
+                            from app.utils.plan_enforcement import log_dm_sent
                             send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
                             print(f"✅ DM with buttons/quick replies sent to {sender_id}")
+                            
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=message_template,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
                         else:
                             # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
                             # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
@@ -3765,6 +3784,22 @@ async def execute_automation_action(
                             # No buttons/quick replies, send full message via private reply
                             send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
                             print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
+                            
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            # Note: Private replies are counted as DMs for tracking purposes
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=message_template,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
                     else:
                         # For direct message triggers or when no comment_id, use regular DM
                         if page_id_for_dm:
@@ -3776,8 +3811,23 @@ async def execute_automation_action(
                         message_timestamp = datetime.utcnow() + timedelta(hours=8)
                         # Import send_dm and call it with quick_replies
                         from app.utils.instagram_api import send_dm
+                        from app.utils.plan_enforcement import log_dm_sent
                         send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
                         print(f"✅ DM sent to {sender_id}")
+                        
+                        # Log DM sent (tracks in DmLog and increments global tracker)
+                        try:
+                            log_dm_sent(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=message_template,
+                                db=db,
+                                instagram_username=username,
+                                instagram_igsid=account_igsid
+                            )
+                        except Exception as log_err:
+                            print(f"⚠️ Failed to log DM: {str(log_err)}")
                     
                     # Update stats
                     from app.services.lead_capture import update_automation_stats
