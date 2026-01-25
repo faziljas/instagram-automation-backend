@@ -1408,6 +1408,108 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"⭐ [VIP] User is already converted, skipping ALL regular rule processing (keyword, new_message, story) to prevent duplicate primary DMs")
             return
         
+        # FIX: Check for lead capture flow processing when user sends message after primary DM
+        # This handles cases where user provides email/lead info after primary DM was sent
+        from app.services.pre_dm_handler import get_pre_dm_state
+        from app.services.lead_capture import process_lead_capture_step
+        from app.utils.encryption import decrypt_credentials
+        from app.utils.instagram_api import send_dm as send_dm_api
+        
+        # Get all active rules for this account to check for lead capture
+        all_active_rules = db.query(AutomationRule).filter(
+            AutomationRule.instagram_account_id == account.id,
+            AutomationRule.is_active == True
+        ).all()
+        
+        lead_capture_processed = False
+        for rule in all_active_rules:
+            if rule.config.get("is_lead_capture", False):
+                rule_state = get_pre_dm_state(sender_id, rule.id)
+                # If primary DM was sent and user sends a message, process it through lead capture flow
+                if rule_state.get("primary_dm_sent") and message_text and message_text.strip():
+                    log_print(f"📧 [LEAD CAPTURE] Processing message '{message_text}' for lead capture rule {rule.id} (primary DM already sent)")
+                    lead_result = process_lead_capture_step(rule, message_text, sender_id, db)
+                    
+                    if lead_result.get("action") == "send" and lead_result.get("saved_lead"):
+                        # Lead was captured successfully - count should be incremented in process_lead_capture_step
+                        log_print(f"✅ [LEAD CAPTURE] Lead captured successfully: {lead_result['saved_lead'].email or lead_result['saved_lead'].phone}")
+                        
+                        # Send confirmation message
+                        try:
+                            if account.encrypted_page_token:
+                                access_token_lead = decrypt_credentials(account.encrypted_page_token)
+                                account_page_id_lead = account.page_id
+                            elif account.encrypted_credentials:
+                                access_token_lead = decrypt_credentials(account.encrypted_credentials)
+                                account_page_id_lead = account.page_id
+                            else:
+                                raise Exception("No access token found")
+                            
+                            confirmation_msg = lead_result.get("message", "Thank you! We've received your information.")
+                            send_dm_api(sender_id, confirmation_msg, access_token_lead, account_page_id_lead, buttons=None, quick_replies=None)
+                            log_print(f"✅ [LEAD CAPTURE] Confirmation message sent")
+                            
+                            # Log DM sent
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=confirmation_msg,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None)
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                        except Exception as send_err:
+                            log_print(f"⚠️ Failed to send lead capture confirmation: {str(send_err)}", "WARNING")
+                        
+                        lead_capture_processed = True
+                        break  # Process only first matching lead capture rule
+                    elif lead_result.get("action") == "ask":
+                        # Need to ask for more info or resend question
+                        ask_msg = lead_result.get("message", "")
+                        if ask_msg:
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token_lead = decrypt_credentials(account.encrypted_page_token)
+                                    account_page_id_lead = account.page_id
+                                elif account.encrypted_credentials:
+                                    access_token_lead = decrypt_credentials(account.encrypted_credentials)
+                                    account_page_id_lead = account.page_id
+                                else:
+                                    raise Exception("No access token found")
+                                
+                                send_dm_api(sender_id, ask_msg, access_token_lead, account_page_id_lead, buttons=None, quick_replies=None)
+                                log_print(f"✅ [LEAD CAPTURE] Question/reminder sent: {ask_msg[:50]}...")
+                                
+                                # Log DM sent
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=ask_msg,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None)
+                                    )
+                                except Exception as log_err:
+                                    log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                            except Exception as send_err:
+                                log_print(f"⚠️ Failed to send lead capture question: {str(send_err)}", "WARNING")
+                            
+                            lead_capture_processed = True
+                            break
+        
+        # If lead capture was processed, skip further rule processing to prevent duplicate triggers
+        if lead_capture_processed:
+            log_print(f"✅ [LEAD CAPTURE] Lead capture processed, skipping further rule processing")
+            return
+        
         # For story DMs, first check if any story-specific post_comment rule should trigger (any comment/DM on that story)
         story_rule_matched = False
         if story_id and story_post_comment_rules:
@@ -1557,7 +1659,8 @@ async def process_instagram_message(event: dict, db: Session):
                             account, 
                             db,
                             trigger_type="new_message",
-                            message_id=message_id
+                            message_id=message_id,
+                            incoming_message=message_text  # Pass message text for lead capture processing
                         ))
             else:
                 log_print(f"⚠️ [DM] No 'new_message' rules found to process. Keyword/story rule matched or no rules configured.", "WARNING")
@@ -3753,9 +3856,21 @@ async def execute_automation_action(
             # Check if this is a lead capture flow
             is_lead_capture = rule.config.get("is_lead_capture", False)
             
-            # Skip lead capture step processing if we're coming from pre-DM actions with send_primary
-            # (we just need to send the primary DM using lead_dm_messages, which will be loaded in the elif block)
-            if is_lead_capture and not (pre_dm_result and pre_dm_result.get("action") == "send_primary"):
+            # Process lead capture flow if:
+            # 1. It's a lead capture rule AND we're not coming from pre-DM with send_primary, OR
+            # 2. Primary DM was already sent and user is sending a new message (for lead capture)
+            should_process_lead_capture = False
+            if is_lead_capture:
+                from app.services.pre_dm_handler import get_pre_dm_state
+                rule_state = get_pre_dm_state(str(sender_id), rule.id)
+                # Check if primary DM was sent and user is sending a message
+                if rule_state.get("primary_dm_sent") and incoming_message and incoming_message.strip():
+                    should_process_lead_capture = True
+                    print(f"📧 [LEAD CAPTURE] Primary DM already sent, processing incoming message for lead capture")
+                elif not (pre_dm_result and pre_dm_result.get("action") == "send_primary"):
+                    should_process_lead_capture = True
+            
+            if should_process_lead_capture:
                 # Process lead capture flow
                 from app.services.lead_capture import process_lead_capture_step, update_automation_stats
                 
