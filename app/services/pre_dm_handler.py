@@ -446,7 +446,6 @@ async def process_pre_dm_actions(
             
             # FIX ISSUE 3: Track follower gain count when user confirms following via text
             try:
-                from app.services.lead_capture import update_automation_stats
                 update_automation_stats(rule.id, "follower_gained", db)
                 print(f"✅ Follower gain count updated for rule {rule.id}")
             except Exception as stats_err:
@@ -552,7 +551,11 @@ async def process_pre_dm_actions(
                     print(f"⚠️ Failed to update global audience with email: {str(audience_err)}")
                 
                 # Update stats
-                update_automation_stats(rule.id, "lead_captured", db)
+                try:
+                    update_automation_stats(rule.id, "lead_captured", db)
+                    print(f"✅ Stats updated: lead_captured for rule {rule.id}")
+                except Exception as stats_err:
+                    print(f"⚠️ Failed to update stats: {str(stats_err)}")
                 print(f"✅ Email saved to database: {email_address}")
                 
                 # FIX ISSUE 4: Log EMAIL_COLLECTED analytics event (ensure it's always logged)

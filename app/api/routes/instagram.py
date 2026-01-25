@@ -2903,12 +2903,20 @@ async def execute_automation_action(
             if pre_dm_result and pre_dm_result.get("action") == "send_primary":
                 # Direct primary DM - skip to primary DM logic
                 print(f"✅ Skipping pre-DM actions, proceeding directly to primary DM")
+                print(f"🔍 [DEBUG] pre_dm_result_override: {pre_dm_result}, send_email_success={pre_dm_result.get('send_email_success', False)}")
                 # For VIP users (skip_growth_steps=True), don't send email success message
                 # For non-VIP users, check if email was just provided (send_email_success flag should be in override)
                 if skip_growth_steps:
                     # VIP user - ensure email success is not sent
                     if "send_email_success" not in pre_dm_result:
                         pre_dm_result["send_email_success"] = False
+                else:
+                    # Non-VIP user - ensure send_email_success flag is preserved from override
+                    if "send_email_success" not in pre_dm_result:
+                        # If not in override, check if email was provided
+                        if pre_dm_result.get("email"):
+                            pre_dm_result["send_email_success"] = True
+                            print(f"✅ [FIX] Set send_email_success=True for non-VIP user with email")
                 # pre_dm_result already set to override, continue to primary DM logic below
             elif (ask_to_follow or ask_for_email) and pre_dm_result is None:
                 print(f"🔍 [DEBUG] Processing pre-DM actions: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, skip_growth_steps={skip_growth_steps}")
