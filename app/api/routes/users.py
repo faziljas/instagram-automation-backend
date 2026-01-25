@@ -356,114 +356,62 @@ def delete_user_account(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    """Delete user account and all associated data"""
-    # Get user
+    """Delete user account and all associated data. Order respects FK constraints."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
-    # Get user's Instagram accounts
-    user_accounts = db.query(InstagramAccount).filter(
-        InstagramAccount.user_id == user_id
-    ).all()
-    
-    # Get all automation rule IDs for this user's accounts
-    account_ids = [acc.id for acc in user_accounts]
+
+    account_ids = [a.id for a in db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).all()]
     rule_ids = []
     if account_ids:
-        rule_ids = [rule.id for rule in db.query(AutomationRule.id).filter(
+        rule_ids = [r.id for r in db.query(AutomationRule.id).filter(
             AutomationRule.instagram_account_id.in_(account_ids)
         ).all()]
-    
-    # Delete dependent records that reference automation_rules (must be deleted first)
+
+    # 1. automation_rules dependents (FK → automation_rules)
     if rule_ids:
-        # Delete automation_rule_stats (has foreign key to automation_rules)
         db.query(AutomationRuleStats).filter(
             AutomationRuleStats.automation_rule_id.in_(rule_ids)
         ).delete(synchronize_session=False)
-        
-        # Delete captured_leads (has foreign key to automation_rules)
         db.query(CapturedLead).filter(
             CapturedLead.automation_rule_id.in_(rule_ids)
         ).delete(synchronize_session=False)
-        
-        # Delete or nullify analytics_events (rule_id is nullable, but we'll delete user's events)
-        # First, set rule_id to NULL for events that reference these rules
         db.query(AnalyticsEvent).filter(
             AnalyticsEvent.rule_id.in_(rule_ids)
         ).update({"rule_id": None}, synchronize_session=False)
-    
-    # Delete automation rules
+
+    # 2. automation_rules (FK → instagram_accounts)
     if account_ids:
         db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id.in_(account_ids)
         ).delete(synchronize_session=False)
-    
-    # Delete other user-related data
-    for account in user_accounts:
-        # Delete analytics events for this account
-        db.query(AnalyticsEvent).filter(
-            AnalyticsEvent.instagram_account_id == account.id
-        ).delete(synchronize_session=False)
-        
-        # Delete conversations and messages
-        db.query(Message).filter(
-            Message.instagram_account_id == account.id
-        ).delete(synchronize_session=False)
-        
-        db.query(Conversation).filter(
-            Conversation.instagram_account_id == account.id
-        ).delete(synchronize_session=False)
-        
-        # Delete followers
-        db.query(Follower).filter(
-            Follower.instagram_account_id == account.id
-        ).delete(synchronize_session=False)
-        
-        # Delete Instagram audience
-        db.query(InstagramAudience).filter(
-            InstagramAudience.instagram_account_id == account.id
-        ).delete(synchronize_session=False)
-        
-        # Delete DM logs for this account
-        db.query(DmLog).filter(
-            DmLog.instagram_account_id == account.id
-        ).delete(synchronize_session=False)
-    
-    # Delete analytics events by user_id (in case any remain)
-    db.query(AnalyticsEvent).filter(
-        AnalyticsEvent.user_id == user_id
-    ).delete(synchronize_session=False)
-    
-    # Delete conversations and messages by user_id
-    db.query(Message).filter(
-        Message.user_id == user_id
-    ).delete(synchronize_session=False)
-    
-    db.query(Conversation).filter(
-        Conversation.user_id == user_id
-    ).delete(synchronize_session=False)
-    
-    # Delete captured leads by user_id
-    db.query(CapturedLead).filter(
-        CapturedLead.user_id == user_id
-    ).delete(synchronize_session=False)
-    
-    # Delete Instagram accounts
-    db.query(InstagramAccount).filter(
-        InstagramAccount.user_id == user_id
-    ).delete(synchronize_session=False)
-    
-    # Delete subscription
-    db.query(Subscription).filter(
-        Subscription.user_id == user_id
-    ).delete(synchronize_session=False)
-    
-    # Finally, delete the user
+
+    # 3. instagram_accounts dependents: messages (FK → conversations, instagram_accounts)
+    #    Delete messages before conversations (message.conversation_id → conversations)
+    if account_ids:
+        db.query(Message).filter(Message.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+        db.query(Conversation).filter(Conversation.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+        db.query(AnalyticsEvent).filter(AnalyticsEvent.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+        db.query(Follower).filter(Follower.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+        db.query(InstagramAudience).filter(InstagramAudience.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+        db.query(DmLog).filter(DmLog.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+
+    # 4. user-level data (FK → users) – CRITICAL: DmLog has user_id; we must delete ALL dm_logs for user
+    db.query(AnalyticsEvent).filter(AnalyticsEvent.user_id == user_id).delete(synchronize_session=False)
+    db.query(Message).filter(Message.user_id == user_id).delete(synchronize_session=False)
+    db.query(Conversation).filter(Conversation.user_id == user_id).delete(synchronize_session=False)
+    db.query(CapturedLead).filter(CapturedLead.user_id == user_id).delete(synchronize_session=False)
+    db.query(InstagramAudience).filter(InstagramAudience.user_id == user_id).delete(synchronize_session=False)
+    db.query(DmLog).filter(DmLog.user_id == user_id).delete(synchronize_session=False)
+
+    # 5. instagram_accounts, subscription (FK → users)
+    db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).delete(synchronize_session=False)
+    db.query(Subscription).filter(Subscription.user_id == user_id).delete(synchronize_session=False)
+
+    # 6. user
     db.delete(user)
     db.commit()
-    
     return None
