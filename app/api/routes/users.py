@@ -262,46 +262,39 @@ def get_subscription(
     # Get user's Instagram accounts with IGSIDs (for tracker lookup)
     user_accounts_with_igsid = [acc for acc in all_user_accounts if acc.igsid]
     
-    # Calculate rules count from global tracker (cumulative rules created per Instagram account)
-    # Only show counts when accounts are connected - if no accounts, show 0
-    from app.services.instagram_usage_tracker import get_or_create_tracker, check_and_reset_usage
+    # Calculate usage stats from actual data (DmLog, AutomationRule) for accurate display
+    # The tracker is used for enforcement, but for display we use actual counts from DmLog
+    from app.utils.plan_enforcement import get_billing_cycle_start
     rules_count = 0
     dms_display_count = 0
     
     # Only calculate usage if user has connected accounts
     if all_user_accounts:
-        # First, try to get counts from global tracker for accounts with IGSIDs
+        user_account_ids = [acc.id for acc in all_user_accounts]
+        
+        # Rules count: Use tracker for cumulative count (rules created, not deleted)
+        # This ensures we track cumulative rules created per Instagram account
+        from app.services.instagram_usage_tracker import get_or_create_tracker, check_and_reset_usage
         for account in user_accounts_with_igsid:
             if account.igsid:
                 tracker = get_or_create_tracker(account.igsid, db)
-                # Reset if needed (for Pro users)
                 check_and_reset_usage(tracker, user.plan_tier, db)
-                # Sum up cumulative counts from all user's Instagram accounts
                 rules_count += tracker.rules_created_count
-                dms_display_count += tracker.dms_sent_count
         
-        # Fallback: For accounts without IGSIDs OR if tracker shows 0, use DmLog/AutomationRule counts
-        # This handles cases where:
-        # 1. Accounts don't have IGSIDs set
-        # 2. Tracker exists but shows 0 (no DMs/rules tracked yet)
-        user_account_ids = [acc.id for acc in all_user_accounts]
-        
-        # Fallback for rules: Count active rules if tracker shows 0
+        # Fallback for rules: If no tracker data, count active rules
         if rules_count == 0 and user_account_ids:
             rules_count = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id.in_(user_account_ids),
                 AutomationRule.deleted_at.is_(None)
             ).count()
         
-        # Fallback for DMs: Use DmLog count if tracker shows 0
-        # This ensures we show DMs even if tracker hasn't been updated yet
-        if dms_display_count == 0 and user_account_ids:
-            from app.utils.plan_enforcement import get_billing_cycle_start
-            cycle_start = get_billing_cycle_start(user_id, db)
-            dms_display_count = db.query(DmLog).filter(
-                DmLog.instagram_account_id.in_(user_account_ids),
-                DmLog.sent_at >= cycle_start
-            ).count()
+        # DMs count: ALWAYS use DmLog filtered by billing cycle start for accurate display
+        # This ensures consistency with dashboard and shows actual DMs sent this billing cycle
+        cycle_start = get_billing_cycle_start(user_id, db)
+        dms_display_count = db.query(DmLog).filter(
+            DmLog.instagram_account_id.in_(user_account_ids),
+            DmLog.sent_at >= cycle_start
+        ).count()
     
     # Free plan users should show as "active" (they have an active free plan)
     # Paid users show their subscription status
@@ -314,7 +307,7 @@ def get_subscription(
         "usage": {
             "accounts": accounts_count,
             "rules": rules_count,  # Global tracker count (cumulative rules created)
-            "dms_sent_this_month": dms_display_count  # Global tracker count (cumulative DMs sent)
+            "dms_sent_this_month": dms_display_count  # DmLog count filtered by billing cycle start (actual DMs sent this month)
         }
     }
 
