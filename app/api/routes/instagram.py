@@ -2774,9 +2774,18 @@ async def execute_automation_action(
                 
                 # FIX ISSUE 1: Check if primary DM was already sent BEFORE any processing
                 # This prevents primary DM from being re-triggered when user sends random text
+                # BUT: If pre_dm_result_override has send_email_success=True, we need to send success message first
                 from app.services.pre_dm_handler import get_pre_dm_state
                 rule_state = get_pre_dm_state(str(sender_id), rule_id)
-                if rule_state.get("primary_dm_sent"):
+                should_send_email_success_first = (
+                    pre_dm_result_override and 
+                    isinstance(pre_dm_result_override, dict) and
+                    pre_dm_result_override.get("send_email_success", False) and
+                    not skip_growth_steps
+                )
+                print(f"🔍 [EMAIL SUCCESS CHECK] primary_dm_sent={rule_state.get('primary_dm_sent')}, should_send_email_success_first={should_send_email_success_first}, pre_dm_result_override={pre_dm_result_override}")
+                
+                if rule_state.get("primary_dm_sent") and not should_send_email_success_first:
                     # Primary DM was already sent - check if lead capture flow is also completed
                     is_lead_capture = rule.config.get("is_lead_capture", False)
                     # FIX ISSUE 1: Check for simple reply rules (not lead capture)
