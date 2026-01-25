@@ -7,7 +7,7 @@ import requests
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request, BackgroundTasks, Body
 from sqlalchemy.orm import Session
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app.models.instagram_account import InstagramAccount
 from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
@@ -2495,9 +2495,9 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         traceback.print_exc()
 
 async def execute_automation_action(
-    rule: AutomationRule, 
-    sender_id: str, 
-    account: InstagramAccount, 
+    rule: AutomationRule,
+    sender_id: str,
+    account: InstagramAccount,
     db: Session,
     trigger_type: str = None,
     comment_id: str = None,
@@ -2508,20 +2508,22 @@ async def execute_automation_action(
 ):
     """
     Execute the automation action defined in the rule.
-    
+
     Args:
         rule: The automation rule to execute
         sender_id: The user ID who triggered the action (recipient for DMs)
         account: The Instagram account to use
-        db: Database session
+        db: Database session (request-scoped; we use a task-scoped session inside for background tasks)
         trigger_type: The type of trigger (e.g., 'post_comment', 'new_message', 'live_comment')
         comment_id: The comment ID (required for post_comment triggers to use private_replies)
         message_id: The message or comment ID (used for deduplication cache cleanup)
     """
+    _rule_id = None
+    _db_task = None
     try:
         # Log function entry FIRST - before accessing any attributes
         print(f"🔍 [EXECUTE] ✅ FUNCTION CALLED - Sender: {sender_id}, Trigger: {trigger_type}")
-        
+
         # Check if rule and account are valid BEFORE accessing attributes
         if not rule:
             print(f"❌ [EXECUTE] Rule is None!")
@@ -2529,24 +2531,35 @@ async def execute_automation_action(
         if not account:
             print(f"❌ [EXECUTE] Account is None!")
             return
-        
-        # Now safe to access attributes (with error handling)
+
+        # Extract IDs before any await (request session still open). Background tasks receive
+        # rule/account/db from the request; once the request ends the session closes and
+        # those objects become detached. We create a task-scoped session and re-fetch.
+        try:
+            _rule_id = int(rule.id)
+            _account_id = int(account.id)
+        except Exception as e:
+            print(f"❌ [EXECUTE] Failed to get rule/account IDs: {e}")
+            return
+
+        _db_task = SessionLocal()
+        rule = _db_task.query(AutomationRule).filter(AutomationRule.id == _rule_id).first()
+        account = _db_task.query(InstagramAccount).filter(InstagramAccount.id == _account_id).first()
+        if not rule or not account:
+            print(f"❌ [EXECUTE] Rule or account not found after re-fetch (rule_id={_rule_id}, account_id={_account_id})")
+            _db_task.close()
+            return
+        db = _db_task
+
+        # Now safe to access attributes (rule/account are bound to task session)
         try:
             rule_id_val = rule.id
             action_type_val = rule.action_type
             print(f"🔍 [EXECUTE] Rule ID: {rule_id_val}, Action: {action_type_val}")
         except Exception as attr_error:
             print(f"❌ [EXECUTE] Error accessing rule attributes: {str(attr_error)}")
-            print(f"❌ [EXECUTE] Attempting to refresh rule from DB...")
-            try:
-                db.refresh(rule)
-                rule_id_val = rule.id
-                action_type_val = rule.action_type
-                print(f"🔍 [EXECUTE] Rule ID (after refresh): {rule_id_val}, Action: {action_type_val}")
-            except Exception as refresh_error:
-                print(f"❌ [EXECUTE] Failed to refresh rule: {str(refresh_error)}")
-                return
-        
+            return
+
         if rule.action_type == "send_dm":
             # IMPORTANT: Store all needed attributes from account and rule BEFORE any async operations
             # This prevents DetachedInstanceError when objects are passed across async boundaries
@@ -4281,16 +4294,21 @@ async def execute_automation_action(
             
     except Exception as e:
         print(f"❌ [EXECUTE] CRITICAL ERROR in execute_automation_action: {str(e)}")
-        print(f"❌ [EXECUTE] Rule ID: {rule.id if rule else 'None'}, Sender: {sender_id}")
+        print(f"❌ [EXECUTE] Rule ID: {_rule_id if _rule_id is not None else 'None'}, Sender: {sender_id}")
         import traceback
         traceback.print_exc()
         raise  # Re-raise to be caught by task wrapper
     finally:
+        # Close task-scoped DB session (avoids DetachedInstanceError when run as background task)
+        if _db_task is not None:
+            try:
+                _db_task.close()
+            except Exception as close_err:
+                print(f"⚠️ [EXECUTE] Failed to close task DB session: {close_err}")
         # Clean up processing cache after completion (whether success or failure)
-        # Use comment_id if available (for comments), otherwise message_id (for DMs)
         identifier = comment_id if comment_id else message_id
-        if identifier:
-            processing_key = f"{identifier}_{rule.id}"
+        if identifier and _rule_id is not None:
+            processing_key = f"{identifier}_{_rule_id}"
             _processing_rules.pop(processing_key, None)
             print(f"🧹 Cleaned up processing cache for {processing_key}")
 
