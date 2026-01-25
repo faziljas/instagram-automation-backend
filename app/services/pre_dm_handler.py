@@ -190,8 +190,20 @@ async def process_pre_dm_actions(
     config = rule.config
     state = get_pre_dm_state(sender_id, rule.id)
     
-    ask_to_follow = config.get("ask_to_follow", False)
-    ask_for_email = config.get("ask_for_email", False)
+    # NEW SIMPLIFIED MVP APPROACH: Single toggle "Pre-DM Engagement Message"
+    # If enable_pre_dm_engagement is set, use it to control both follow and email
+    # Otherwise, fall back to old behavior (backward compatibility)
+    enable_pre_dm_engagement = config.get("enable_pre_dm_engagement")
+    
+    if enable_pre_dm_engagement is not None:
+        # New simplified mode: single toggle controls both
+        ask_to_follow = enable_pre_dm_engagement
+        ask_for_email = enable_pre_dm_engagement
+    else:
+        # Backward compatibility: use old individual checkboxes
+        ask_to_follow = config.get("ask_to_follow", False)
+        ask_for_email = config.get("ask_for_email", False)
+    
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     

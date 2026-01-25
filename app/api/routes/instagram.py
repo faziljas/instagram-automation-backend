@@ -2415,8 +2415,20 @@ async def execute_automation_action(
             message_template = None
             
             # Check for pre-DM actions (Ask to Follow, Ask for Email)
-            ask_to_follow = rule.config.get("ask_to_follow", False)
-            ask_for_email = rule.config.get("ask_for_email", False)
+            # NEW SIMPLIFIED MVP APPROACH: Single toggle "Pre-DM Engagement Message"
+            # If enable_pre_dm_engagement is set, use it to control both follow and email
+            # Otherwise, fall back to old behavior (backward compatibility)
+            enable_pre_dm_engagement = rule.config.get("enable_pre_dm_engagement")
+            
+            if enable_pre_dm_engagement is not None:
+                # New simplified mode: single toggle controls both
+                ask_to_follow = enable_pre_dm_engagement
+                ask_for_email = enable_pre_dm_engagement
+            else:
+                # Backward compatibility: use old individual checkboxes
+                ask_to_follow = rule.config.get("ask_to_follow", False)
+                ask_for_email = rule.config.get("ask_for_email", False)
+            
             pre_dm_result = pre_dm_result_override  # Use override if provided
             
             print(f"🔍 [DEBUG] Pre-DM check: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, pre_dm_result={pre_dm_result}")
