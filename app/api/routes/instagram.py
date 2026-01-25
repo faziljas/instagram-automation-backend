@@ -1450,18 +1450,25 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"⭐ [VIP] User is already converted, skipping ALL regular rule processing (keyword, new_message, story) to prevent duplicate primary DMs")
             return
         
-        # FIX: Check for lead capture flow processing when user sends message after primary DM
-        # This handles cases where user provides email/lead info after primary DM was sent
-        from app.services.pre_dm_handler import get_pre_dm_state
-        from app.services.lead_capture import process_lead_capture_step
-        from app.utils.encryption import decrypt_credentials
-        from app.utils.instagram_api import send_dm as send_dm_api
-        
-        # Get all active rules for this account to check for lead capture
+        # Get all active rules for this account (used for primary-DM-complete check and lead capture)
         all_active_rules = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id == account.id,
             AutomationRule.is_active == True
         ).all()
+        
+        # FIX: After Simple Reply OR Lead Capture primary DM is complete, do NOT trigger ANY automation.
+        # User typing anything → handled by real user only.
+        from app.services.pre_dm_handler import get_pre_dm_state, sender_primary_dm_complete
+        if sender_primary_dm_complete(sender_id, account.id, all_active_rules, db):
+            log_print(f"🚫 [FIX] Primary DM already complete for this user (simple reply or lead capture). Skipping ALL automation.")
+            log_print(f"   💬 User messages will be handled by real user only — no system reply.")
+            return
+        
+        # FIX: Check for lead capture flow processing when user sends message after primary DM
+        # This handles cases where user provides email/lead info after primary DM was sent
+        from app.services.lead_capture import process_lead_capture_step
+        from app.utils.encryption import decrypt_credentials
+        from app.utils.instagram_api import send_dm as send_dm_api
         
         lead_capture_processed = False
         for rule in all_active_rules:
@@ -1480,8 +1487,9 @@ async def process_instagram_message(event: dict, db: Session):
                     ).first()
                     
                     if existing_lead:
-                        # Lead already captured - flow is complete, don't send any messages
-                        log_print(f"🚫 [FIX] Lead already captured for rule {rule.id}, ignoring random text - no messages will be sent")
+                        # FIX: Lead already captured - flow is complete, stop ALL automation
+                        log_print(f"🚫 [FIX] Lead already captured for rule {rule.id}, stopping automation completely")
+                        log_print(f"   💬 All further messages will be handled by real user, not automation")
                         lead_capture_processed = True  # Mark as processed to skip further rule processing
                         break
                     
@@ -1577,7 +1585,23 @@ async def process_instagram_message(event: dict, db: Session):
                 from app.services.pre_dm_handler import get_pre_dm_state
                 rule_state = get_pre_dm_state(sender_id, rule.id)
                 if rule_state.get("primary_dm_sent"):
+                    # FIX: For lead capture rules, also check if lead is already captured
+                    is_lead_capture = rule.config.get("is_lead_capture", False)
+                    if is_lead_capture:
+                        from app.models.captured_lead import CapturedLead
+                        from sqlalchemy import cast
+                        from sqlalchemy.dialects.postgresql import JSONB
+                        existing_lead = db.query(CapturedLead).filter(
+                            CapturedLead.automation_rule_id == rule.id,
+                            CapturedLead.instagram_account_id == account.id,
+                            cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
+                        ).first()
+                        if existing_lead:
+                            log_print(f"🚫 [FIX] Skipping story rule {rule.id} - lead already captured, automation stopped")
+                            log_print(f"   💬 Message will be handled by real user, not automation")
+                            continue
                     log_print(f"🚫 [FIX] Skipping story rule {rule.id} - primary DM already sent to {sender_id}")
+                    log_print(f"   💬 Message will be handled by real user, not automation")
                     continue
                 
                 log_print(f"🔄 [STORY DM] Processing story 'post_comment' rule: {rule.name or 'Story Rule'} → {rule.action_type}")
@@ -1653,7 +1677,23 @@ async def process_instagram_message(event: dict, db: Session):
                         from app.services.pre_dm_handler import get_pre_dm_state
                         rule_state = get_pre_dm_state(sender_id, rule.id)
                         if rule_state.get("primary_dm_sent"):
+                            # FIX: For lead capture rules, also check if lead is already captured
+                            is_lead_capture = rule.config.get("is_lead_capture", False)
+                            if is_lead_capture:
+                                from app.models.captured_lead import CapturedLead
+                                from sqlalchemy import cast
+                                from sqlalchemy.dialects.postgresql import JSONB
+                                existing_lead = db.query(CapturedLead).filter(
+                                    CapturedLead.automation_rule_id == rule.id,
+                                    CapturedLead.instagram_account_id == account.id,
+                                    cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
+                                ).first()
+                                if existing_lead:
+                                    log_print(f"🚫 [FIX] Skipping keyword rule {rule.id} - lead already captured, automation stopped")
+                                    log_print(f"   💬 Message will be handled by real user, not automation")
+                                    break  # Skip this keyword rule
                             log_print(f"🚫 [FIX] Skipping keyword rule {rule.id} - primary DM already sent to {sender_id}")
+                            log_print(f"   💬 Message will be handled by real user, not automation")
                             break  # Skip this keyword rule
                         
                         # Check if this rule is already being processed for this message
@@ -1709,7 +1749,23 @@ async def process_instagram_message(event: dict, db: Session):
                         from app.services.pre_dm_handler import get_pre_dm_state
                         rule_state = get_pre_dm_state(sender_id, rule.id)
                         if rule_state.get("primary_dm_sent"):
+                            # FIX: For lead capture rules, also check if lead is already captured
+                            is_lead_capture = rule.config.get("is_lead_capture", False)
+                            if is_lead_capture:
+                                from app.models.captured_lead import CapturedLead
+                                from sqlalchemy import cast
+                                from sqlalchemy.dialects.postgresql import JSONB
+                                existing_lead = db.query(CapturedLead).filter(
+                                    CapturedLead.automation_rule_id == rule.id,
+                                    CapturedLead.instagram_account_id == account.id,
+                                    cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
+                                ).first()
+                                if existing_lead:
+                                    log_print(f"🚫 [FIX] Skipping rule {rule.id} - lead already captured, automation stopped")
+                                    log_print(f"   💬 Message will be handled by real user, not automation")
+                                    continue
                             log_print(f"🚫 [FIX] Skipping rule {rule.id} - primary DM already sent to {sender_id}")
+                            log_print(f"   💬 Message will be handled by real user, not automation")
                             continue
                         
                         log_print(f"🔄 [DM] Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
@@ -2768,6 +2824,13 @@ async def execute_automation_action(
                 if rule_state.get("primary_dm_sent"):
                     # Primary DM was already sent - check if lead capture flow is also completed
                     is_lead_capture = rule.config.get("is_lead_capture", False)
+                    # FIX ISSUE 1: Check for simple reply rules (not lead capture)
+                    is_simple_reply = not is_lead_capture and (
+                        rule.config.get("simple_auto_reply_to_comments", False) or 
+                        rule.config.get("auto_reply_to_comments", False) or
+                        rule.config.get("message_template") or
+                        rule.config.get("message_variations")
+                    )
                     has_incoming_message = incoming_message and incoming_message.strip()
                     
                     # Check if lead was already captured for this sender and rule
@@ -2785,6 +2848,20 @@ async def execute_automation_action(
                             lead_already_captured = True
                             print(f"✅ Lead already captured for sender {sender_id} and rule {rule_id}")
                     
+                    # FIX: After primary DM completion, stop ALL automation - let real users handle it
+                    # For simple reply rules, if primary DM was sent, don't re-trigger
+                    if is_simple_reply:
+                        print(f"🚫 [FIX ISSUE 1] Simple reply rule {rule_id} - primary DM already sent, skipping to prevent re-triggering")
+                        print(f"   trigger_type={trigger_type}, has_incoming_message={has_incoming_message}")
+                        print(f"   💬 Message will be handled by real user, not automation")
+                        return  # Exit early - don't send any messages
+                    
+                    # FIX: For lead capture rules, if lead is already captured, stop automation completely
+                    if is_lead_capture and lead_already_captured:
+                        print(f"🚫 [FIX] Lead capture rule {rule_id} - lead already captured, stopping automation")
+                        print(f"   💬 All further messages will be handled by real user, not automation")
+                        return  # Exit early - don't send any messages
+                    
                     # Only allow processing if it's a lead capture flow AND there's an incoming message AND lead not yet captured
                     if is_lead_capture and has_incoming_message and not lead_already_captured:
                         print(f"📧 [LEAD CAPTURE] Primary DM already sent, but processing incoming message for lead capture flow")
@@ -2793,8 +2870,10 @@ async def execute_automation_action(
                         # Not a lead capture flow OR no incoming message OR lead already captured - skip completely
                         if lead_already_captured:
                             print(f"🚫 [FIX] Lead already captured for rule {rule_id}, skipping to prevent any messages")
+                            print(f"   💬 Message will be handled by real user, not automation")
                         else:
                             print(f"🚫 [FIX ISSUE 1] Primary DM already sent for rule {rule_id}, skipping to prevent re-triggering")
+                            print(f"   💬 Message will be handled by real user, not automation")
                         print(f"   trigger_type={trigger_type}, is_lead_capture={is_lead_capture}, has_incoming_message={has_incoming_message}, lead_already_captured={lead_already_captured}")
                         return  # Exit early - don't send any messages
                 

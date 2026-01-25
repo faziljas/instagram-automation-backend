@@ -82,6 +82,43 @@ def clear_pre_dm_state(sender_id: str, rule_id: int):
         del _pre_dm_states[key]
 
 
+def sender_primary_dm_complete(
+    sender_id: str,
+    account_id: int,
+    rules: list,
+    db: Session,
+) -> bool:
+    """
+    Return True if this sender has completed primary DM with ANY rule for this account.
+    When True, no automation should run for this user — all messages go to real user.
+
+    - Simple reply: primary_dm_sent for that rule → complete.
+    - Lead capture: primary_dm_sent AND lead captured for that rule → complete.
+    """
+    sender_id_str = str(sender_id)
+    for rule in rules or []:
+        state = get_pre_dm_state(sender_id_str, rule.id)
+        if not state.get("primary_dm_sent"):
+            continue
+        is_lead = (rule.config or {}).get("is_lead_capture", False)
+        if is_lead:
+            try:
+                from sqlalchemy import cast
+                from sqlalchemy.dialects.postgresql import JSONB
+                lead = db.query(CapturedLead).filter(
+                    CapturedLead.automation_rule_id == rule.id,
+                    CapturedLead.instagram_account_id == account_id,
+                    cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+                ).first()
+                if lead:
+                    return True
+            except Exception:
+                continue
+        else:
+            return True
+    return False
+
+
 def check_if_follow_confirmation(message_text: str) -> bool:
     """
     Check if a message text indicates the user is already following.
@@ -131,6 +168,10 @@ def check_if_follow_confirmation(message_text: str) -> bool:
         "im following now",
         "following already",
         "got it",
+        "followp",  # FIX ISSUE 3: Added "followp" variation
+        "follow p",  # FIX ISSUE 3: Added "follow p" variation
+        "follow up",  # Lead capture flow: user confirms via "follow up"
+        "followup",   # Lead capture flow: user confirms via "followup"
         "👍",
         "✅",
         "✓",
@@ -143,7 +184,7 @@ def check_if_follow_confirmation(message_text: str) -> bool:
             return True
     
     # Check if message is exactly these short confirmations (case-insensitive)
-    exact_matches = ["follow", "done", "ok", "yes", "followed", "y", "k", "sure", "yep", "yup", "yeah", "got it", "finished", "complete"]
+    exact_matches = ["follow", "done", "ok", "yes", "followed", "y", "k", "sure", "yep", "yup", "yeah", "got it", "finished", "complete", "followp", "follow p", "follow up", "followup"]  # Lead capture flow confirmations
     if message_lower in exact_matches:
         return True
     
@@ -502,7 +543,7 @@ async def process_pre_dm_actions(
                 update_automation_stats(rule.id, "lead_captured", db)
                 print(f"✅ Email saved to database: {email_address}")
                 
-                # Log EMAIL_COLLECTED analytics event
+                # FIX ISSUE 4: Log EMAIL_COLLECTED analytics event (ensure it's always logged)
                 try:
                     from app.utils.analytics import log_analytics_event_sync
                     from app.models.analytics_event import EventType
@@ -520,8 +561,9 @@ async def process_pre_dm_actions(
                             "captured_via": "pre_dm_email_request"
                         }
                     )
+                    print(f"✅ [FIX ISSUE 4] EMAIL_COLLECTED analytics event logged for email: {email_address}")
                 except Exception as analytics_err:
-                    print(f"⚠️ Failed to log EMAIL_COLLECTED event: {str(analytics_err)}")
+                    print(f"⚠️ [FIX ISSUE 4] Failed to log EMAIL_COLLECTED event: {str(analytics_err)}")
             except Exception as e:
                 print(f"⚠️ Error saving email: {str(e)}")
                 db.rollback()
