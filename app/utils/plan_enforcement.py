@@ -7,6 +7,12 @@ from app.models.dm_log import DmLog
 from app.models.automation_rule import AutomationRule
 from app.models.subscription import Subscription
 from app.core.plan_limits import get_plan_limit
+from app.services.instagram_usage_tracker import (
+    get_or_create_tracker,
+    check_and_reset_usage,
+    check_dm_limit as check_global_dm_limit,
+    increment_dm_count
+)
 
 
 def get_billing_cycle_start(user_id: int, db: Session) -> datetime:
@@ -141,6 +147,8 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
     If instagram_account_id is provided, checks usage for that specific account.
     Otherwise, checks total usage across all user's accounts.
     
+    Also checks persistent global usage tracker per Instagram account (IGSID) to prevent abuse.
+    
     Returns True if limit not reached, logs warning if at limit but doesn't raise exception.
     """
     user = db.query(User).filter(User.id == user_id).first()
@@ -158,6 +166,20 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
     # If checking for a specific account, use account-level tracking
     if instagram_account_id:
         dms_this_cycle = get_instagram_account_usage(instagram_account_id, cycle_start, db)
+        
+        # Also check persistent global tracker per Instagram account (IGSID)
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == instagram_account_id
+        ).first()
+        
+        if account and account.igsid:
+            tracker = get_or_create_tracker(account.igsid, db)
+            check_and_reset_usage(tracker, user.plan_tier, db)
+            
+            is_allowed, error_message = check_global_dm_limit(tracker, user.plan_tier)
+            if not is_allowed:
+                print(f"⚠️ Global DM limit reached for IGSID {account.igsid}: {error_message}")
+                return False
     else:
         # Count DMs sent in current billing cycle across all user's accounts
         dms_this_cycle = db.query(DmLog).filter(
@@ -185,6 +207,7 @@ def log_dm_sent(
 ):
     """
     Log a sent DM for tracking. Store username/igsid so usage survives account delete.
+    Also increments persistent global tracker per Instagram account (IGSID).
     """
     if instagram_username is None or instagram_igsid is None:
         acc = db.query(InstagramAccount).filter(
@@ -193,6 +216,8 @@ def log_dm_sent(
         if acc:
             instagram_username = instagram_username or acc.username
             instagram_igsid = instagram_igsid or acc.igsid
+    
+    # Log to DmLog (existing tracking)
     dm_log = DmLog(
         user_id=user_id,
         instagram_account_id=instagram_account_id,
@@ -204,6 +229,15 @@ def log_dm_sent(
     )
     db.add(dm_log)
     db.commit()
+    
+    # Increment persistent global tracker per Instagram account (IGSID)
+    if instagram_igsid:
+        try:
+            tracker = get_or_create_tracker(instagram_igsid, db)
+            increment_dm_count(tracker, db)
+        except Exception as e:
+            print(f"⚠️ Failed to increment global DM tracker: {str(e)}")
+            # Don't fail the whole operation if tracker update fails
 
 
 def get_remaining_dms(user_id: int, db: Session) -> int:

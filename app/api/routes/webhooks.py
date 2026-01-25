@@ -101,6 +101,25 @@ def handle_checkout_session_completed(session_data: dict, db: Session):
             db_subscription.billing_cycle_start_date = datetime.utcnow()
             print(f"✅ Set billing cycle start date for user {user_id}: {db_subscription.billing_cycle_start_date}")
         
+        # Reset global trackers for all user's Instagram accounts when upgrading to Pro
+        if plan_tier in ["pro", "enterprise"]:
+            from app.models.instagram_account import InstagramAccount
+            from app.services.instagram_usage_tracker import get_or_create_tracker, reset_tracker_for_pro_upgrade
+            
+            user_accounts = db.query(InstagramAccount).filter(
+                InstagramAccount.user_id == user.id,
+                InstagramAccount.igsid.isnot(None)
+            ).all()
+            
+            for account in user_accounts:
+                if account.igsid:
+                    try:
+                        tracker = get_or_create_tracker(account.igsid, db)
+                        reset_tracker_for_pro_upgrade(tracker, db)
+                        print(f"✅ Reset tracker for Pro upgrade - IGSID {account.igsid}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to reset tracker for IGSID {account.igsid}: {str(e)}")
+        
         db.commit()
         print(f"✅ User {user_id} upgraded to {plan_tier} plan")
         
@@ -149,6 +168,25 @@ def handle_subscription_created(subscription_data: dict, db: Session):
     if plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
         subscription.billing_cycle_start_date = datetime.utcnow()
         print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
+    
+    # Reset global trackers for all user's Instagram accounts when upgrading to Pro
+    if plan_tier in ["pro", "enterprise"]:
+        from app.models.instagram_account import InstagramAccount
+        from app.services.instagram_usage_tracker import get_or_create_tracker, reset_tracker_for_pro_upgrade
+        
+        user_accounts = db.query(InstagramAccount).filter(
+            InstagramAccount.user_id == user.id,
+            InstagramAccount.igsid.isnot(None)
+        ).all()
+        
+        for account in user_accounts:
+            if account.igsid:
+                try:
+                    tracker = get_or_create_tracker(account.igsid, db)
+                    reset_tracker_for_pro_upgrade(tracker, db)
+                    print(f"✅ Reset tracker for Pro upgrade - IGSID {account.igsid}")
+                except Exception as e:
+                    print(f"⚠️ Failed to reset tracker for IGSID {account.igsid}: {str(e)}")
 
     db.commit()
 
@@ -178,6 +216,25 @@ def handle_subscription_updated(subscription_data: dict, db: Session):
             if plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
                 subscription.billing_cycle_start_date = datetime.utcnow()
                 print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
+            
+            # Reset global trackers for all user's Instagram accounts when upgrading to Pro
+            if plan_tier in ["pro", "enterprise"]:
+                from app.models.instagram_account import InstagramAccount
+                from app.services.instagram_usage_tracker import get_or_create_tracker, reset_tracker_for_pro_upgrade
+                
+                user_accounts = db.query(InstagramAccount).filter(
+                    InstagramAccount.user_id == user.id,
+                    InstagramAccount.igsid.isnot(None)
+                ).all()
+                
+                for account in user_accounts:
+                    if account.igsid:
+                        try:
+                            tracker = get_or_create_tracker(account.igsid, db)
+                            reset_tracker_for_pro_upgrade(tracker, db)
+                            print(f"✅ Reset tracker for Pro upgrade - IGSID {account.igsid}")
+                        except Exception as e:
+                            print(f"⚠️ Failed to reset tracker for IGSID {account.igsid}: {str(e)}")
         elif status in ["canceled", "incomplete_expired", "past_due"]:
             user.plan_tier = "free"
             # Clear billing cycle start date when downgraded

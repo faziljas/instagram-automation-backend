@@ -239,6 +239,25 @@ async def verify_checkout_session(
             db_subscription.billing_cycle_start_date = datetime.utcnow()
             print(f"✅ Set billing cycle start date for user {user_id}: {db_subscription.billing_cycle_start_date}")
         
+        # Reset global trackers for all user's Instagram accounts when upgrading to Pro
+        if plan_tier in ["pro", "enterprise"]:
+            from app.models.instagram_account import InstagramAccount
+            from app.services.instagram_usage_tracker import get_or_create_tracker, reset_tracker_for_pro_upgrade
+            
+            user_accounts = db.query(InstagramAccount).filter(
+                InstagramAccount.user_id == user_id,
+                InstagramAccount.igsid.isnot(None)
+            ).all()
+            
+            for account in user_accounts:
+                if account.igsid:
+                    try:
+                        tracker = get_or_create_tracker(account.igsid, db)
+                        reset_tracker_for_pro_upgrade(tracker, db)
+                        print(f"✅ Reset tracker for Pro upgrade - IGSID {account.igsid}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to reset tracker for IGSID {account.igsid}: {str(e)}")
+        
         db.commit()
         db.refresh(user)
         db.refresh(db_subscription)

@@ -30,7 +30,7 @@ from app.db.session import engine
 from app.db.base import Base
 from sqlalchemy import text
 # Import all models to ensure they're registered with Base
-from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message, Conversation, InstagramAudience
+from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message, Conversation, InstagramAudience, InstagramGlobalTracker
 
 app = FastAPI(title="Instagram Automation SaaS")
 
@@ -105,6 +105,16 @@ async def startup_event():
         print("✅ instagram_accounts created_at migration completed", file=sys.stderr)
     except Exception as e:
         print(f"⚠️ instagram_accounts created_at migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
+    
+    # Run Instagram global tracker migration (for persistent usage tracking per IGSID)
+    try:
+        print("🔄 Running Instagram global tracker migration...", file=sys.stderr)
+        from add_instagram_global_tracker_migration import run_migration as run_global_tracker_migration
+        run_global_tracker_migration()
+        print("✅ Instagram global tracker migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Instagram global tracker migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
     
     # Try Alembic migrations (if Alembic is configured)

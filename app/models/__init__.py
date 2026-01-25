@@ -10,6 +10,7 @@ from app.models.analytics_event import AnalyticsEvent, EventType
 from app.models.message import Message
 from app.models.conversation import Conversation
 from app.models.instagram_audience import InstagramAudience
+from app.models.instagram_global_tracker import InstagramGlobalTracker
 
 __all__ = [
     "User",
@@ -24,5 +25,6 @@ __all__ = [
     "EventType",
     "Message",
     "Conversation",
-    "InstagramAudience"
+    "InstagramAudience",
+    "InstagramGlobalTracker"
 ]

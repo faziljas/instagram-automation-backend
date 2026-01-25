@@ -25,6 +25,13 @@ PLAN_LIMITS: Dict[str, Dict[str, int]] = {
     },
 }
 
+# Global usage tracking limits (per Instagram account, not per user)
+# These are used for persistent tracking to prevent free tier abuse
+FREE_DM_LIMIT = 50  # Lifetime limit for free tier
+PRO_DM_LIMIT = 5000  # Monthly limit for pro tier
+FREE_RULE_LIMIT = 5  # Lifetime limit for free tier (total rules created, not active)
+PRO_RULE_LIMIT = 100  # Monthly limit for pro tier (total rules created, not active)
+
 
 def get_plan_limit(plan_tier: str, limit_type: str) -> int:
     """Get the limit value for a specific plan and limit type."""

@@ -375,6 +375,11 @@ async def instagram_oauth_callback(
             db.commit()
             db.refresh(new_account)
             account_id = new_account.id
+            
+            # Create tracker for this IGSID (or get existing if account was previously connected)
+            from app.services.instagram_usage_tracker import get_or_create_tracker
+            if new_account.igsid:
+                get_or_create_tracker(new_account.igsid, db)
         
         print(f"✅ Account saved successfully! Redirecting to dashboard...")
         
@@ -533,6 +538,12 @@ def save_or_update_instagram_account(
         existing_account.page_id = page_with_instagram['page_id']
         existing_account.encrypted_page_token = encrypt_credentials(page_with_instagram['page_token'])
         db.commit()
+        
+        # Ensure tracker exists for this IGSID (preserves usage history)
+        from app.services.instagram_usage_tracker import get_or_create_tracker
+        if existing_account.igsid:
+            get_or_create_tracker(existing_account.igsid, db)
+        
         return existing_account
     else:
         # Create new account
@@ -548,6 +559,12 @@ def save_or_update_instagram_account(
         db.add(new_account)
         db.commit()
         db.refresh(new_account)
+        
+        # Create tracker for this IGSID (or get existing if account was previously connected)
+        from app.services.instagram_usage_tracker import get_or_create_tracker
+        if new_account.igsid:
+            get_or_create_tracker(new_account.igsid, db)
+        
         return new_account
 
 
@@ -992,6 +1009,11 @@ async def exchange_instagram_code(
         db.add(new_account)
         db.commit()
         db.refresh(new_account)
+        
+        # Create tracker for this IGSID (or get existing if account was previously connected)
+        from app.services.instagram_usage_tracker import get_or_create_tracker
+        if new_account.igsid:
+            get_or_create_tracker(new_account.igsid, db)
         
         print(f"✅ Instagram account {new_account.username} connected successfully for user {user_id}!")
         
