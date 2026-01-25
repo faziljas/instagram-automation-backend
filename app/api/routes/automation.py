@@ -9,12 +9,6 @@ from app.models.instagram_account import InstagramAccount
 from app.schemas.automation import AutomationRuleCreate, AutomationRuleUpdate, AutomationRuleResponse
 from app.utils.auth import verify_token
 from app.utils.plan_enforcement import check_rule_limit
-from app.services.instagram_usage_tracker import (
-    get_or_create_tracker,
-    check_and_reset_usage,
-    check_rule_limit as check_global_rule_limit,
-    increment_rule_count
-)
 from app.models.user import User
 
 router = APIRouter()
@@ -77,20 +71,8 @@ def create_automation_rule(
             detail="User not found"
         )
 
-    # Check rule limit at user level (existing check)
+    # Check rule limit at user level (user-based tracking for MVP)
     check_rule_limit(user_id, db)
-
-    # Check persistent global usage limit per Instagram account (IGSID)
-    if ig_account.igsid:
-        tracker = get_or_create_tracker(ig_account.igsid, db)
-        check_and_reset_usage(tracker, user.plan_tier, db)
-        
-        is_allowed, error_message = check_global_rule_limit(tracker, user.plan_tier)
-        if not is_allowed:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=error_message
-            )
 
     # Create automation rule
     rule = AutomationRule(
@@ -105,11 +87,6 @@ def create_automation_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-
-    # Increment global tracker count (after successful creation)
-    if ig_account.igsid:
-        tracker = get_or_create_tracker(ig_account.igsid, db)
-        increment_rule_count(tracker, db)
 
     return rule
 
