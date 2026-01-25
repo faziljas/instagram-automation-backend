@@ -252,7 +252,7 @@ async def verify_checkout_session(
             for account in user_accounts:
                 if account.igsid:
                     try:
-                        tracker = get_or_create_tracker(account.igsid, db)
+                        tracker = get_or_create_tracker(user_id, account.igsid, db)
                         reset_tracker_for_pro_upgrade(tracker, db)
                         print(f"✅ Reset tracker for Pro upgrade - IGSID {account.igsid}")
                     except Exception as e:

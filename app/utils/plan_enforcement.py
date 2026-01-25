@@ -109,7 +109,7 @@ def check_rule_limit(user_id: int, db: Session, instagram_account_id: int = None
         
         # Use persistent global tracker for this Instagram account (IGSID)
         if account.igsid:
-            tracker = get_or_create_tracker(account.igsid, db)
+            tracker = get_or_create_tracker(user_id, account.igsid, db)
             check_and_reset_usage(tracker, user.plan_tier, db)
             
             # Check global tracker limit (persistent across disconnect/reconnect)
@@ -148,7 +148,7 @@ def check_rule_limit(user_id: int, db: Session, instagram_account_id: int = None
         
         for account in user_accounts:
             if account.igsid:
-                tracker = get_or_create_tracker(account.igsid, db)
+                tracker = get_or_create_tracker(user_id, account.igsid, db)
                 check_and_reset_usage(tracker, user.plan_tier, db)
                 
                 if tracker.rules_created_count > max_rules_created:
@@ -236,7 +236,7 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
         ).first()
         
         if account and account.igsid:
-            tracker = get_or_create_tracker(account.igsid, db)
+            tracker = get_or_create_tracker(user_id, account.igsid, db)
             check_and_reset_usage(tracker, user.plan_tier, db)
             
             # Check global tracker limit (lifetime for free tier, monthly for pro/enterprise)
@@ -306,7 +306,7 @@ def log_dm_sent(
     # Increment persistent global tracker per Instagram account (IGSID)
     if instagram_igsid:
         try:
-            tracker = get_or_create_tracker(instagram_igsid, db)
+            tracker = get_or_create_tracker(user_id, instagram_igsid, db)
             increment_dm_count(tracker, db)
         except Exception as e:
             print(f"⚠️ Failed to increment global DM tracker: {str(e)}")

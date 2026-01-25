@@ -97,10 +97,10 @@ def create_automation_rule(
     # This ensures limits persist across disconnect/reconnect
     if ig_account.igsid:
         try:
-            tracker = get_or_create_tracker(ig_account.igsid, db)
+            tracker = get_or_create_tracker(user_id, ig_account.igsid, db)
             check_and_reset_usage(tracker, user.plan_tier, db)
             increment_rule_count(tracker, db)
-            print(f"✅ Incremented rule count for IGSID {ig_account.igsid}: {tracker.rules_created_count}")
+            print(f"✅ Incremented rule count for user {user_id}, IGSID {ig_account.igsid}: {tracker.rules_created_count}")
         except Exception as e:
             print(f"⚠️ Failed to increment global rule tracker: {str(e)}")
             # Don't fail the whole operation if tracker update fails

@@ -9,20 +9,24 @@ from app.models.user import User
 from app.core.plan_limits import FREE_DM_LIMIT, PRO_DM_LIMIT, FREE_RULE_LIMIT, PRO_RULE_LIMIT
 
 
-def get_or_create_tracker(instagram_id: str, db: Session) -> InstagramGlobalTracker:
+def get_or_create_tracker(user_id: int, instagram_id: str, db: Session) -> InstagramGlobalTracker:
     """
-    Get or create an InstagramGlobalTracker for the given IGSID.
+    Get or create an InstagramGlobalTracker for the given (user_id, IGSID) combination.
     If tracker exists, return it. If not, create a new one.
     """
     if not instagram_id:
         raise ValueError("instagram_id (IGSID) is required")
+    if not user_id:
+        raise ValueError("user_id is required")
     
     tracker = db.query(InstagramGlobalTracker).filter(
+        InstagramGlobalTracker.user_id == user_id,
         InstagramGlobalTracker.instagram_id == instagram_id
     ).first()
     
     if not tracker:
         tracker = InstagramGlobalTracker(
+            user_id=user_id,
             instagram_id=instagram_id,
             dms_sent_count=0,
             rules_created_count=0,
@@ -31,7 +35,7 @@ def get_or_create_tracker(instagram_id: str, db: Session) -> InstagramGlobalTrac
         db.add(tracker)
         db.commit()
         db.refresh(tracker)
-        print(f"✅ Created new InstagramGlobalTracker for IGSID: {instagram_id}")
+        print(f"✅ Created new InstagramGlobalTracker for user {user_id}, IGSID: {instagram_id}")
     
     return tracker
 
