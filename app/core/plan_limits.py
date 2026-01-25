@@ -1,10 +1,10 @@
 from typing import Dict
 
 # Plan limits configuration
-# Free tier: 2 Accounts, 3 Rules, 50 DMs/month
+# Free tier: 1 Account, 3 Rules, 50 DMs/month
 PLAN_LIMITS: Dict[str, Dict[str, int]] = {
     "free": {
-        "max_accounts": 2,
+        "max_accounts": 1,
         "max_dms_per_month": 50,  # Monthly limit, not daily
         "max_automation_rules": 3,
     },
