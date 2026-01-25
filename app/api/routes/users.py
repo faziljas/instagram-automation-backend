@@ -14,6 +14,7 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.follower import Follower
 from app.models.instagram_audience import InstagramAudience
+from app.models.instagram_global_tracker import InstagramGlobalTracker
 from app.schemas.auth import UserResponse, DashboardStatsResponse, SubscriptionResponse, UserUpdate, PasswordChange
 from app.utils.auth import hash_password, verify_password
 from app.api.routes.instagram import get_current_user_id
@@ -406,6 +407,9 @@ def delete_user_account(
     db.query(CapturedLead).filter(CapturedLead.user_id == user_id).delete(synchronize_session=False)
     db.query(InstagramAudience).filter(InstagramAudience.user_id == user_id).delete(synchronize_session=False)
     db.query(DmLog).filter(DmLog.user_id == user_id).delete(synchronize_session=False)
+    
+    # 4.5. Delete InstagramGlobalTracker records (FK → users)
+    db.query(InstagramGlobalTracker).filter(InstagramGlobalTracker.user_id == user_id).delete(synchronize_session=False)
 
     # 5. instagram_accounts, subscription (FK → users)
     db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).delete(synchronize_session=False)
