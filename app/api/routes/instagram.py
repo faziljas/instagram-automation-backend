@@ -3860,8 +3860,20 @@ async def execute_automation_action(
                         "Hey! I'm waiting for you to confirm that you're following me. Please type 'done', 'followed', or 'I'm following' to continue! 😊")
                     print(f"💬 [FIX ISSUE 2] Sending follow reminder to {sender_id}")
                     
+                    # Get access token first
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm as send_dm_api
                     try:
-                        send_dm_api(sender_id, follow_reminder_msg, access_token, account_page_id, buttons=None, quick_replies=None)
+                        if account.encrypted_page_token:
+                            access_token_reminder = decrypt_credentials(account.encrypted_page_token)
+                            account_page_id_reminder = account.page_id
+                        elif account.encrypted_credentials:
+                            access_token_reminder = decrypt_credentials(account.encrypted_credentials)
+                            account_page_id_reminder = account.page_id
+                        else:
+                            raise Exception("No access token found")
+                        
+                        send_dm_api(sender_id, follow_reminder_msg, access_token_reminder, account_page_id_reminder, buttons=None, quick_replies=None)
                         print(f"✅ Follow reminder sent successfully")
                         
                         # Log DM sent
