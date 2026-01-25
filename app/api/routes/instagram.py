@@ -3713,20 +3713,29 @@ async def execute_automation_action(
                         print(f"   Trigger type: {trigger_type}, Comment ID: {comment_id}")
                         print(f"   Recipient (commenter): {sender_id}")
                         
+                        # Check if conversation was already opened (email or follow request was already sent)
+                        # If so, don't send "Hi! 👋" opener again
+                        from app.services.pre_dm_handler import get_pre_dm_state
+                        state = get_pre_dm_state(str(sender_id), rule.id)
+                        conversation_already_opened = state.get("email_request_sent", False) or state.get("follow_request_sent", False)
+                        
                         # For comment-based triggers, use private reply to open conversation
                         # Then send the actual message with buttons as regular DM
                         from app.utils.instagram_api import send_private_reply
                         
                         if buttons or quick_replies:
-                            # If buttons/quick replies needed, send simple opener via private reply
-                            # then send full message with buttons as regular DM
-                            print(f"💬 Sending simple opener via private reply to open conversation")
-                            opener_message = "Hi! 👋"
-                            send_private_reply(comment_id, opener_message, access_token, page_id_for_dm)
-                            print(f"✅ Conversation opened via private reply")
-                            
-                            # Small delay to ensure private reply is processed
-                            await asyncio.sleep(1)
+                            # If buttons/quick replies needed, check if conversation was already opened
+                            if not conversation_already_opened:
+                                # Conversation not opened yet - send simple opener via private reply
+                                print(f"💬 Sending simple opener via private reply to open conversation")
+                                opener_message = "Hi! 👋"
+                                send_private_reply(comment_id, opener_message, access_token, page_id_for_dm)
+                                print(f"✅ Conversation opened via private reply")
+                                
+                                # Small delay to ensure private reply is processed
+                                await asyncio.sleep(1)
+                            else:
+                                print(f"⏭️ Conversation already opened (email/follow request was sent), skipping opener")
                             
                             # Capture timestamp RIGHT BEFORE sending actual message to match Instagram's timing exactly
                             # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display

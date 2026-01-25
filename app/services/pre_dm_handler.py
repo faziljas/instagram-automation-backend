@@ -248,7 +248,25 @@ async def process_pre_dm_actions(
     # skip the full pre-DM sequence when the same user triggers a Story (different rule).
     # CRITICAL: Only skip to primary DM if THIS FLOW was completed, not just if user already follows/has email.
     # CRITICAL FIX: When ask_to_follow is False, follow is considered completed (no follow step needed)
+    # But if ask_to_follow was False before and now True, we need to check if user already follows
     follow_completed_for_flow = not ask_to_follow or state.get("follow_confirmed", False)
+    
+    # SPECIAL CASE: If email was skipped/completed but follow was never asked (ask_to_follow was False before)
+    # and now follow is enabled, check if user already follows (VIP user)
+    # If VIP user already follows, mark follow as confirmed and proceed to primary DM
+    # If not VIP, ask for follow
+    if ask_to_follow and not state.get("follow_confirmed", False) and not state.get("follow_request_sent", False):
+        # Follow is now enabled but was never asked before
+        # Check if user already follows (VIP user)
+        if already_following:
+            # VIP user already follows - mark as confirmed and proceed
+            print(f"⭐ [VIP] User already follows, marking follow as confirmed (follow was added after email was skipped)")
+            update_pre_dm_state(sender_id, rule.id, {
+                "follow_request_sent": True,
+                "follow_confirmed": True
+            })
+            follow_completed_for_flow = True
+    
     # Email is completed if: not asking for email, email received, OR email was skipped
     email_completed_for_flow = not ask_for_email or state.get("email_received", False) or state.get("email_skipped", False)
     flow_has_completed = follow_completed_for_flow and email_completed_for_flow
