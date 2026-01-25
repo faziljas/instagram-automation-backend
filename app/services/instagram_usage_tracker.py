@@ -136,13 +136,13 @@ def increment_dm_count(tracker: InstagramGlobalTracker, db: Session) -> None:
     print(f"✅ Incremented DM count for IGSID {tracker.instagram_id}: {tracker.dms_sent_count}")
 
 
-def reset_tracker_for_pro_upgrade(tracker: InstagramGlobalTracker, db: Session) -> None:
+def reset_tracker_for_new_user(tracker: InstagramGlobalTracker, db: Session) -> None:
     """
-    Reset tracker counts immediately when user upgrades to Pro.
-    This gives them a fresh start upon payment.
+    Reset tracker counts when a new user connects a previously used Instagram account.
+    This ensures new users get a fresh start even if the Instagram account was used before.
     """
     tracker.dms_sent_count = 0
     tracker.rules_created_count = 0
     tracker.last_reset_date = datetime.utcnow()
     db.commit()
-    print(f"✅ Reset tracker for Pro upgrade - IGSID {tracker.instagram_id}")
+    print(f"✅ Reset tracker for new user connection - IGSID {tracker.instagram_id}")

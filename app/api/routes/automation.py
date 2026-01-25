@@ -10,6 +10,11 @@ from app.schemas.automation import AutomationRuleCreate, AutomationRuleUpdate, A
 from app.utils.auth import verify_token
 from app.utils.plan_enforcement import check_rule_limit
 from app.models.user import User
+from app.services.instagram_usage_tracker import (
+    get_or_create_tracker,
+    increment_rule_count,
+    check_and_reset_usage
+)
 
 router = APIRouter()
 
@@ -72,7 +77,7 @@ def create_automation_rule(
         )
 
     # Check rule limit at user level (user-based tracking for MVP)
-    check_rule_limit(user_id, db)
+    check_rule_limit(user_id, db, instagram_account_id=rule_data.instagram_account_id)
 
     # Create automation rule
     rule = AutomationRule(
@@ -87,6 +92,18 @@ def create_automation_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
+
+    # Increment persistent global tracker for this Instagram account (IGSID)
+    # This ensures limits persist across disconnect/reconnect
+    if ig_account.igsid:
+        try:
+            tracker = get_or_create_tracker(ig_account.igsid, db)
+            check_and_reset_usage(tracker, user.plan_tier, db)
+            increment_rule_count(tracker, db)
+            print(f"✅ Incremented rule count for IGSID {ig_account.igsid}: {tracker.rules_created_count}")
+        except Exception as e:
+            print(f"⚠️ Failed to increment global rule tracker: {str(e)}")
+            # Don't fail the whole operation if tracker update fails
 
     return rule
 

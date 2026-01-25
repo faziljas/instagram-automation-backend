@@ -11,6 +11,7 @@ from app.services.instagram_usage_tracker import (
     get_or_create_tracker,
     check_and_reset_usage,
     check_dm_limit as check_global_dm_limit,
+    check_rule_limit as check_global_rule_limit,
     increment_dm_count
 )
 
@@ -73,9 +74,15 @@ def check_account_limit(user_id: int, db: Session) -> bool:
     return True
 
 
-def check_rule_limit(user_id: int, db: Session) -> bool:
+def check_rule_limit(user_id: int, db: Session, instagram_account_id: int = None) -> bool:
     """
     Check if user can create another automation rule based on their plan.
+    Uses persistent InstagramGlobalTracker to track total rules created (even if deleted).
+    This ensures limits persist across disconnect/reconnect.
+    
+    For Free tier: Checks lifetime limit (total rules ever created for this Instagram account)
+    For Pro/Enterprise: Checks monthly limit (resets every 30 days)
+    
     Raises HTTPException if limit exceeded.
     """
     user = db.query(User).filter(User.id == user_id).first()
@@ -87,23 +94,76 @@ def check_rule_limit(user_id: int, db: Session) -> bool:
 
     max_rules = get_plan_limit(user.plan_tier, "max_automation_rules")
     
-    # Get user's Instagram account IDs
-    user_account_ids = [acc.id for acc in db.query(InstagramAccount.id).filter(
-        InstagramAccount.user_id == user_id
-    ).all()]
-    
-    current_rules = 0
-    if user_account_ids:
-        current_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id.in_(user_account_ids),
-            AutomationRule.deleted_at.is_(None)
-        ).count()
-
-    if current_rules >= max_rules:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Rule limit reached. Your {user.plan_tier} plan allows {max_rules} automation rule(s). Upgrade to add more."
-        )
+    # If instagram_account_id is provided, check limit for that specific account
+    if instagram_account_id:
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == instagram_account_id,
+            InstagramAccount.user_id == user_id
+        ).first()
+        
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Instagram account not found"
+            )
+        
+        # Use persistent global tracker for this Instagram account (IGSID)
+        if account.igsid:
+            tracker = get_or_create_tracker(account.igsid, db)
+            check_and_reset_usage(tracker, user.plan_tier, db)
+            
+            # Check global tracker limit (persistent across disconnect/reconnect)
+            is_allowed, error_message = check_global_rule_limit(tracker, user.plan_tier)
+            if not is_allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=error_message
+                )
+        else:
+            # Fallback: Check active rules if IGSID not available
+            current_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id == instagram_account_id,
+                AutomationRule.deleted_at.is_(None)
+            ).count()
+            
+            if current_rules >= max_rules:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Rule limit reached. Your {user.plan_tier} plan allows {max_rules} automation rule(s). Upgrade to add more."
+                )
+    else:
+        # Check limit across all user's Instagram accounts
+        # Get all user's Instagram account IGSIDs
+        user_accounts = db.query(InstagramAccount).filter(
+            InstagramAccount.user_id == user_id
+        ).all()
+        
+        if not user_accounts:
+            # No accounts yet, allow first rule creation
+            return True
+        
+        # Check each account's tracker and find the one with highest rule count
+        max_rules_created = 0
+        limiting_account = None
+        
+        for account in user_accounts:
+            if account.igsid:
+                tracker = get_or_create_tracker(account.igsid, db)
+                check_and_reset_usage(tracker, user.plan_tier, db)
+                
+                if tracker.rules_created_count > max_rules_created:
+                    max_rules_created = tracker.rules_created_count
+                    limiting_account = account
+        
+        # Check if any account has reached the limit
+        if max_rules_created >= max_rules:
+            account_name = limiting_account.username if limiting_account else "your account"
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Rule limit reached. Your {user.plan_tier} plan allows {max_rules} automation rule(s). "
+                       f"The Instagram account @{account_name} has already created {max_rules_created} rule(s). "
+                       f"Upgrade to add more."
+            )
 
     return True
 
@@ -170,21 +230,28 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
     if instagram_account_id:
         dms_this_cycle = get_instagram_account_usage(instagram_account_id, cycle_start, db, user_id=user_id)
         
-        # For MVP: Only check global tracker for Pro/Enterprise (not Free tier)
-        # Free tier uses per-user per-Instagram monthly tracking only
-        # Global tracker lifetime limits can block legitimate users who share Instagram accounts
-        if user.plan_tier in ["pro", "enterprise"]:
-            account = db.query(InstagramAccount).filter(
-                InstagramAccount.id == instagram_account_id
-            ).first()
+        # Check persistent global tracker for ALL tiers to ensure limits persist across disconnect/reconnect
+        account = db.query(InstagramAccount).filter(
+            InstagramAccount.id == instagram_account_id
+        ).first()
+        
+        if account and account.igsid:
+            tracker = get_or_create_tracker(account.igsid, db)
+            check_and_reset_usage(tracker, user.plan_tier, db)
             
-            if account and account.igsid:
-                tracker = get_or_create_tracker(account.igsid, db)
-                check_and_reset_usage(tracker, user.plan_tier, db)
-                
-                is_allowed, error_message = check_global_dm_limit(tracker, user.plan_tier)
-                if not is_allowed:
-                    print(f"⚠️ Global DM limit reached for IGSID {account.igsid}: {error_message}")
+            # Check global tracker limit (lifetime for free tier, monthly for pro/enterprise)
+            is_allowed, error_message = check_global_dm_limit(tracker, user.plan_tier)
+            if not is_allowed:
+                print(f"⚠️ Global DM limit reached for IGSID {account.igsid}: {error_message}")
+                return False
+            
+            # For Free tier: Global tracker enforces lifetime limit (50 DMs total, never resets)
+            # For Pro/Enterprise: Global tracker enforces monthly limit (resets every 30 days)
+            # No need to check monthly limit for free tier since it's lifetime
+            if user.plan_tier in ["pro", "enterprise"]:
+                # For Pro/Enterprise, also check monthly limit as secondary check
+                if dms_this_cycle >= max_dms:
+                    print(f"⚠️ Monthly DM limit reached for user {user_id}: {dms_this_cycle}/{max_dms} DMs sent in current cycle")
                     return False
     else:
         # Count DMs sent in current billing cycle across all user's accounts
