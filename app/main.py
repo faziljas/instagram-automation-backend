@@ -117,6 +117,16 @@ async def startup_event():
         print(f"⚠️ Instagram global tracker migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
     
+    # Run automation_rules account_id nullable migration (allows rules to persist across disconnect/reconnect)
+    try:
+        print("🔄 Running automation_rules account_id nullable migration...", file=sys.stderr)
+        from make_automation_rules_account_id_nullable_migration import run_migration as run_account_id_nullable_migration
+        run_account_id_nullable_migration()
+        print("✅ automation_rules account_id nullable migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ automation_rules account_id nullable migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
+    
     # Try Alembic migrations (if Alembic is configured)
     try:
         import subprocess
