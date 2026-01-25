@@ -568,6 +568,21 @@ async def process_instagram_message(event: dict, db: Session):
                             send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                             log_print(f"✅ Email request sent after 'I'm following' button click")
                             
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=ask_for_email_message,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None)
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                            
                             # Update state to mark that we're now waiting for email
                             update_pre_dm_state(str(sender_id), rule.id, {
                                 "email_request_sent": True,
@@ -654,6 +669,21 @@ async def process_instagram_message(event: dict, db: Session):
                         # Send reminder with profile URL
                         send_dm(sender_id, reminder_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                         log_print(f"✅ Profile visit reminder sent")
+                        
+                        # Log DM sent (tracks in DmLog and increments global tracker)
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(
+                                user_id=account.user_id,
+                                instagram_account_id=account.id,
+                                recipient_username=str(sender_id),
+                                message=reminder_message,
+                                db=db,
+                                instagram_username=account.username,
+                                instagram_igsid=getattr(account, "igsid", None)
+                            )
+                        except Exception as log_err:
+                            log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
                     except Exception as e:
                         log_print(f"❌ Failed to send profile visit reminder: {str(e)}", "ERROR")
                     
@@ -763,6 +793,21 @@ async def process_instagram_message(event: dict, db: Session):
                             # Send email request as plain text (no buttons)
                             send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                             log_print(f"✅ Email request sent after Follow Me button click")
+                            
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=ask_for_email_message,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None)
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
                             
                             # Update state to mark that we're now waiting for email
                             update_pre_dm_state(str(sender_id), rule.id, {
@@ -926,6 +971,21 @@ async def process_instagram_message(event: dict, db: Session):
                                 sent_email_request = True
                                 processed_rules_count += 1
                                 
+                                # Log DM sent (tracks in DmLog and increments global tracker)
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=email_message,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None)
+                                    )
+                                except Exception as log_err:
+                                    log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                                
                             except Exception as e:
                                 log_print(f"❌ Failed to send email request: {str(e)}", "ERROR")
                             
@@ -1002,6 +1062,21 @@ async def process_instagram_message(event: dict, db: Session):
                                 sent_email_request = True
                                 processed_rules_count += 1
                                 
+                                # Log DM sent (tracks in DmLog and increments global tracker)
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=email_message,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None)
+                                    )
+                                except Exception as log_err:
+                                    log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                                
                             except Exception as e:
                                 log_print(f"❌ Failed to send email request: {str(e)}", "ERROR")
                             
@@ -1074,6 +1149,21 @@ async def process_instagram_message(event: dict, db: Session):
                                 log_print(f"✅ Retry message sent, waiting for valid email")
                                 sent_retry_message = True
                                 processed_rules_count += 1
+                                
+                                # Log DM sent (tracks in DmLog and increments global tracker)
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=retry_msg,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None)
+                                    )
+                                except Exception as log_err:
+                                    log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
                                 
                             except Exception as e:
                                 log_print(f"❌ Failed to send retry message: {str(e)}", "ERROR")
@@ -1592,6 +1682,21 @@ async def process_postback_event(event: dict, db: Session):
                             send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                             print(f"✅ Email request sent after 'I'm following' button click")
                             
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=ask_for_email_message,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None)
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
+                            
                             update_pre_dm_state(str(sender_id), rule.id, {
                                 "email_request_sent": True,
                                 "step": "email",
@@ -1675,6 +1780,21 @@ async def process_postback_event(event: dict, db: Session):
                         
                         send_dm(sender_id, reminder_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
                         print(f"✅ Profile visit reminder sent")
+                        
+                        # Log DM sent (tracks in DmLog and increments global tracker)
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(
+                                user_id=account.user_id,
+                                instagram_account_id=account.id,
+                                recipient_username=str(sender_id),
+                                message=reminder_message,
+                                db=db,
+                                instagram_username=account.username,
+                                instagram_igsid=getattr(account, "igsid", None)
+                            )
+                        except Exception as log_err:
+                            print(f"⚠️ Failed to log DM: {str(log_err)}")
                     except Exception as e:
                         print(f"❌ Failed to send profile visit reminder: {str(e)}")
                     
@@ -2586,6 +2706,21 @@ async def execute_automation_action(
                                     send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=None)
                                     print(f"✅ Follow request sent with 'Visit Profile' URL button (card format - enables navigation)")
                                     
+                                    # Log DM sent (tracks in DmLog and increments global tracker)
+                                    try:
+                                        from app.utils.plan_enforcement import log_dm_sent
+                                        log_dm_sent(
+                                            user_id=account.user_id,
+                                            instagram_account_id=account.id,
+                                            recipient_username=str(sender_id),
+                                            message=follow_message_with_instructions,
+                                            db=db,
+                                            instagram_username=account.username,
+                                            instagram_igsid=getattr(account, "igsid", None)
+                                        )
+                                    except Exception as log_err:
+                                        print(f"⚠️ Failed to log DM: {str(log_err)}")
+                                    
                                     # Small delay between messages
                                     await asyncio.sleep(1)
                                     
@@ -2593,6 +2728,21 @@ async def execute_automation_action(
                                     quick_reply_message = "Click one of the options below:"
                                     send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
                                     print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
+                                    
+                                    # Log second DM sent
+                                    try:
+                                        from app.utils.plan_enforcement import log_dm_sent
+                                        log_dm_sent(
+                                            user_id=account.user_id,
+                                            instagram_account_id=account.id,
+                                            recipient_username=str(sender_id),
+                                            message=quick_reply_message,
+                                            db=db,
+                                            instagram_username=account.username,
+                                            instagram_igsid=getattr(account, "igsid", None)
+                                        )
+                                    except Exception as log_err:
+                                        print(f"⚠️ Failed to log DM: {str(log_err)}")
                                     
                                     # Send public comment reply IMMEDIATELY after follow-up message (not waiting for email)
                                     if comment_id:
@@ -2646,6 +2796,21 @@ async def execute_automation_action(
                                 send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=None)
                                 print(f"✅ Follow request sent with 'Visit Profile' URL button (card format - enables navigation)")
                                 
+                                # Log DM sent (tracks in DmLog and increments global tracker)
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=follow_message_with_instructions,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None)
+                                    )
+                                except Exception as log_err:
+                                    print(f"⚠️ Failed to log DM: {str(log_err)}")
+                                
                                 # Small delay between messages
                                 await asyncio.sleep(1)
                                 
@@ -2653,6 +2818,21 @@ async def execute_automation_action(
                                 quick_reply_message = "Click one of the options below:"
                                 send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
                                 print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
+                                
+                                # Log second DM sent
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=quick_reply_message,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None)
+                                    )
+                                except Exception as log_err:
+                                    print(f"⚠️ Failed to log DM: {str(log_err)}")
                                 
                                 # Send public comment reply IMMEDIATELY after follow-up message (not waiting for email)
                                 if comment_id:
@@ -2847,6 +3027,21 @@ async def execute_automation_action(
                             # Send email request with quick_replies via regular DM
                             send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                             print(f"✅ Email request sent via private reply + DM with quick_replies (comment trigger, follow enabled)")
+                            
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=message_template,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
                         else:
                             # Email-only flow: Send "Hi! 👋" as first message via private_reply (opens conversation)
                             # Then send email question with quick_replies via regular DM
@@ -2855,10 +3050,40 @@ async def execute_automation_action(
                             # Send email question with quick_replies via regular DM
                             send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                             print(f"✅ Email request sent: Hi👋 first, then email question with quick_replies (comment trigger, email-only)")
+                            
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=message_template,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
                     else:
                         # For DM triggers, send directly with quick_replies
                         send_dm_api(str(sender_id), message_template, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                         print(f"✅ Email request sent via DM with quick_replies")
+                        
+                        # Log DM sent (tracks in DmLog and increments global tracker)
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=message_template,
+                                db=db,
+                                instagram_username=username,
+                                instagram_igsid=account_igsid
+                            )
+                        except Exception as log_err:
+                            print(f"⚠️ Failed to log DM: {str(log_err)}")
                     
                     # CRITICAL FIX: Don't schedule delayed primary DM for email flows
                     # Email flows should wait for user interaction (button click or email input)
@@ -2990,6 +3215,21 @@ async def execute_automation_action(
                         else:
                             send_dm_api(str(sender_id), follow_message_with_instructions, access_token, page_id_for_dm)
                             print(f"✅ Follow request resent via DM")
+                            
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=follow_message_with_instructions,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
                         
                         # Don't continue to primary DM - wait for user response
                         return
@@ -3109,6 +3349,22 @@ async def execute_automation_action(
                         await asyncio.sleep(1)
                         send_dm_api(str(sender_id), ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                         print(f"✅ Email question resent as reminder via private reply + DM (comment trigger)")
+                        
+                        # Log DM sent (tracks in DmLog and increments global tracker)
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=ask_for_email_message,
+                                db=db,
+                                instagram_username=username,
+                                instagram_igsid=account_igsid
+                            )
+                        except Exception as log_err:
+                            print(f"⚠️ Failed to log DM: {str(log_err)}")
+                        
                         return
                     
                     # For non-comment triggers (DMs), just wait silently
@@ -3561,6 +3817,22 @@ async def execute_automation_action(
                             # Send with PDF button if available (prevents unwanted link preview card)
                             send_dm_api(sender_id, email_success_message, access_token, account_page_id, buttons=pdf_buttons, quick_replies=None)
                             print(f"✅ Email success message sent successfully")
+                            
+                            # Log DM sent (tracks in DmLog and increments global tracker)
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=email_success_message,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
+                            
                             # Small delay between messages
                             await asyncio.sleep(1)
                         except Exception as send_err:
