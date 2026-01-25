@@ -108,10 +108,11 @@ def check_rule_limit(user_id: int, db: Session) -> bool:
     return True
 
 
-def get_instagram_account_usage(instagram_account_id: int, cycle_start: datetime, db: Session) -> int:
+def get_instagram_account_usage(instagram_account_id: int, cycle_start: datetime, db: Session, user_id: int = None) -> int:
     """
     Get DM usage for a specific Instagram account (by account ID).
     Counts DMs by account_id and by username/igsid in dm_logs (orphaned rows after account delete).
+    For MVP: Also filters by user_id to ensure per-user per-Instagram tracking.
     """
     account = db.query(InstagramAccount).filter(
         InstagramAccount.id == instagram_account_id
@@ -123,8 +124,10 @@ def get_instagram_account_usage(instagram_account_id: int, cycle_start: datetime
     username = account.username
     igsid = getattr(account, "igsid", None)
     
-    # Build base filter: current billing cycle
+    # Build base filter: current billing cycle + user_id (for per-user tracking)
     base = db.query(DmLog).filter(DmLog.sent_at >= cycle_start)
+    if user_id:
+        base = base.filter(DmLog.user_id == user_id)
     
     from sqlalchemy import or_
     clauses = []
@@ -165,21 +168,24 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
     
     # If checking for a specific account, use account-level tracking
     if instagram_account_id:
-        dms_this_cycle = get_instagram_account_usage(instagram_account_id, cycle_start, db)
+        dms_this_cycle = get_instagram_account_usage(instagram_account_id, cycle_start, db, user_id=user_id)
         
-        # Also check persistent global tracker per Instagram account (IGSID)
-        account = db.query(InstagramAccount).filter(
-            InstagramAccount.id == instagram_account_id
-        ).first()
-        
-        if account and account.igsid:
-            tracker = get_or_create_tracker(account.igsid, db)
-            check_and_reset_usage(tracker, user.plan_tier, db)
+        # For MVP: Only check global tracker for Pro/Enterprise (not Free tier)
+        # Free tier uses per-user per-Instagram monthly tracking only
+        # Global tracker lifetime limits can block legitimate users who share Instagram accounts
+        if user.plan_tier in ["pro", "enterprise"]:
+            account = db.query(InstagramAccount).filter(
+                InstagramAccount.id == instagram_account_id
+            ).first()
             
-            is_allowed, error_message = check_global_dm_limit(tracker, user.plan_tier)
-            if not is_allowed:
-                print(f"⚠️ Global DM limit reached for IGSID {account.igsid}: {error_message}")
-                return False
+            if account and account.igsid:
+                tracker = get_or_create_tracker(account.igsid, db)
+                check_and_reset_usage(tracker, user.plan_tier, db)
+                
+                is_allowed, error_message = check_global_dm_limit(tracker, user.plan_tier)
+                if not is_allowed:
+                    print(f"⚠️ Global DM limit reached for IGSID {account.igsid}: {error_message}")
+                    return False
     else:
         # Count DMs sent in current billing cycle across all user's accounts
         dms_this_cycle = db.query(DmLog).filter(
