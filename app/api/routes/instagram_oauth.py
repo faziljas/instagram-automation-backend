@@ -393,7 +393,9 @@ async def instagram_oauth_callback(
             for rule in disconnected_rules:
                 if rule.config and isinstance(rule.config, dict):
                     disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
-                    if disconnected_igsid == str(new_account.igsid):
+                    disconnected_user_id = rule.config.get("disconnected_user_id")
+                    # Match by IGSID AND user_id to ensure we only reconnect rules for the same user
+                    if disconnected_igsid == str(new_account.igsid) and disconnected_user_id == user_id:
                         # Reconnect this rule to the new account
                         rule.instagram_account_id = new_account.id
                         # Remove disconnected_igsid from config
