@@ -117,6 +117,16 @@ async def startup_event():
         print(f"⚠️ Instagram global tracker migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
     
+    # Run Instagram global tracker user_id migration (change to per User+Instagram tracking)
+    try:
+        print("🔄 Running Instagram global tracker user_id migration...", file=sys.stderr)
+        from update_instagram_global_tracker_user_id_migration import run_migration as run_tracker_user_id_migration
+        run_tracker_user_id_migration()
+        print("✅ Instagram global tracker user_id migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Instagram global tracker user_id migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
+    
     # Run automation_rules account_id nullable migration (allows rules to persist across disconnect/reconnect)
     try:
         print("🔄 Running automation_rules account_id nullable migration...", file=sys.stderr)
