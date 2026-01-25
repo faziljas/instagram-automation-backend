@@ -1557,6 +1557,13 @@ async def process_instagram_message(event: dict, db: Session):
         if story_id and story_post_comment_rules:
             log_print(f"🎯 [STORY DM] Processing {len(story_post_comment_rules)} story rule(s) for story {story_id}")
             for rule in story_post_comment_rules:
+                # FIX ISSUE 1: Check if primary DM was already sent for this rule to prevent re-triggering
+                from app.services.pre_dm_handler import get_pre_dm_state
+                rule_state = get_pre_dm_state(sender_id, rule.id)
+                if rule_state.get("primary_dm_sent"):
+                    log_print(f"🚫 [FIX] Skipping story rule {rule.id} - primary DM already sent to {sender_id}")
+                    continue
+                
                 log_print(f"🔄 [STORY DM] Processing story 'post_comment' rule: {rule.name or 'Story Rule'} → {rule.action_type}")
                 log_print(f"✅ [STORY DM] Story 'post_comment' rule triggered for story {story_id}!")
                 # Check if this rule is already being processed for this message
@@ -1625,6 +1632,14 @@ async def process_instagram_message(event: dict, db: Session):
                         keyword_rule_matched = True
                         log_print(f"✅ Keyword '{matched_keyword}' matches message, triggering keyword rule!")
                         log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
+                        
+                        # FIX ISSUE 1: Check if primary DM was already sent for this rule to prevent re-triggering
+                        from app.services.pre_dm_handler import get_pre_dm_state
+                        rule_state = get_pre_dm_state(sender_id, rule.id)
+                        if rule_state.get("primary_dm_sent"):
+                            log_print(f"🚫 [FIX] Skipping keyword rule {rule.id} - primary DM already sent to {sender_id}")
+                            break  # Skip this keyword rule
+                        
                         # Check if this rule is already being processed for this message
                         processing_key = f"{message_id}_{rule.id}"
                         if processing_key in _processing_rules:
@@ -2729,6 +2744,21 @@ async def execute_automation_action(
                 account_igsid = getattr(account, "igsid", None)
                 rule_id = rule.id
                 print(f"🔍 [EXECUTE] Stored values - user_id: {user_id}, account_id: {account_id}, username: {username}, rule_id: {rule_id}")
+                
+                # FIX ISSUE 1: Check if primary DM was already sent BEFORE any processing
+                # This prevents primary DM from being re-triggered when user sends random text
+                from app.services.pre_dm_handler import get_pre_dm_state
+                rule_state = get_pre_dm_state(str(sender_id), rule_id)
+                if rule_state.get("primary_dm_sent") and trigger_type in ["new_message", "keyword", "story_reply"]:
+                    # Primary DM was already sent, check if this is a lead capture flow (which should process the message)
+                    is_lead_capture = rule.config.get("is_lead_capture", False)
+                    if not is_lead_capture or not incoming_message or not incoming_message.strip():
+                        # Not a lead capture flow, or no incoming message - skip primary DM
+                        print(f"🚫 [FIX ISSUE 1] Primary DM already sent for rule {rule_id}, skipping to prevent re-triggering")
+                        print(f"   trigger_type={trigger_type}, is_lead_capture={is_lead_capture}, incoming_message={'present' if incoming_message else 'none'}")
+                        return  # Exit early - don't send primary DM again
+                    else:
+                        print(f"📧 [LEAD CAPTURE] Primary DM already sent, but processing incoming message for lead capture flow")
                 
                 # Log TRIGGER_MATCHED analytics event
                 try:
