@@ -1471,7 +1471,8 @@ async def process_instagram_message(event: dict, db: Session):
                 if rule_state.get("primary_dm_sent") and message_text and message_text.strip():
                     # Check if lead was already captured - if yes, don't send any messages
                     from app.models.captured_lead import CapturedLead
-                    from sqlalchemy import cast, JSONB
+                    from sqlalchemy import cast
+                    from sqlalchemy.dialects.postgresql import JSONB
                     existing_lead = db.query(CapturedLead).filter(
                         CapturedLead.automation_rule_id == rule.id,
                         CapturedLead.instagram_account_id == account.id,
@@ -2773,7 +2774,8 @@ async def execute_automation_action(
                     lead_already_captured = False
                     if is_lead_capture:
                         from app.models.captured_lead import CapturedLead
-                        from sqlalchemy import cast, JSONB
+                        from sqlalchemy import cast
+                        from sqlalchemy.dialects.postgresql import JSONB
                         existing_lead = db.query(CapturedLead).filter(
                             CapturedLead.automation_rule_id == rule_id,
                             CapturedLead.instagram_account_id == account_id,
@@ -4036,7 +4038,8 @@ async def execute_automation_action(
                 if lead_state.get("primary_dm_sent") and user_message and user_message.strip():
                     # Check if lead was already captured
                     from app.models.captured_lead import CapturedLead
-                    from sqlalchemy import cast, JSONB
+                    from sqlalchemy import cast
+                    from sqlalchemy.dialects.postgresql import JSONB
                     existing_lead = db.query(CapturedLead).filter(
                         CapturedLead.automation_rule_id == rule.id,
                         CapturedLead.instagram_account_id == account_id,
