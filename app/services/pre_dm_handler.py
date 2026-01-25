@@ -18,6 +18,8 @@ from app.services.lead_capture import validate_email, update_automation_stats
 _pre_dm_states: Dict[str, Dict[str, Any]] = {}
 
 
+_MAX_COMMENT_REPLIED_IDS = 50  # Keep last N comment IDs we replied to (per sender+rule)
+
 def get_pre_dm_state(sender_id: str, rule_id: int) -> Dict[str, Any]:
     """Get the current pre-DM state for a sender-rule combination."""
     key = f"{sender_id}_{rule_id}"
@@ -26,7 +28,8 @@ def get_pre_dm_state(sender_id: str, rule_id: int) -> Dict[str, Any]:
         "follow_request_sent": False,
         "email_request_sent": False,
         "email_received": False,
-        "primary_dm_sent": False
+        "primary_dm_sent": False,
+        "comment_replied_comment_ids": [],
     })
 
 
@@ -39,16 +42,37 @@ def update_pre_dm_state(sender_id: str, rule_id: int, updates: Dict[str, Any]):
             "follow_request_sent": False,
             "email_request_sent": False,
             "email_received": False,
-            "primary_dm_sent": False
+            "primary_dm_sent": False,
+            "comment_replied_comment_ids": [],
         }
     _pre_dm_states[key].update(updates)
-    
+
     # Clean up old states (keep only last 1000)
     if len(_pre_dm_states) > 1000:
-        # Remove oldest entries (simple FIFO)
         keys_to_remove = list(_pre_dm_states.keys())[:100]
         for k in keys_to_remove:
             del _pre_dm_states[k]
+
+
+def mark_comment_replied(sender_id: str, rule_id: int, comment_id: str) -> None:
+    """Record that we sent a public comment reply to this specific comment.
+    Used to avoid replying twice to the same comment, while still replying to each new comment."""
+    state = get_pre_dm_state(sender_id, rule_id)
+    ids = list(state.get("comment_replied_comment_ids") or [])
+    if comment_id and comment_id not in ids:
+        ids.append(comment_id)
+        if len(ids) > _MAX_COMMENT_REPLIED_IDS:
+            ids = ids[-_MAX_COMMENT_REPLIED_IDS:]
+        update_pre_dm_state(sender_id, rule_id, {"comment_replied_comment_ids": ids})
+
+
+def was_comment_replied(sender_id: str, rule_id: int, comment_id: str) -> bool:
+    """Return True if we already sent a comment reply to this specific comment_id."""
+    if not comment_id:
+        return False
+    state = get_pre_dm_state(sender_id, rule_id)
+    ids = state.get("comment_replied_comment_ids") or []
+    return comment_id in ids
 
 
 def clear_pre_dm_state(sender_id: str, rule_id: int):

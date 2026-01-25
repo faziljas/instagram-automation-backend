@@ -2851,16 +2851,10 @@ async def execute_automation_action(
                                                     send_public_comment_reply(comment_id, selected_reply, access_token)
                                                     print(f"✅ Public comment reply sent immediately: {selected_reply[:50]}...")
                                                     
-                                                    # Mark comment reply as sent in pre-DM state to avoid duplicate
-                                                    from app.services.pre_dm_handler import update_pre_dm_state
-                                                    update_pre_dm_state(str(sender_id), rule_id, {
-                                                        "comment_reply_sent": True
-                                                    })
-                                                    
-                                                    # Update stats
+                                                    from app.services.pre_dm_handler import mark_comment_replied
+                                                    mark_comment_replied(str(sender_id), rule_id, comment_id)
                                                     from app.services.lead_capture import update_automation_stats
                                                     update_automation_stats(rule.id, "comment_replied", db)
-                                                    # Log COMMENT_REPLIED for Analytics dashboard
                                                     try:
                                                         from app.utils.analytics import log_analytics_event_sync
                                                         from app.models.analytics_event import EventType
@@ -2941,16 +2935,10 @@ async def execute_automation_action(
                                                 send_public_comment_reply(comment_id, selected_reply, access_token)
                                                 print(f"✅ Public comment reply sent immediately: {selected_reply[:50]}...")
                                                 
-                                                # Mark comment reply as sent in pre-DM state to avoid duplicate
-                                                from app.services.pre_dm_handler import update_pre_dm_state
-                                                update_pre_dm_state(str(sender_id), rule_id, {
-                                                    "comment_reply_sent": True
-                                                })
-                                                
-                                                # Update stats
+                                                from app.services.pre_dm_handler import mark_comment_replied
+                                                mark_comment_replied(str(sender_id), rule_id, comment_id)
                                                 from app.services.lead_capture import update_automation_stats
                                                 update_automation_stats(rule.id, "comment_replied", db)
-                                                # Log COMMENT_REPLIED for Analytics dashboard
                                                 try:
                                                     from app.utils.analytics import log_analytics_event_sync
                                                     from app.models.analytics_event import EventType
@@ -3992,17 +3980,16 @@ async def execute_automation_action(
                 print(f"🔍 [COMMENT REPLY] Config fields: auto_reply_to_comments={rule.config.get('auto_reply_to_comments')}, simple_auto_reply_to_comments={rule.config.get('simple_auto_reply_to_comments')}, lead_auto_reply_to_comments={rule.config.get('lead_auto_reply_to_comments')}")
                 print(f"🔍 [COMMENT REPLY] comment_replies={rule.config.get('comment_replies')}, simple_comment_replies={rule.config.get('simple_comment_replies')}, lead_comment_replies={rule.config.get('lead_comment_replies')}")
                 
-                # Check if comment reply was already sent immediately after follow-up message
+                # Check if we already replied to this specific comment (per comment_id, not per user)
                 comment_reply_already_sent = False
                 if comment_id:
-                    from app.services.pre_dm_handler import get_pre_dm_state
-                    state = get_pre_dm_state(str(sender_id), rule.id)
-                    if state and state.get("comment_reply_sent"):
+                    from app.services.pre_dm_handler import was_comment_replied
+                    if was_comment_replied(str(sender_id), rule.id, comment_id):
                         comment_reply_already_sent = True
-                        print(f"⏭️ [COMMENT REPLY] Skipping: Comment reply was already sent immediately after follow-up message")
+                        print(f"⏭️ [COMMENT REPLY] Skipping: Already replied to this comment (comment_id={comment_id})")
                 
                 # If we have a comment_id and auto-reply is enabled, send public comment reply
-                # (Only if it wasn't already sent immediately after follow-up message)
+                # (Only skip if we already replied to this exact comment; new comments always get a reply)
                 if not comment_reply_already_sent and comment_id and auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
                     # Filter out empty replies
                     valid_replies = [r for r in comment_replies if r and str(r).strip()]
@@ -4019,11 +4006,10 @@ async def execute_automation_action(
                             # Instagram Graph API supports public comment replies on your own content
                             send_public_comment_reply(comment_id, selected_reply, access_token)
                             print(f"✅ Public comment reply sent to comment {comment_id}: {selected_reply[:50]}...")
-                            
-                            # Update stats
+                            from app.services.pre_dm_handler import mark_comment_replied
+                            mark_comment_replied(str(sender_id), rule.id, comment_id)
                             from app.services.lead_capture import update_automation_stats
                             update_automation_stats(rule.id, "comment_replied", db)
-                            # Log COMMENT_REPLIED for Analytics dashboard
                             try:
                                 from app.utils.analytics import log_analytics_event_sync
                                 from app.models.analytics_event import EventType
@@ -4042,7 +4028,7 @@ async def execute_automation_action(
                 else:
                     # Log why comment reply is not being sent
                     if comment_reply_already_sent:
-                        print(f"⏭️ [COMMENT REPLY] Skipping: Comment reply was already sent immediately after follow-up message")
+                        print(f"⏭️ [COMMENT REPLY] Skipping: Already replied to this comment (comment_id={comment_id})")
                     elif not comment_id:
                         print(f"⏭️ [COMMENT REPLY] Skipping: No comment_id provided (trigger_type={trigger_type})")
                     elif not auto_reply_to_comments:
@@ -4051,6 +4037,7 @@ async def execute_automation_action(
                         print(f"⏭️ [COMMENT REPLY] Skipping: No comment_replies configured for rule {rule.id} (comment_replies={comment_replies})")
                 
                 # Always send DM if message is configured (for all trigger types)
+                # Each new comment gets both comment reply AND primary DM
                 if message_template:
                     # Get buttons from pre_dm_result first (for follow button), then from rule config
                     buttons = None
