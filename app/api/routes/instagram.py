@@ -1027,7 +1027,49 @@ async def process_instagram_message(event: dict, db: Session):
                         trigger_type="story_reply" if story_id else "new_message"
                     )
                     
-                    # Handle ignore action (random text while waiting for follow confirmation)
+                    # Handle follow reminder action (random text while waiting for follow confirmation)
+                    if pre_dm_result["action"] == "send_follow_reminder":
+                        # Send reminder message to user
+                        follow_reminder_msg = pre_dm_result.get("message", 
+                            "Hey! I'm waiting for you to confirm that you're following me. Please type 'done', 'followed', or 'I'm following' to continue! 😊")
+                        log_print(f"💬 [FIX ISSUE 2] Sending follow reminder to {sender_id}: {follow_reminder_msg[:50]}...")
+                        
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id = account.page_id
+                            send_dm(sender_id, follow_reminder_msg, access_token, page_id, buttons=None, quick_replies=None)
+                            log_print(f"✅ Follow reminder sent successfully")
+                            
+                            # Log DM sent
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=follow_reminder_msg,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None)
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                        except Exception as send_err:
+                            log_print(f"⚠️ Failed to send follow reminder: {str(send_err)}", "ERROR")
+                        
+                        # Continue to check other rules
+                        continue
+                    
+                    # Handle ignore action (random text while waiting for follow confirmation) - DEPRECATED, use send_follow_reminder instead
                     if pre_dm_result["action"] == "ignore":
                         log_print(f"⏳ [STRICT MODE] Ignoring random text while waiting for follow confirmation: '{message_text}' for rule {rule.id}")
                         # Continue to check other rules - one rule ignoring doesn't mean all should
@@ -3811,8 +3853,35 @@ async def execute_automation_action(
             
             # CRITICAL CHECK: Don't send primary DM if pre-DM actions are waiting for user response
             # This prevents primary DM from being sent when flow is not completed
-            if pre_dm_result and pre_dm_result["action"] in ["wait", "wait_for_follow", "wait_for_email", "ignore"]:
-                print(f"⏳ Pre-DM action is '{pre_dm_result['action']}' - waiting for user response, NOT sending primary DM")
+            if pre_dm_result and pre_dm_result["action"] in ["wait", "wait_for_follow", "wait_for_email", "ignore", "send_follow_reminder"]:
+                if pre_dm_result["action"] == "send_follow_reminder":
+                    # Handle follow reminder - send message to user
+                    follow_reminder_msg = pre_dm_result.get("message", 
+                        "Hey! I'm waiting for you to confirm that you're following me. Please type 'done', 'followed', or 'I'm following' to continue! 😊")
+                    print(f"💬 [FIX ISSUE 2] Sending follow reminder to {sender_id}")
+                    
+                    try:
+                        send_dm_api(sender_id, follow_reminder_msg, access_token, account_page_id, buttons=None, quick_replies=None)
+                        print(f"✅ Follow reminder sent successfully")
+                        
+                        # Log DM sent
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(
+                                user_id=user_id,
+                                instagram_account_id=account_id,
+                                recipient_username=str(sender_id),
+                                message=follow_reminder_msg,
+                                db=db,
+                                instagram_username=username,
+                                instagram_igsid=account_igsid
+                            )
+                        except Exception as log_err:
+                            print(f"⚠️ Failed to log DM: {str(log_err)}")
+                    except Exception as send_err:
+                        print(f"⚠️ Failed to send follow reminder: {str(send_err)}")
+                else:
+                    print(f"⏳ Pre-DM action is '{pre_dm_result['action']}' - waiting for user response, NOT sending primary DM")
                 return
             
             # FIX ISSUE 2: Handle followup reminder action

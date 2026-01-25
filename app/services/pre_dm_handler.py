@@ -433,11 +433,13 @@ async def process_pre_dm_actions(
                     "email": None
                 }
         else:
-            # STRICT MODE: Random text received while waiting for follow confirmation - IGNORE
-            print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id}, ignoring message: '{incoming_message}'")
+            # FIX ISSUE 2: Random text received while waiting for follow confirmation - send reminder
+            follow_reminder_message = config.get("follow_reminder_message", 
+                "Hey! I'm waiting for you to confirm that you're following me. Please type 'done', 'followed', or 'I'm following' to continue! 😊")
+            print(f"💬 [FIX ISSUE 2] User sent random text while waiting for follow confirmation, sending reminder")
             return {
-                "action": "ignore",
-                "message": None,
+                "action": "send_follow_reminder",
+                "message": follow_reminder_message,
                 "should_save_email": False,
                 "email": None
             }
