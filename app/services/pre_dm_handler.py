@@ -94,29 +94,41 @@ def sender_primary_dm_complete(
 
     - Simple reply: primary_dm_sent for that rule → complete.
     - Lead capture: primary_dm_sent AND lead captured for that rule → complete.
+
+    PERFORMANCE: In-memory state first (no DB). Only one CapturedLead query max,
+    and only when we have lead-capture rules with primary_dm_sent.
     """
     sender_id_str = str(sender_id)
+    lead_rules_with_primary = []
+
     for rule in rules or []:
         state = get_pre_dm_state(sender_id_str, rule.id)
         if not state.get("primary_dm_sent"):
             continue
         is_lead = (rule.config or {}).get("is_lead_capture", False)
         if is_lead:
-            try:
-                from sqlalchemy import cast
-                from sqlalchemy.dialects.postgresql import JSONB
-                lead = db.query(CapturedLead).filter(
-                    CapturedLead.automation_rule_id == rule.id,
-                    CapturedLead.instagram_account_id == account_id,
-                    cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
-                ).first()
-                if lead:
-                    return True
-            except Exception:
-                continue
+            lead_rules_with_primary.append(rule)
         else:
             return True
-    return False
+
+    if not lead_rules_with_primary:
+        return False
+
+    try:
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB
+        has_lead = (
+            db.query(CapturedLead.id)
+            .filter(
+                CapturedLead.instagram_account_id == account_id,
+                cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+            )
+            .limit(1)
+            .first()
+        )
+        return has_lead is not None
+    except Exception:
+        return False
 
 
 def check_if_follow_confirmation(message_text: str) -> bool:
