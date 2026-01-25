@@ -2749,16 +2749,20 @@ async def execute_automation_action(
                 # This prevents primary DM from being re-triggered when user sends random text
                 from app.services.pre_dm_handler import get_pre_dm_state
                 rule_state = get_pre_dm_state(str(sender_id), rule_id)
-                if rule_state.get("primary_dm_sent") and trigger_type in ["new_message", "keyword", "story_reply"]:
-                    # Primary DM was already sent, check if this is a lead capture flow (which should process the message)
+                if rule_state.get("primary_dm_sent"):
+                    # Primary DM was already sent - only allow lead capture flow to process incoming messages
                     is_lead_capture = rule.config.get("is_lead_capture", False)
-                    if not is_lead_capture or not incoming_message or not incoming_message.strip():
-                        # Not a lead capture flow, or no incoming message - skip primary DM
-                        print(f"🚫 [FIX ISSUE 1] Primary DM already sent for rule {rule_id}, skipping to prevent re-triggering")
-                        print(f"   trigger_type={trigger_type}, is_lead_capture={is_lead_capture}, incoming_message={'present' if incoming_message else 'none'}")
-                        return  # Exit early - don't send primary DM again
-                    else:
+                    has_incoming_message = incoming_message and incoming_message.strip()
+                    
+                    # Only allow processing if it's a lead capture flow AND there's an incoming message to process
+                    if is_lead_capture and has_incoming_message:
                         print(f"📧 [LEAD CAPTURE] Primary DM already sent, but processing incoming message for lead capture flow")
+                        # Continue to process lead capture flow
+                    else:
+                        # Not a lead capture flow OR no incoming message - skip primary DM completely
+                        print(f"🚫 [FIX ISSUE 1] Primary DM already sent for rule {rule_id}, skipping to prevent re-triggering")
+                        print(f"   trigger_type={trigger_type}, is_lead_capture={is_lead_capture}, has_incoming_message={has_incoming_message}")
+                        return  # Exit early - don't send primary DM again
                 
                 # Log TRIGGER_MATCHED analytics event
                 try:
