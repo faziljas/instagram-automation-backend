@@ -258,6 +258,29 @@ def process_lead_capture_step(
                 # Update stats
                 update_automation_stats(rule.id, "lead_captured", db)
                 
+                # FIX: Log EMAIL_COLLECTED analytics event so it shows up in dashboard count
+                try:
+                    from app.utils.analytics import log_analytics_event_sync
+                    from app.models.analytics_event import EventType
+                    media_id = rule.config.get("media_id") if isinstance(rule.config, dict) else None
+                    log_analytics_event_sync(
+                        db=db,
+                        user_id=account.user_id,
+                        event_type=EventType.EMAIL_COLLECTED,
+                        rule_id=rule.id,
+                        media_id=media_id,
+                        instagram_account_id=rule.instagram_account_id,
+                        metadata={
+                            "sender_id": sender_id,
+                            "email": lead_data.get("email") or lead_data.get("phone") or "custom_field",
+                            "captured_via": "lead_capture_flow",
+                            "field_type": field_type
+                        }
+                    )
+                    print(f"✅ EMAIL_COLLECTED analytics event logged for lead capture flow")
+                except Exception as analytics_err:
+                    print(f"⚠️ Failed to log EMAIL_COLLECTED event: {str(analytics_err)}")
+                
                 # Get send step
                 send_step = next((s for s in flow if s.get("type") == "send"), None)
                 if send_step:
