@@ -254,16 +254,13 @@ def get_subscription(
         InstagramAccount.user_id == user_id
     ).count()
     
-    # Get ALL user's Instagram accounts (not just those with IGSIDs)
+    # Get user's Instagram accounts
     all_user_accounts = db.query(InstagramAccount).filter(
         InstagramAccount.user_id == user_id
     ).all()
     
-    # Get user's Instagram accounts with IGSIDs (for tracker lookup)
-    user_accounts_with_igsid = [acc for acc in all_user_accounts if acc.igsid]
-    
-    # Calculate usage stats from actual data (DmLog, AutomationRule) for accurate display
-    # The tracker is used for enforcement, but for display we use actual counts from DmLog
+    # Calculate usage stats - track per user (email), not globally by Instagram account
+    # Simple MVP approach: One email = One user, fresh start when account reconnected
     from app.utils.plan_enforcement import get_billing_cycle_start
     rules_count = 0
     dms_display_count = 0
@@ -272,25 +269,13 @@ def get_subscription(
     if all_user_accounts:
         user_account_ids = [acc.id for acc in all_user_accounts]
         
-        # Rules count: Use tracker for cumulative count (rules created, not deleted)
-        # This ensures we track cumulative rules created per Instagram account
-        from app.services.instagram_usage_tracker import get_or_create_tracker, check_and_reset_usage
-        for account in user_accounts_with_igsid:
-            if account.igsid:
-                tracker = get_or_create_tracker(account.igsid, db)
-                check_and_reset_usage(tracker, user.plan_tier, db)
-                rules_count += tracker.rules_created_count
+        # Rules count: Count active rules for this user's accounts (user-based tracking)
+        rules_count = db.query(AutomationRule).filter(
+            AutomationRule.instagram_account_id.in_(user_account_ids),
+            AutomationRule.deleted_at.is_(None)
+        ).count()
         
-        # Fallback for rules: If no tracker data, count active rules
-        if rules_count == 0 and user_account_ids:
-            rules_count = db.query(AutomationRule).filter(
-                AutomationRule.instagram_account_id.in_(user_account_ids),
-                AutomationRule.deleted_at.is_(None)
-            ).count()
-        
-        # DMs count: ALWAYS use DmLog filtered by billing cycle start for accurate display
-        # Filter by user_id (not just instagram_account_id) to include DMs even after account disconnect
-        # When account is disconnected, instagram_account_id is set to NULL but user_id remains
+        # DMs count: Count DMs sent by this user in current billing cycle (user-based tracking)
         cycle_start = get_billing_cycle_start(user_id, db)
         dms_display_count = db.query(DmLog).filter(
             DmLog.user_id == user_id,
@@ -307,8 +292,8 @@ def get_subscription(
         "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
         "usage": {
             "accounts": accounts_count,
-            "rules": rules_count,  # Global tracker count (cumulative rules created)
-            "dms_sent_this_month": dms_display_count  # DmLog count filtered by billing cycle start (actual DMs sent this month)
+            "rules": rules_count,  # Active rules count for this user (user-based tracking)
+            "dms_sent_this_month": dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
         }
     }
 
