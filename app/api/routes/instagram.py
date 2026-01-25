@@ -1530,6 +1530,13 @@ async def process_instagram_message(event: dict, db: Session):
                 else:
                     log_print(f"🎯 [DM] Processing {len(new_message_rules)} 'new_message' rule(s)...")
                     for rule in new_message_rules:
+                        # FIX ISSUE 1: Check if primary DM was already sent for this rule to prevent re-triggering
+                        from app.services.pre_dm_handler import get_pre_dm_state
+                        rule_state = get_pre_dm_state(sender_id, rule.id)
+                        if rule_state.get("primary_dm_sent"):
+                            log_print(f"🚫 [FIX] Skipping rule {rule.id} - primary DM already sent to {sender_id}")
+                            continue
+                        
                         log_print(f"🔄 [DM] Processing 'new_message' rule: {rule.name or 'New Message Rule'} → {rule.action_type}")
                         log_print(f"✅ [DM] 'new_message' rule triggered (no keyword match)!")
                         # Check if this rule is already being processed for this message
@@ -1642,6 +1649,13 @@ async def process_postback_event(event: dict, db: Session):
                     # Track analytics: "I'm following" button click
                     from app.services.lead_capture import update_automation_stats
                     update_automation_stats(rule.id, "im_following_clicked", db)
+                    
+                    # FIX ISSUE 3: Track follower gain count when user clicks "I'm following" button
+                    try:
+                        update_automation_stats(rule.id, "follower_gained", db)
+                        print(f"✅ Follower gain count updated for rule {rule.id} (button click)")
+                    except Exception as stats_err:
+                        print(f"⚠️ Failed to update follower gain count: {str(stats_err)}")
                     
                     # Log analytics event for "I'm following" button click
                     try:
@@ -3698,6 +3712,44 @@ async def execute_automation_action(
                 print(f"⏳ Pre-DM action is '{pre_dm_result['action']}' - waiting for user response, NOT sending primary DM")
                 return
             
+            # FIX ISSUE 2: Handle followup reminder action
+            if pre_dm_result and pre_dm_result.get("action") == "send_followup_reminder":
+                followup_reminder_msg = pre_dm_result.get("message", "Hey! I sent you a message earlier. Please check it and reply when you're ready! 😊")
+                print(f"💬 [FIX ISSUE 2] Sending followup reminder to {sender_id}")
+                # Get access token first
+                from app.utils.encryption import decrypt_credentials
+                from app.utils.instagram_api import send_dm as send_dm_api
+                try:
+                    if account.encrypted_page_token:
+                        access_token = decrypt_credentials(account.encrypted_page_token)
+                        account_page_id = account.page_id
+                    elif account.encrypted_credentials:
+                        access_token = decrypt_credentials(account.encrypted_credentials)
+                        account_page_id = account.page_id
+                    else:
+                        raise Exception("No access token found")
+                    
+                    send_dm_api(sender_id, followup_reminder_msg, access_token, account_page_id, buttons=None, quick_replies=None)
+                    print(f"✅ Followup reminder sent successfully")
+                    
+                    # Log DM sent
+                    try:
+                        from app.utils.plan_enforcement import log_dm_sent
+                        log_dm_sent(
+                            user_id=user_id,
+                            instagram_account_id=account_id,
+                            recipient_username=str(sender_id),
+                            message=followup_reminder_msg,
+                            db=db,
+                            instagram_username=username,
+                            instagram_igsid=account_igsid
+                        )
+                    except Exception as log_err:
+                        print(f"⚠️ Failed to log DM: {str(log_err)}")
+                except Exception as send_err:
+                    print(f"⚠️ Failed to send followup reminder: {str(send_err)}")
+                return  # Don't continue to primary DM
+            
             # Check if this is a lead capture flow
             is_lead_capture = rule.config.get("is_lead_capture", False)
             
@@ -3709,26 +3761,86 @@ async def execute_automation_action(
                 
                 # Get user message from event (for DMs, this would be in the message text)
                 # For comments, we'd need to extract from comment text
-                user_message = ""
-                if trigger_type in ["new_message", "keyword"]:
+                user_message = incoming_message if incoming_message else ""
+                if trigger_type in ["new_message", "keyword"] and not user_message:
                     # For DMs, we need to get the message text from the webhook event
                     # This is a simplified version - in production, you'd track conversation state
                     user_message = ""  # Will be extracted from webhook context
                 
-                # Process lead capture step
-                lead_result = process_lead_capture_step(rule, user_message, sender_id, db)
-                
-                if lead_result["action"] == "ask":
-                    # Send the ask message
-                    message_template = lead_result["message"]
-                elif lead_result["action"] == "send":
-                    # Send the final message
-                    message_template = lead_result["message"]
-                    if lead_result["saved_lead"]:
-                        print(f"✅ Lead captured: {lead_result['saved_lead'].email or lead_result['saved_lead'].phone}")
+                # FIX ISSUE 2: Check if primary DM was already sent and user is sending random text
+                # If so, send reminder instead of processing lead capture
+                from app.services.pre_dm_handler import get_pre_dm_state
+                lead_state = get_pre_dm_state(str(sender_id), rule.id)
+                if lead_state.get("primary_dm_sent") and user_message and user_message.strip():
+                    # Primary DM was sent, check if this is a valid lead capture response
+                    lead_result = process_lead_capture_step(rule, user_message, sender_id, db)
+                    
+                    # If validation failed (user sent random text), send reminder
+                    if lead_result.get("action") == "ask" and lead_result.get("validation_failed"):
+                        # User sent invalid response, send reminder
+                        followup_reminder_message = rule.config.get("followup_reminder_message", 
+                            "Hey! I sent you a message earlier asking for your information. Please check it and reply with the requested details! 😊")
+                        print(f"💬 [FIX ISSUE 2] User sent random text after followup request, sending reminder")
+                        
+                        # Get access token
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm as send_dm_api
+                        try:
+                            if account.encrypted_page_token:
+                                access_token_reminder = decrypt_credentials(account.encrypted_page_token)
+                                account_page_id_reminder = account.page_id
+                            elif account.encrypted_credentials:
+                                access_token_reminder = decrypt_credentials(account.encrypted_credentials)
+                                account_page_id_reminder = account.page_id
+                            else:
+                                raise Exception("No access token found")
+                            
+                            send_dm_api(sender_id, followup_reminder_message, access_token_reminder, account_page_id_reminder, buttons=None, quick_replies=None)
+                            print(f"✅ Followup reminder sent successfully")
+                            
+                            # Log DM sent
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=user_id,
+                                    instagram_account_id=account_id,
+                                    recipient_username=str(sender_id),
+                                    message=followup_reminder_message,
+                                    db=db,
+                                    instagram_username=username,
+                                    instagram_igsid=account_igsid
+                                )
+                            except Exception as log_err:
+                                print(f"⚠️ Failed to log DM: {str(log_err)}")
+                        except Exception as send_err:
+                            print(f"⚠️ Failed to send followup reminder: {str(send_err)}")
+                        return  # Don't continue processing
+                    elif lead_result.get("action") == "ask":
+                        # Valid ask action (resend question), continue processing
+                        message_template = lead_result["message"]
+                    elif lead_result.get("action") == "send":
+                        # Valid send action (final message), continue processing
+                        message_template = lead_result["message"]
+                        if lead_result.get("saved_lead"):
+                            print(f"✅ Lead captured: {lead_result['saved_lead'].email or lead_result['saved_lead'].phone}")
+                    else:
+                        # Skip lead capture for now (fallback to regular DM)
+                        message_template = rule.config.get("message_template", "")
                 else:
-                    # Skip lead capture for now (fallback to regular DM)
-                    message_template = rule.config.get("message_template", "")
+                    # Process lead capture step normally
+                    lead_result = process_lead_capture_step(rule, user_message, sender_id, db)
+                    
+                    if lead_result["action"] == "ask":
+                        # Send the ask message
+                        message_template = lead_result["message"]
+                    elif lead_result["action"] == "send":
+                        # Send the final message
+                        message_template = lead_result["message"]
+                        if lead_result["saved_lead"]:
+                            print(f"✅ Lead captured: {lead_result['saved_lead'].email or lead_result['saved_lead'].phone}")
+                    else:
+                        # Skip lead capture for now (fallback to regular DM)
+                        message_template = rule.config.get("message_template", "")
             elif not pre_dm_result or pre_dm_result.get("action") == "send_primary":
                 # Regular DM flow (or primary DM after pre-DM actions)
                 # Get message template from config

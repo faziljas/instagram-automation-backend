@@ -391,6 +391,14 @@ async def process_pre_dm_actions(
                 "follow_confirmed": True
             })
             
+            # FIX ISSUE 3: Track follower gain count when user confirms following via text
+            try:
+                from app.services.lead_capture import update_automation_stats
+                update_automation_stats(rule.id, "follower_gained", db)
+                print(f"✅ Follower gain count updated for rule {rule.id}")
+            except Exception as stats_err:
+                print(f"⚠️ Failed to update follower gain count: {str(stats_err)}")
+            
             # Update global audience record with following status
             try:
                 from app.services.global_conversion_check import update_audience_following

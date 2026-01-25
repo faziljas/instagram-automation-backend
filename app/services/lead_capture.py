@@ -288,7 +288,7 @@ def process_lead_capture_step(
 def update_automation_stats(rule_id: int, event_type: str, db: Session):
     """
     Update automation rule statistics.
-    event_type: "triggered" | "dm_sent" | "comment_replied" | "lead_captured" | "follow_button_clicked" | "profile_visit" | "im_following_clicked"
+    event_type: "triggered" | "dm_sent" | "comment_replied" | "lead_captured" | "follow_button_clicked" | "profile_visit" | "im_following_clicked" | "follower_gained"
     """
     try:
         # Try to get existing stats
@@ -327,6 +327,14 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
         elif event_type == "im_following_clicked":
             stats.total_im_following_clicks += 1
             stats.last_im_following_clicked_at = datetime.utcnow()
+        elif event_type == "follower_gained":
+            # FIX ISSUE 3: Track follower gain count
+            if not hasattr(stats, 'total_followers_gained'):
+                # Field doesn't exist yet, skip for now (will be added via migration)
+                print(f"⚠️ total_followers_gained field not found in stats, skipping update")
+            else:
+                stats.total_followers_gained = (stats.total_followers_gained or 0) + 1
+                print(f"✅ Follower gain count incremented for rule {rule_id}")
         
         stats.updated_at = datetime.utcnow()
         db.commit()
@@ -344,6 +352,7 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
                         "total_comments_replied": 0,
                         "total_leads_captured": 0,
                         "total_follow_button_clicks": 0,
+                        "total_followers_gained": 0,
                         "last_triggered_at": None,
                         "last_lead_captured_at": None,
                         "last_follow_button_clicked_at": None
@@ -369,6 +378,10 @@ def update_automation_stats(rule_id: int, event_type: str, db: Session):
                 elif event_type == "im_following_clicked":
                     stats_dict["total_im_following_clicks"] = stats_dict.get("total_im_following_clicks", 0) + 1
                     stats_dict["last_im_following_clicked_at"] = datetime.utcnow().isoformat()
+                elif event_type == "follower_gained":
+                    # FIX ISSUE 3: Track follower gain count in config fallback
+                    stats_dict["total_followers_gained"] = stats_dict.get("total_followers_gained", 0) + 1
+                    print(f"✅ Follower gain count incremented in config for rule {rule_id}")
                 
                 rule.config = rule.config  # Trigger SQLAlchemy to detect change
                 db.commit()
