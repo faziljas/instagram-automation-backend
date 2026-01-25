@@ -268,12 +268,33 @@ def get_subscription(
     # Only calculate usage if user has connected accounts
     if all_user_accounts:
         user_account_ids = [acc.id for acc in all_user_accounts]
+        user_account_igsids = {str(acc.igsid) for acc in all_user_accounts if acc.igsid}
         
         # Rules count: Count active rules for this user's accounts (user-based tracking)
-        rules_count = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id.in_(user_account_ids),
-            AutomationRule.deleted_at.is_(None)
-        ).count()
+        # Include both: rules linked to current accounts AND disconnected rules matching current account IGSIDs
+        from sqlalchemy import or_
+        all_rules = db.query(AutomationRule).filter(
+            AutomationRule.deleted_at.is_(None),
+            or_(
+                # Rules linked to current connected accounts
+                AutomationRule.instagram_account_id.in_(user_account_ids),
+                # OR disconnected rules (instagram_account_id is NULL) - we'll filter by IGSID in Python
+                AutomationRule.instagram_account_id.is_(None)
+            )
+        ).all()
+        
+        # Filter disconnected rules by IGSID match (stored in config.disconnected_igsid)
+        # Also filter by user_id to ensure we only count this user's rules
+        connected_rules = [r for r in all_rules if r.instagram_account_id and r.instagram_account_id in user_account_ids]
+        disconnected_rules = [
+            r for r in all_rules 
+            if r.instagram_account_id is None 
+            and r.config 
+            and isinstance(r.config, dict)
+            and str(r.config.get("disconnected_igsid", "")) in user_account_igsids
+            and r.config.get("disconnected_user_id") == user_id  # Only count this user's disconnected rules
+        ]
+        rules_count = len(connected_rules) + len(disconnected_rules)
         
         # DMs count: Count DMs sent by this user in current billing cycle (user-based tracking)
         cycle_start = get_billing_cycle_start(user_id, db)

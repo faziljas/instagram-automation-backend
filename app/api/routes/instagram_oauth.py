@@ -380,6 +380,34 @@ async def instagram_oauth_callback(
             from app.services.instagram_usage_tracker import get_or_create_tracker
             if new_account.igsid:
                 get_or_create_tracker(new_account.igsid, db)
+            
+            # Reconnect any disconnected automation rules for this user + IGSID
+            from app.models.automation_rule import AutomationRule
+            from sqlalchemy import update
+            disconnected_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id.is_(None),
+                AutomationRule.deleted_at.is_(None)
+            ).all()
+            
+            reconnected_count = 0
+            for rule in disconnected_rules:
+                if rule.config and isinstance(rule.config, dict):
+                    disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
+                    if disconnected_igsid == str(new_account.igsid):
+                        # Reconnect this rule to the new account
+                        rule.instagram_account_id = new_account.id
+                        # Remove disconnected_igsid from config
+                        if "disconnected_igsid" in rule.config:
+                            del rule.config["disconnected_igsid"]
+                        if "disconnected_username" in rule.config:
+                            del rule.config["disconnected_username"]
+                        if "disconnected_user_id" in rule.config:
+                            del rule.config["disconnected_user_id"]
+                        reconnected_count += 1
+            
+            if reconnected_count > 0:
+                db.commit()
+                print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {new_account.username}")
         
         print(f"✅ Account saved successfully! Redirecting to dashboard...")
         
@@ -960,13 +988,40 @@ async def exchange_instagram_code(
         ).first()
         
         if existing_account_same_user:
-            # Account already connected to this user - update token and return success message
+            # Account already connected to this user - update token and reconnect rules
             print(f"📝 Account already connected to this user. Updating token...")
             if instagram_username:
                 existing_account_same_user.username = instagram_username
             existing_account_same_user.encrypted_page_token = encrypt_credentials(long_lived_token)
             existing_account_same_user.is_active = True  # Ensure it's active
             db.commit()
+            
+            # Reconnect any disconnected automation rules for this user + IGSID
+            from app.models.automation_rule import AutomationRule
+            disconnected_rules = db.query(AutomationRule).filter(
+                AutomationRule.instagram_account_id.is_(None),
+                AutomationRule.deleted_at.is_(None)
+            ).all()
+            
+            reconnected_count = 0
+            for rule in disconnected_rules:
+                if rule.config and isinstance(rule.config, dict):
+                    disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
+                    if disconnected_igsid == str(existing_account_same_user.igsid):
+                        # Reconnect this rule to the existing account
+                        rule.instagram_account_id = existing_account_same_user.id
+                        # Remove disconnected_igsid from config
+                        if "disconnected_igsid" in rule.config:
+                            del rule.config["disconnected_igsid"]
+                        if "disconnected_username" in rule.config:
+                            del rule.config["disconnected_username"]
+                        if "disconnected_user_id" in rule.config:
+                            del rule.config["disconnected_user_id"]
+                        reconnected_count += 1
+            
+            if reconnected_count > 0:
+                db.commit()
+                print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {existing_account_same_user.username}")
             
             print(f"✅ Instagram account {existing_account_same_user.username} reconnected successfully for user {user_id}!")
             
@@ -1014,6 +1069,31 @@ async def exchange_instagram_code(
         from app.services.instagram_usage_tracker import get_or_create_tracker
         if new_account.igsid:
             get_or_create_tracker(new_account.igsid, db)
+        
+        # Reconnect any disconnected automation rules for this user + IGSID
+        from app.models.automation_rule import AutomationRule
+        disconnected_rules = db.query(AutomationRule).filter(
+            AutomationRule.instagram_account_id.is_(None),
+            AutomationRule.deleted_at.is_(None)
+        ).all()
+        
+        reconnected_count = 0
+        for rule in disconnected_rules:
+            if rule.config and isinstance(rule.config, dict):
+                disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
+                if disconnected_igsid == str(new_account.igsid):
+                    # Reconnect this rule to the new account
+                    rule.instagram_account_id = new_account.id
+                    # Remove disconnected_igsid from config
+                    if "disconnected_igsid" in rule.config:
+                        del rule.config["disconnected_igsid"]
+                    if "disconnected_username" in rule.config:
+                        del rule.config["disconnected_username"]
+                    reconnected_count += 1
+        
+        if reconnected_count > 0:
+            db.commit()
+            print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {new_account.username}")
         
         print(f"✅ Instagram account {new_account.username} connected successfully for user {user_id}!")
         

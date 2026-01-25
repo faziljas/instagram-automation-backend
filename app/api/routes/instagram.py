@@ -4391,7 +4391,7 @@ def delete_instagram_account(
         for lead in leads:
             db.delete(lead)
     
-    # Flush to ensure deletions are processed before deleting rules
+    # Flush to ensure deletions are processed before updating rules
     db.flush()
     
     # Also delete any analytics events that reference this account (even if rule_id is NULL)
@@ -4402,10 +4402,27 @@ def delete_instagram_account(
     # Flush again
     db.flush()
     
-    # Now delete the automation rules
-    db.query(AutomationRule).filter(
-        AutomationRule.instagram_account_id == account_id
-    ).delete()
+    # Preserve automation rules: store igsid and user_id in config and nullify instagram_account_id
+    # This allows rules to persist across disconnect/reconnect (per user per Instagram account tracking)
+    # Similar to how DmLog preserves records by nullifying instagram_account_id
+    from sqlalchemy import update
+    account_igsid = account.igsid
+    if account_igsid:
+        # Store igsid and user_id in rule config for reconnection matching
+        for rule in automation_rules:
+            if rule.config and isinstance(rule.config, dict):
+                rule.config["disconnected_igsid"] = str(account_igsid)
+                rule.config["disconnected_username"] = account.username
+                rule.config["disconnected_user_id"] = account.user_id
+        db.flush()
+    
+    # Nullify instagram_account_id instead of deleting rules (preserves rule count per user per Instagram)
+    db.execute(
+        update(AutomationRule).where(AutomationRule.instagram_account_id == account_id).values(
+            instagram_account_id=None
+        )
+    )
+    db.flush()
     
     # Nullify instagram_account_id in dm_logs (keep rows for usage tracking)
     # username/igsid are stored in dm_logs so usage survives account delete
