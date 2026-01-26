@@ -4,6 +4,7 @@ sqlalchemy
 alembic
 psycopg2-binary
 python-jose[cryptography]
+PyJWT[cryptography]
 passlib[bcrypt]
 bcrypt<4.0.0
 celery
