@@ -29,7 +29,7 @@ def check_email(email: str, db: Session = Depends(get_db)):
     if existing_user:
         return {
             "exists": True,
-            "message": "An account with this email already exists."
+            "message": "This email is already registered. Please log in instead."
         }
     else:
         return {
@@ -93,7 +93,7 @@ def sync_user(
             if existing_user.supabase_id != user_data.id:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="An account with this email already exists. If you signed up with Google, please use 'Sign in with Google' instead. Otherwise, please sign in with your existing account."
+                    detail="This email is already registered. Please log in instead."
                 )
             # Same Supabase user - just return success
             return {
@@ -105,7 +105,7 @@ def sync_user(
             # This means someone is trying to register with Supabase using an email that's already taken
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="An account with this email already exists. Please sign in with your existing account instead."
+                detail="This email is already registered. Please log in instead."
             )
     else:
         # Check if a user with this Supabase ID already exists (shouldn't happen, but safety check)
