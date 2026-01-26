@@ -203,7 +203,17 @@ async def verify_checkout_session(
         # Update user plan tier based on subscription
         from app.api.routes.webhooks import get_plan_tier_from_subscription
         plan_tier = get_plan_tier_from_subscription(subscription.to_dict())
+        
+        print(f"📊 Determined plan tier: {plan_tier} for user {user_id}")
+        print(f"📊 Current user plan_tier before update: {user.plan_tier}")
+        
+        if plan_tier == "free":
+            print(f"⚠️ WARNING: Plan tier is 'free' for subscription {subscription_id_str}. This might indicate a configuration issue.")
+            print(f"⚠️ Price ID from subscription: {subscription.items.data[0].price.id if subscription.items.data else 'N/A'}")
+            print(f"⚠️ STRIPE_PRICE_ID_PRO env var: {os.getenv('STRIPE_PRICE_ID_PRO', 'NOT SET')}")
+        
         user.plan_tier = plan_tier
+        print(f"✅ Updated user {user_id} plan_tier to: {plan_tier}")
         
         # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
         if plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:

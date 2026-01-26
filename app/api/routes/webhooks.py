@@ -65,12 +65,24 @@ def handle_checkout_session_completed(session_data: dict, db: Session):
         return
     
     # Get subscription ID from checkout session
-    subscription_id = session_data.get("subscription")
+    subscription_id_raw = session_data.get("subscription")
     customer_id = session_data.get("customer")
     
-    if not subscription_id:
+    if not subscription_id_raw:
         print("⚠️ No subscription ID in checkout session")
         return
+    
+    # Handle subscription_id - it might be a string or an object
+    if isinstance(subscription_id_raw, str):
+        subscription_id = subscription_id_raw
+    elif hasattr(subscription_id_raw, 'id'):
+        subscription_id = subscription_id_raw.id
+    elif isinstance(subscription_id_raw, dict) and 'id' in subscription_id_raw:
+        subscription_id = subscription_id_raw['id']
+    else:
+        subscription_id = str(subscription_id_raw)
+    
+    print(f"📋 Extracted subscription ID: {subscription_id}")
     
     # Retrieve subscription details from Stripe
     try:
@@ -94,6 +106,11 @@ def handle_checkout_session_completed(session_data: dict, db: Session):
         
         # Update user plan tier
         plan_tier = get_plan_tier_from_subscription(subscription.to_dict())
+        print(f"📊 Determined plan tier: {plan_tier} for subscription {subscription_id}")
+        
+        if plan_tier == "free":
+            print(f"⚠️ WARNING: Plan tier is 'free' for subscription {subscription_id}. Price ID: {subscription.items.data[0].price.id if subscription.items.data else 'N/A'}")
+        
         user.plan_tier = plan_tier
         
         # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
@@ -233,22 +250,40 @@ def get_plan_tier_from_subscription(subscription_data: dict) -> str:
     # Get price ID from subscription items
     items = subscription_data.get("items", {}).get("data", [])
     if not items:
+        print("⚠️ No items found in subscription data")
         return "free"
 
     price_id = items[0].get("price", {}).get("id", "")
+    
+    if not price_id:
+        print("⚠️ No price ID found in subscription items")
+        return "free"
 
     # Map price IDs to plan tiers (configure these in environment or database)
     # Note: STRIPE_PRICE_ID_PRO is the price ID for the Pro plan ($15/mo)
     STRIPE_PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO", "")
+    STRIPE_BASIC_PRICE_ID = os.getenv("STRIPE_BASIC_PRICE_ID", "")
+    STRIPE_ENTERPRISE_PRICE_ID = os.getenv("STRIPE_ENTERPRISE_PRICE_ID", "")
     
     PRICE_TO_TIER = {
-        os.getenv("STRIPE_BASIC_PRICE_ID", ""): "basic",
+        STRIPE_BASIC_PRICE_ID: "basic",
         STRIPE_PRICE_ID_PRO: "pro",  # Pro plan
-        os.getenv("STRIPE_ENTERPRISE_PRICE_ID", ""): "enterprise",
+        STRIPE_ENTERPRISE_PRICE_ID: "enterprise",
     }
+    
+    print(f"🔍 Checking price ID: {price_id}")
+    print(f"🔍 STRIPE_PRICE_ID_PRO: {STRIPE_PRICE_ID_PRO}")
+    print(f"🔍 Price mapping: {PRICE_TO_TIER}")
     
     # Check if price ID matches Pro plan
     if price_id == STRIPE_PRICE_ID_PRO:
+        print(f"✅ Matched Pro plan for price ID: {price_id}")
         return "pro"
-
-    return PRICE_TO_TIER.get(price_id, "free")
+    
+    tier = PRICE_TO_TIER.get(price_id, "free")
+    if tier != "free":
+        print(f"✅ Matched {tier} plan for price ID: {price_id}")
+    else:
+        print(f"⚠️ No matching plan tier found for price ID: {price_id}. Defaulting to 'free'")
+    
+    return tier
