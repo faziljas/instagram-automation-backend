@@ -7,7 +7,6 @@ from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
 from app.schemas.auth import UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest, UserSyncRequest
-from app.utils.auth import hash_password, verify_password, create_access_token
 from app.dependencies.auth import verify_supabase_token
 
 router = APIRouter()
@@ -89,11 +88,15 @@ def sync_user(
         )
     
     try:
-        # Use the new verify_supabase_token dependency
-        supabase_user_id = verify_supabase_token(authorization)
+        # Use the new verify_supabase_token dependency - it returns the payload
+        payload = verify_supabase_token(authorization)
         
-        # Verify that the token's user ID matches the request
-        if supabase_user_id != user_data.id:
+        # Extract user ID and email from verified payload
+        token_user_id = payload.get("sub")
+        token_email = payload.get("email", "").lower()
+        
+        # Verify that the token's user ID and email match the request
+        if token_user_id != user_data.id or token_email != user_data.email.lower():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Token user does not match sync request"

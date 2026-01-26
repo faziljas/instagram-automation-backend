@@ -99,7 +99,7 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
     """
     Verifies the Supabase JWT token.
     Supports both HS256 (Shared Secret) and ES256/RS256 (Asymmetric Key).
-    Returns the user ID (sub claim) if valid.
+    Returns the payload dict if valid.
     """
     if not authorization:
         raise HTTPException(
@@ -152,10 +152,9 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
                 audience="authenticated",
                 options={"verify_aud": True}
             )
-            user_id = payload.get("sub")
             email = payload.get("email", "unknown")
             print(f"[AUTH] Successfully verified HS256 token for user: {email}")
-            return user_id
+            return payload  # Return full payload
         except JWTError as e:
             print(f"[AUTH] HS256 Verification failed: {str(e)}")
             raise HTTPException(
@@ -206,10 +205,9 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
                 audience="authenticated",
                 options={"verify_aud": True}
             )
-            user_id = payload.get("sub")
             email = payload.get("email", "unknown")
             print(f"[AUTH] Successfully verified {algo} token for user: {email}")
-            return user_id
+            return payload  # Return full payload
         except JWTError as e:
             print(f"[AUTH] {algo} Verification failed: {str(e)}")
             raise HTTPException(
@@ -233,50 +231,26 @@ def get_current_user_id(
     FastAPI dependency that verifies Supabase token and returns backend user ID.
     This is the main dependency to use in route handlers.
     """
-    # Verify token and get Supabase user ID
-    supabase_user_id = verify_supabase_token(authorization)
+    # Verify token and get payload (already verified, so we have email)
+    payload = verify_supabase_token(authorization)
     
-    # Get the token payload to extract email for user lookup
-    if not authorization:
+    # Extract email from verified payload
+    email = payload.get("email")
+    
+    if not email:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header"
+            detail="Token missing email claim"
         )
     
-    token = authorization.replace("Bearer ", "").strip()
+    # Look up user by email in backend database
+    from app.models.user import User
+    user = db.query(User).filter(User.email.ilike(email)).first()
     
-    try:
-        # Decode token to get email (without verification, we already verified it)
-        # Use decode with verify_signature=False since we already verified
-        unverified_payload = jwt.decode(
-            token,
-            options={"verify_signature": False, "verify_aud": False, "verify_exp": False}
-        )
-        email = unverified_payload.get("email")
-        
-        if not email:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token missing email claim"
-            )
-        
-        # Look up user by email in backend database
-        from app.models.user import User
-        user = db.query(User).filter(User.email.ilike(email)).first()
-        
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found in database. Please sync your account first."
-            )
-        
-        return user.id
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[AUTH] Error getting user ID: {str(e)}")
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Failed to get user ID from token"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found in database. Please sync your account first."
         )
+    
+    return user.id
