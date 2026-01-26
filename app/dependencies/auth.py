@@ -59,14 +59,31 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
             detail="Missing token"
         )
     
+    # Validate JWT token format (should have 3 parts: header.payload.signature)
+    token_parts = token.split(".")
+    if len(token_parts) != 3:
+        print(f"[AUTH] Invalid token format: expected 3 parts, got {len(token_parts)}. Token length: {len(token)}")
+        print(f"[AUTH] Token preview (first 50 chars): {token[:50]}...")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token format. Token must have header.payload.signature structure."
+        )
+    
     # 1. Check Algorithm from header
     try:
         unverified_header = jwt.get_unverified_header(token)
         algo = unverified_header.get("alg")
         kid = unverified_header.get("kid")
         print(f"[AUTH] Token algorithm: {algo}, Key ID: {kid}")
-    except Exception as e:
+    except jwt.DecodeError as e:
         print(f"[AUTH] Failed to decode token header: {str(e)}")
+        print(f"[AUTH] Token preview (first 100 chars): {token[:100]}...")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token header: {str(e)}"
+        )
+    except Exception as e:
+        print(f"[AUTH] Unexpected error decoding token header: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token header"
