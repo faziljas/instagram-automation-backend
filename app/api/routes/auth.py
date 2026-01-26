@@ -6,68 +6,10 @@ from app.models.instagram_account import InstagramAccount
 from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
-from app.schemas.auth import UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest, UserSyncRequest
+from app.schemas.auth import ForgotPasswordRequest, UserSyncRequest
 from app.dependencies.auth import verify_supabase_token
-from app.utils.auth import hash_password, verify_password, create_access_token
 
 router = APIRouter()
-
-
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    # Check for existing user (case-insensitive email comparison)
-    existing_user = db.query(User).filter(
-        User.email.ilike(user_data.email)
-    ).first()
-    
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="An account with this email already exists. Please login instead."
-        )
-
-    hashed_password = hash_password(user_data.password)
-    new_user = User(
-        email=user_data.email.lower(),  # Store email in lowercase
-        hashed_password=hashed_password
-    )
-    
-    try:
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Registration failed. This email may already be in use."
-        )
-
-    access_token = create_access_token(data={"sub": str(new_user.id)})
-    return TokenResponse(access_token=access_token, token_type="bearer")
-
-
-@router.post("/login", response_model=TokenResponse)
-def login(user_data: UserLogin, db: Session = Depends(get_db)):
-    # Case-insensitive email lookup
-    user = db.query(User).filter(
-        User.email.ilike(user_data.email)
-    ).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password. Please check your credentials and try again."
-        )
-
-    if not verify_password(user_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password. Please check your credentials and try again."
-        )
-
-    access_token = create_access_token(data={"sub": str(user.id)})
-    return TokenResponse(access_token=access_token, token_type="bearer")
 
 
 @router.post("/sync-user")
