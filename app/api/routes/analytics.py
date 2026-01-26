@@ -12,44 +12,12 @@ from app.db.session import get_db
 from app.models.analytics_event import AnalyticsEvent, EventType
 from app.models.automation_rule import AutomationRule
 from app.models.instagram_account import InstagramAccount
-from app.utils.auth import verify_token
+from app.dependencies.auth import get_current_user_id
 from app.utils.encryption import decrypt_credentials
 from pydantic import BaseModel
 import requests
 
 router = APIRouter()
-
-
-def get_current_user_id(authorization: str = Header(None)) -> int:
-    """Extract user_id from JWT token."""
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    try:
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication scheme"
-            )
-        
-        payload = verify_token(token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-        
-        user_id = int(payload.get("sub"))
-        return user_id
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token format"
-        )
 
 
 def _is_instagram_profile_url(url: str) -> bool:

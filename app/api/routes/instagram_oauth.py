@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.instagram_account import InstagramAccount
-from app.utils.auth import verify_token
+from app.dependencies.auth import get_current_user_id
 from app.utils.encryption import encrypt_credentials
 from app.utils.plan_enforcement import check_account_limit
 
@@ -33,34 +33,6 @@ class ConnectSDKRequest(BaseModel):
 
 class ExchangeCodeRequest(BaseModel):
     code: str
-
-
-def get_current_user_id(authorization: str = Header(None)) -> int:
-    """Extract and verify user ID from JWT token in Authorization header."""
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization token"
-        )
-    
-    try:
-        # Extract token from "Bearer <token>"
-        token = authorization.replace("Bearer ", "")
-        payload = verify_token(token)
-        user_id = payload.get("sub")
-        
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload"
-            )
-        
-        return int(user_id)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
 
 
 @router.get("/oauth/authorize")

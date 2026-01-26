@@ -7,7 +7,8 @@ from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
 from app.schemas.auth import UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest, UserSyncRequest
-from app.utils.auth import hash_password, verify_password, create_access_token, verify_supabase_token
+from app.utils.auth import hash_password, verify_password, create_access_token
+from app.dependencies.auth import verify_supabase_token
 
 router = APIRouter()
 
@@ -80,7 +81,7 @@ def sync_user(
     Creates user if doesn't exist, updates if exists.
     Requires valid Supabase JWT token.
     """
-    # Verify Supabase token
+    # Verify Supabase token using the new dependency
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -88,20 +89,11 @@ def sync_user(
         )
     
     try:
-        token = authorization.replace("Bearer ", "")
-        payload = verify_supabase_token(token)
+        # Use the new verify_supabase_token dependency
+        supabase_user_id = verify_supabase_token(authorization)
         
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired Supabase token"
-            )
-        
-        # Verify that the token's user ID and email match the request
-        token_user_id = payload.get("sub")
-        token_email = payload.get("email", "").lower()
-        
-        if token_user_id != user_data.id or token_email != user_data.email.lower():
+        # Verify that the token's user ID matches the request
+        if supabase_user_id != user_data.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Token user does not match sync request"
@@ -109,6 +101,7 @@ def sync_user(
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[AUTH] Error verifying token in sync-user: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authorization token"

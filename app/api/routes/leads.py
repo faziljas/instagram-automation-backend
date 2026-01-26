@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.captured_lead import CapturedLead
 from app.models.automation_rule import AutomationRule
 from app.models.instagram_account import InstagramAccount
-from app.api.routes.automation import get_current_user_id
+from app.dependencies.auth import get_current_user_id
 from pydantic import BaseModel
 from datetime import datetime
 

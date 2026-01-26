@@ -17,7 +17,7 @@ from app.models.instagram_audience import InstagramAudience
 from app.models.instagram_global_tracker import InstagramGlobalTracker
 from app.schemas.auth import UserResponse, DashboardStatsResponse, SubscriptionResponse, UserUpdate, PasswordChange
 from app.utils.auth import hash_password, verify_password
-from app.api.routes.instagram import get_current_user_id
+from app.dependencies.auth import get_current_user_id
 from datetime import datetime, timedelta
 
 router = APIRouter()

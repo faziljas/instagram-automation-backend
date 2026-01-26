@@ -7,7 +7,7 @@ from app.models.automation_rule import AutomationRule
 from app.models.automation_rule_stats import AutomationRuleStats
 from app.models.instagram_account import InstagramAccount
 from app.schemas.automation import AutomationRuleCreate, AutomationRuleUpdate, AutomationRuleResponse
-from app.utils.auth import verify_token
+from app.dependencies.auth import get_current_user_id
 from app.utils.plan_enforcement import check_rule_limit
 from app.models.user import User
 from app.services.instagram_usage_tracker import (
@@ -17,37 +17,6 @@ from app.services.instagram_usage_tracker import (
 )
 
 router = APIRouter()
-
-
-def get_current_user_id(authorization: str = Header(None)) -> int:
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    try:
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication scheme"
-            )
-        
-        payload = verify_token(token)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-        
-        user_id = int(payload.get("sub"))
-        return user_id
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token format"
-        )
 
 
 @router.post("/rules", response_model=AutomationRuleResponse, status_code=status.HTTP_201_CREATED)

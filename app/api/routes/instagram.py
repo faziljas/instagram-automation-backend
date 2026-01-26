@@ -14,7 +14,7 @@ from app.models.dm_log import DmLog
 from app.schemas.instagram import InstagramAccountCreate, InstagramAccountResponse
 from app.utils.encryption import encrypt_credentials, decrypt_credentials
 from app.services.instagram_client import InstagramClient
-from app.utils.auth import verify_token, get_user_id_from_token
+from app.dependencies.auth import get_current_user_id
 from app.utils.plan_enforcement import check_account_limit
 
 router = APIRouter()
@@ -102,52 +102,6 @@ def get_or_create_conversation(
         return conversation
 
 
-def get_current_user_id(
-    authorization: str = Header(None),
-    db: Session = Depends(get_db)
-) -> int:
-    """
-    Extract and verify user ID from JWT token in Authorization header.
-    Supports both Supabase tokens and legacy app tokens.
-    """
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    try:
-        # Extract token from "Bearer <token>"
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication scheme"
-            )
-        
-        # Use flexible token verification (Supabase first, then legacy)
-        user_id = get_user_id_from_token(token, db_session=db)
-        
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token"
-            )
-        
-        return user_id
-    except HTTPException:
-        raise
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token format"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token verification failed: {str(e)}"
-        )
-    
 @router.get("/webhook")
 async def verify_webhook(
     hub_mode: str = Query(alias="hub.mode"),
