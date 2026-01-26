@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.db.session import get_db
@@ -343,16 +343,61 @@ def cancel_subscription(
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user_account(
+    request: Request,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    """Delete user account and all associated data. Order respects FK constraints."""
+    """Delete user account and all associated data. Order respects FK constraints.
+    Also deletes the user from Supabase Auth."""
+    from app.dependencies.auth import verify_supabase_token
+    import os
+    import requests
+    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+    
+    # Extract Supabase user ID from token to delete from Supabase Auth
+    supabase_user_id = None
+    try:
+        # Get authorization header from request
+        authorization = request.headers.get("Authorization")
+        if authorization:
+            payload = verify_supabase_token(authorization)
+            if payload:
+                supabase_user_id = payload.get("sub")  # Supabase user ID
+    except Exception as e:
+        print(f"[DELETE] Could not extract Supabase user ID: {e}")
+        # Continue with backend deletion even if Supabase deletion fails
+    
+    # Delete from Supabase Auth if we have the user ID
+    if supabase_user_id:
+        try:
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            
+            if supabase_url and supabase_service_key:
+                # Delete user from Supabase Auth using Admin API
+                delete_url = f"{supabase_url}/auth/v1/admin/users/{supabase_user_id}"
+                headers = {
+                    "apikey": supabase_service_key,
+                    "Authorization": f"Bearer {supabase_service_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                response = requests.delete(delete_url, headers=headers, timeout=10)
+                if response.status_code == 200 or response.status_code == 204:
+                    print(f"[DELETE] Successfully deleted user {supabase_user_id} from Supabase Auth")
+                else:
+                    print(f"[DELETE] Failed to delete from Supabase Auth: {response.status_code} - {response.text}")
+            else:
+                print("[DELETE] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set, skipping Supabase deletion")
+        except Exception as e:
+            print(f"[DELETE] Error deleting from Supabase Auth: {e}")
+            # Continue with backend deletion even if Supabase deletion fails
 
     account_ids = [a.id for a in db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).all()]
     rule_ids = []
