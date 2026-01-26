@@ -43,6 +43,20 @@ class PasswordChange(BaseModel):
     new_password: str
 
 
+class UserSyncRequest(BaseModel):
+    id: str  # Supabase user ID
+    email: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 class DashboardUser(BaseModel):
     id: int
     email: str

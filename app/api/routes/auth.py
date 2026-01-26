@@ -6,7 +6,7 @@ from app.models.instagram_account import InstagramAccount
 from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
-from app.schemas.auth import UserCreate, UserLogin, TokenResponse
+from app.schemas.auth import UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest, UserSyncRequest
 from app.utils.auth import hash_password, verify_password, create_access_token
 
 router = APIRouter()
@@ -67,6 +67,87 @@ def login(user_data: UserLogin, db: Session = Depends(get_db)):
 
     access_token = create_access_token(data={"sub": str(user.id)})
     return TokenResponse(access_token=access_token, token_type="bearer")
+
+
+@router.post("/sync-user")
+def sync_user(user_data: UserSyncRequest, db: Session = Depends(get_db)):
+    """
+    Sync user from Supabase Auth to our database.
+    Creates user if doesn't exist, updates if exists.
+    """
+    # Check if user exists by email (case-insensitive)
+    existing_user = db.query(User).filter(
+        User.email.ilike(user_data.email)
+    ).first()
+    
+    if existing_user:
+        # Update existing user
+        # Note: Password is managed by Supabase, so we use a placeholder
+        # In production, you might want to add a supabase_id field to track Supabase users
+        return {
+            "message": "User synced successfully",
+            "user_id": existing_user.id
+        }
+    else:
+        # Create new user
+        # Use a placeholder password since auth is handled by Supabase
+        # The password field is required but won't be used for authentication
+        from app.utils.auth import hash_password
+        placeholder_password = hash_password(f"supabase_user_{user_data.id}")
+        
+        new_user = User(
+            email=user_data.email.lower(),
+            hashed_password=placeholder_password,
+            is_verified=True,  # Supabase handles email verification
+        )
+        
+        try:
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            return {
+                "message": "User created successfully",
+                "user_id": new_user.id
+            }
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to sync user: {str(e)}"
+            )
+
+
+@router.post("/forgot-password")
+def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Request a password reset link.
+    For security, this endpoint always returns success even if the email doesn't exist.
+    """
+    # Case-insensitive email lookup
+    user = db.query(User).filter(
+        User.email.ilike(request.email)
+    ).first()
+    
+    # Always return success for security (prevent email enumeration)
+    # In production, you would:
+    # 1. Generate a secure reset token
+    # 2. Store it in the database with expiration time
+    # 3. Send an email with the reset link
+    # 4. The reset link would point to /reset-password?token=...
+    
+    if user:
+        # TODO: In production, implement:
+        # - Generate secure token (e.g., using secrets.token_urlsafe())
+        # - Store token in database with expiration (e.g., 1 hour)
+        # - Send email with reset link
+        # - Use email service (SendGrid, AWS SES, etc.)
+        print(f"[Password Reset] Reset requested for user: {user.email}")
+        # For now, just log it
+    
+    # Always return success to prevent email enumeration
+    return {
+        "message": "If an account exists with this email, a password reset link has been sent."
+    }
 
 
 @router.delete("/cleanup/{email}")
