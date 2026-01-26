@@ -211,6 +211,14 @@ async def verify_checkout_session(
             print(f"⚠️ WARNING: Plan tier is 'free' for subscription {subscription_id_str}. This might indicate a configuration issue.")
             print(f"⚠️ Price ID from subscription: {subscription.items.data[0].price.id if subscription.items.data else 'N/A'}")
             print(f"⚠️ STRIPE_PRICE_ID_PRO env var: {os.getenv('STRIPE_PRICE_ID_PRO', 'NOT SET')}")
+            
+            # Fallback: If we have an active subscription but plan_tier is free, default to pro
+            # This handles cases where STRIPE_PRICE_ID_PRO might not be configured correctly
+            if subscription.status == "active" and subscription.items.data:
+                price_id = subscription.items.data[0].price.id
+                print(f"⚠️ Subscription is active but plan_tier is 'free'. Price ID: {price_id}")
+                print(f"⚠️ Defaulting to 'pro' plan for active subscription")
+                plan_tier = "pro"
         
         user.plan_tier = plan_tier
         print(f"✅ Updated user {user_id} plan_tier to: {plan_tier}")

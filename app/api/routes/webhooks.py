@@ -110,6 +110,14 @@ def handle_checkout_session_completed(session_data: dict, db: Session):
         
         if plan_tier == "free":
             print(f"⚠️ WARNING: Plan tier is 'free' for subscription {subscription_id}. Price ID: {subscription.items.data[0].price.id if subscription.items.data else 'N/A'}")
+            
+            # Fallback: If we have an active subscription but plan_tier is free, default to pro
+            # This handles cases where STRIPE_PRICE_ID_PRO might not be configured correctly
+            if subscription.status == "active" and subscription.items.data:
+                price_id = subscription.items.data[0].price.id
+                print(f"⚠️ Subscription is active but plan_tier is 'free'. Price ID: {price_id}")
+                print(f"⚠️ Defaulting to 'pro' plan for active subscription")
+                plan_tier = "pro"
         
         user.plan_tier = plan_tier
         
