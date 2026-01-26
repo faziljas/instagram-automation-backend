@@ -8,6 +8,7 @@ from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
 from app.schemas.auth import UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest, UserSyncRequest
 from app.dependencies.auth import verify_supabase_token
+from app.utils.auth import hash_password, verify_password, create_access_token
 
 router = APIRouter()
 
@@ -116,14 +117,40 @@ def sync_user(
     ).first()
     
     if existing_user:
-        # Update existing user
-        # Note: Password is managed by Supabase, so we use a placeholder
-        # In production, you might want to add a supabase_id field to track Supabase users
-        return {
-            "message": "User synced successfully",
-            "user_id": existing_user.id
-        }
+        # Check if this is a different Supabase user trying to register with an existing email
+        # This prevents duplicate registrations when a user signs up with Google OAuth
+        # and then tries to register with email/password (or vice versa)
+        if existing_user.supabase_id:
+            # User already has a Supabase ID - check if it matches
+            if existing_user.supabase_id != user_data.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="An account with this email already exists. If you signed up with Google, please use 'Sign in with Google' instead. Otherwise, please sign in with your existing account."
+                )
+            # Same Supabase user - just return success
+            return {
+                "message": "User synced successfully",
+                "user_id": existing_user.id
+            }
+        else:
+            # User exists but doesn't have a Supabase ID (created via old /auth/register endpoint)
+            # This means someone is trying to register with Supabase using an email that's already taken
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An account with this email already exists. Please sign in with your existing account instead."
+            )
     else:
+        # Check if a user with this Supabase ID already exists (shouldn't happen, but safety check)
+        existing_supabase_user = db.query(User).filter(
+            User.supabase_id == user_data.id
+        ).first()
+        
+        if existing_supabase_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user account already exists for this Supabase account."
+            )
+        
         # Create new user
         # Use a placeholder password since auth is handled by Supabase
         # The password field is required but won't be used for authentication
@@ -133,6 +160,7 @@ def sync_user(
         new_user = User(
             email=user_data.email.lower(),
             hashed_password=placeholder_password,
+            supabase_id=user_data.id,  # Store Supabase user ID
             is_verified=True,  # Supabase handles email verification
         )
         

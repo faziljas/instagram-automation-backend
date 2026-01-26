@@ -137,6 +137,16 @@ async def startup_event():
         print(f"⚠️ automation_rules account_id nullable migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
     
+    # Run supabase_id migration (prevents duplicate registrations when users sign up with different providers)
+    try:
+        print("🔄 Running supabase_id migration...", file=sys.stderr)
+        from add_supabase_id_migration import run_migration as run_supabase_id_migration
+        run_supabase_id_migration()
+        print("✅ supabase_id migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ supabase_id migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
+    
     # Try Alembic migrations (if Alembic is configured)
     try:
         import subprocess
