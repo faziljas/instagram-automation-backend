@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.db.session import get_db
 from app.models.user import User
 from app.models.subscription import Subscription
-from app.utils.auth import verify_token
+from app.utils.auth import verify_token_flexible, get_user_id_from_token
 
 router = APIRouter()
 
@@ -20,8 +20,14 @@ STRIPE_PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
-def get_current_user_id(authorization: str = Header(None)) -> int:
-    """Extract and verify user ID from JWT token in Authorization header."""
+def get_current_user_id(
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+) -> int:
+    """
+    Extract and verify user ID from JWT token in Authorization header.
+    Supports both Supabase tokens and legacy app tokens.
+    """
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -31,16 +37,19 @@ def get_current_user_id(authorization: str = Header(None)) -> int:
     try:
         # Extract token from "Bearer <token>"
         token = authorization.replace("Bearer ", "")
-        payload = verify_token(token)
-        user_id = payload.get("sub")
+        
+        # Try flexible verification (Supabase first, then legacy)
+        user_id = get_user_id_from_token(token, db_session=db)
         
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload"
+                detail="Invalid or expired token"
             )
         
-        return int(user_id)
+        return user_id
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

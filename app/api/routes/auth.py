@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.user import User
@@ -7,7 +7,7 @@ from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
 from app.schemas.auth import UserCreate, UserLogin, TokenResponse, ForgotPasswordRequest, UserSyncRequest
-from app.utils.auth import hash_password, verify_password, create_access_token
+from app.utils.auth import hash_password, verify_password, create_access_token, verify_supabase_token
 
 router = APIRouter()
 
@@ -70,11 +70,50 @@ def login(user_data: UserLogin, db: Session = Depends(get_db)):
 
 
 @router.post("/sync-user")
-def sync_user(user_data: UserSyncRequest, db: Session = Depends(get_db)):
+def sync_user(
+    user_data: UserSyncRequest,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
     """
     Sync user from Supabase Auth to our database.
     Creates user if doesn't exist, updates if exists.
+    Requires valid Supabase JWT token.
     """
+    # Verify Supabase token
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization token"
+        )
+    
+    try:
+        token = authorization.replace("Bearer ", "")
+        payload = verify_supabase_token(token)
+        
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired Supabase token"
+            )
+        
+        # Verify that the token's user ID and email match the request
+        token_user_id = payload.get("sub")
+        token_email = payload.get("email", "").lower()
+        
+        if token_user_id != user_data.id or token_email != user_data.email.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Token user does not match sync request"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization token"
+        )
+    
     # Check if user exists by email (case-insensitive)
     existing_user = db.query(User).filter(
         User.email.ilike(user_data.email)
