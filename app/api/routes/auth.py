@@ -12,6 +12,32 @@ from app.dependencies.auth import verify_supabase_token
 router = APIRouter()
 
 
+@router.get("/check-email/{email}")
+def check_email(email: str, db: Session = Depends(get_db)):
+    """
+    Check if an email already exists in the database (case-insensitive).
+    This helps prevent duplicate registrations with different email cases.
+    Returns 200 if email exists, 404 if it doesn't.
+    """
+    # Normalize email to lowercase for comparison
+    normalized_email = email.lower().strip()
+    
+    existing_user = db.query(User).filter(
+        User.email.ilike(normalized_email)
+    ).first()
+    
+    if existing_user:
+        return {
+            "exists": True,
+            "message": "An account with this email already exists."
+        }
+    else:
+        return {
+            "exists": False,
+            "message": "Email is available."
+        }
+
+
 @router.post("/sync-user")
 def sync_user(
     user_data: UserSyncRequest,
