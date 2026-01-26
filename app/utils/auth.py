@@ -51,6 +51,7 @@ def verify_supabase_token(token: str) -> dict:
     Returns the decoded payload if valid, None otherwise.
     """
     if not SUPABASE_JWT_SECRET:
+        print("[AUTH] WARNING: SUPABASE_JWT_SECRET is not set. Cannot verify Supabase tokens.")
         return None
     
     try:
@@ -62,8 +63,10 @@ def verify_supabase_token(token: str) -> dict:
             audience="authenticated",
             options={"verify_aud": True}
         )
+        print(f"[AUTH] Successfully verified Supabase token for user: {payload.get('email', 'unknown')}")
         return payload
-    except JWTError:
+    except JWTError as e:
+        print(f"[AUTH] Failed to verify Supabase token: {str(e)}")
         return None
 
 

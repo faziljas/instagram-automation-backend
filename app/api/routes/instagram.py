@@ -14,7 +14,7 @@ from app.models.dm_log import DmLog
 from app.schemas.instagram import InstagramAccountCreate, InstagramAccountResponse
 from app.utils.encryption import encrypt_credentials, decrypt_credentials
 from app.services.instagram_client import InstagramClient
-from app.utils.auth import verify_token
+from app.utils.auth import verify_token, get_user_id_from_token
 from app.utils.plan_enforcement import check_account_limit
 
 router = APIRouter()
@@ -102,7 +102,14 @@ def get_or_create_conversation(
         return conversation
 
 
-def get_current_user_id(authorization: str = Header(None)) -> int:
+def get_current_user_id(
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+) -> int:
+    """
+    Extract and verify user ID from JWT token in Authorization header.
+    Supports both Supabase tokens and legacy app tokens.
+    """
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -118,20 +125,27 @@ def get_current_user_id(authorization: str = Header(None)) -> int:
                 detail="Invalid authentication scheme"
             )
         
-        # Verify token using existing verify_token function
-        payload = verify_token(token)
-        if not payload:
+        # Use flexible token verification (Supabase first, then legacy)
+        user_id = get_user_id_from_token(token, db_session=db)
+        
+        if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired token"
             )
         
-        user_id = int(payload.get("sub"))
         return user_id
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token format"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token verification failed: {str(e)}"
         )
     
 @router.get("/webhook")
