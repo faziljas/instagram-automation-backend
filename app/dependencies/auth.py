@@ -59,6 +59,14 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
             detail="Missing token"
         )
     
+    # Reject common invalid token values
+    if token.lower() in ["null", "undefined", "none", ""]:
+        print(f"[AUTH] Rejected invalid token value: '{token}'")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: token value is null or undefined"
+        )
+    
     # Validate JWT token format (should have 3 parts: header.payload.signature)
     token_parts = token.split(".")
     if len(token_parts) != 3:
