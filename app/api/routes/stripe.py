@@ -272,3 +272,66 @@ async def verify_checkout_session(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to verify checkout session: {str(e)}"
         )
+
+
+@router.post("/create-portal-session")
+async def create_billing_portal_session(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+  """
+  Create a Stripe Billing Portal session so the user can manage their
+  subscription, payment methods, and invoices directly in Stripe.
+  """
+  # Find the user's subscription to locate the Stripe customer via subscription
+  subscription = (
+      db.query(Subscription)
+      .filter(Subscription.user_id == user_id)
+      .first()
+  )
+
+  if not subscription or not subscription.stripe_subscription_id:
+      raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="No active Stripe subscription found for this user",
+      )
+
+  try:
+      # Retrieve the Stripe subscription to get the customer ID
+      stripe_subscription = stripe.Subscription.retrieve(
+          subscription.stripe_subscription_id
+      )
+      customer_id = stripe_subscription.customer
+
+      if not customer_id:
+          raise HTTPException(
+              status_code=status.HTTP_400_BAD_REQUEST,
+              detail="Stripe customer not found for this subscription",
+          )
+
+      # Create a Billing Portal session
+      portal_session = stripe.billing_portal.Session.create(
+          customer=customer_id,
+          return_url=f"{FRONTEND_URL}/dashboard/settings",
+      )
+
+      print(
+          f"✅ Created Stripe Billing Portal session: {portal_session.id} for user {user_id}"
+      )
+
+      return {"portal_url": portal_session.url}
+
+  except stripe.error.StripeError as e:
+      print(f"❌ Stripe error creating billing portal session: {str(e)}")
+      raise HTTPException(
+          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+          detail=f"Failed to create billing portal session: {str(e)}",
+      )
+  except HTTPException:
+      raise
+  except Exception as e:
+      print(f"❌ Error creating billing portal session: {str(e)}")
+      raise HTTPException(
+          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+          detail=f"Failed to create billing portal session: {str(e)}",
+      )
