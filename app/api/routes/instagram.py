@@ -450,8 +450,8 @@ async def process_instagram_message(event: dict, db: Session):
                 user_email = quick_reply_payload.replace("email_use_", "")
                 log_print(f"📧 User clicked their email button, auto-submitting: {user_email}")
                 from app.models.automation_rule import AutomationRule
-                from app.services.pre_dm_handler import update_pre_dm_state, check_if_email_response
-                from app.services.lead_capture import validate_email
+                from app.services.pre_dm_handler import update_pre_dm_state
+                from app.services.lead_capture import validate_email, update_automation_stats
                 
                 # Validate the email
                 is_valid, _ = validate_email(user_email)
@@ -507,6 +507,35 @@ async def process_instagram_message(event: dict, db: Session):
                         except Exception as save_err:
                             log_print(f"⚠️ Failed to save email to leads: {str(save_err)}", "WARNING")
                             db.rollback()
+
+                        # Update automation stats + log EMAIL_COLLECTED analytics event
+                        try:
+                            # Increment lead_captured stats for this rule
+                            try:
+                                update_automation_stats(rule.id, "lead_captured", db)
+                            except Exception as stats_err:
+                                log_print(f"⚠️ Failed to update automation stats for quick-reply email: {str(stats_err)}", "WARNING")
+                            
+                            # Log EMAIL_COLLECTED analytics event so it appears in dashboard
+                            from app.utils.analytics import log_analytics_event_sync
+                            from app.models.analytics_event import EventType
+                            media_id = rule.config.get("media_id") if isinstance(rule.config, dict) else None
+                            log_analytics_event_sync(
+                                db=db,
+                                user_id=account.user_id,
+                                event_type=EventType.EMAIL_COLLECTED,
+                                rule_id=rule.id,
+                                media_id=media_id,
+                                instagram_account_id=account.id,
+                                metadata={
+                                    "sender_id": sender_id,
+                                    "email": user_email,
+                                    "captured_via": "quick_reply_button"
+                                }
+                            )
+                            log_print(f"✅ EMAIL_COLLECTED analytics event logged for quick-reply email: {user_email}")
+                        except Exception as analytics_err:
+                            log_print(f"⚠️ Failed to log EMAIL_COLLECTED event for quick-reply email: {str(analytics_err)}", "WARNING")
                         
                         # Proceed to primary DM
                         asyncio.create_task(execute_automation_action(
