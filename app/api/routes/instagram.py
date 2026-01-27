@@ -3044,10 +3044,15 @@ async def execute_automation_action(
                                 # Small delay to ensure conversation is open
                                 await asyncio.sleep(1)
                                 
-                                # Send follow message with "Visit Profile" URL button (card format - required for navigation)
+                                # CRITICAL FIX: Use private reply for follow-up messages too (bypasses 24-hour window)
+                                # Instagram treats private replies (comment_id) differently from regular DMs (sender_id)
+                                # We must continue using comment_id for all messages to avoid "outside allowed window" errors
                                 try:
-                                    send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=None)
-                                    print(f"✅ Follow request sent with 'Visit Profile' URL button (card format - enables navigation)")
+                                    # Send follow message as private reply (plain text, no URL buttons - Instagram private replies don't support URL buttons)
+                                    # Combine follow message with quick reply prompt
+                                    follow_with_quick_replies = f"{follow_message_with_instructions}\n\nClick one of the options below:"
+                                    send_private_reply(comment_id, follow_with_quick_replies, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
+                                    print(f"✅ Follow request sent via private reply with quick replies (bypasses 24-hour window)")
                                     
                                     # Log DM sent (tracks in DmLog and increments global tracker)
                                     try:
@@ -3056,30 +3061,7 @@ async def execute_automation_action(
                                             user_id=account.user_id,
                                             instagram_account_id=account.id,
                                             recipient_username=str(sender_id),
-                                            message=follow_message_with_instructions,
-                                            db=db,
-                                            instagram_username=account.username,
-                                            instagram_igsid=getattr(account, "igsid", None)
-                                        )
-                                    except Exception as log_err:
-                                        print(f"⚠️ Failed to log DM: {str(log_err)}")
-                                    
-                                    # Small delay between messages
-                                    await asyncio.sleep(1)
-                                    
-                                    # Send second message with quick replies for "I'm following" and "Follow Me" (plain text format)
-                                    quick_reply_message = "Click one of the options below:"
-                                    send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                                    print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
-                                    
-                                    # Log second DM sent
-                                    try:
-                                        from app.utils.plan_enforcement import log_dm_sent
-                                        log_dm_sent(
-                                            user_id=account.user_id,
-                                            instagram_account_id=account.id,
-                                            recipient_username=str(sender_id),
-                                            message=quick_reply_message,
+                                            message=follow_with_quick_replies,
                                             db=db,
                                             instagram_username=account.username,
                                             instagram_igsid=getattr(account, "igsid", None)
@@ -3124,66 +3106,10 @@ async def execute_automation_action(
                                                 except Exception as reply_error:
                                                     print(f"⚠️ Failed to send immediate comment reply: {str(reply_error)}")
                                 except Exception as btn_error:
-                                    print(f"⚠️ Could not send follow buttons: {str(btn_error)}")
-                                    print(f"🔄 Falling back to plain text message with quick replies...")
-                                    try:
-                                        # Fallback: Send follow message as plain text with quick replies (no URL button)
-                                        # Combine follow message with quick reply prompt
-                                        fallback_message = f"{follow_message_with_instructions}\n\nClick one of the options below:"
-                                        send_dm_api(sender_id, fallback_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                                        print(f"✅ Follow request sent (fallback - plain text with quick replies)")
-                                        
-                                        # Log DM sent
-                                        try:
-                                            from app.utils.plan_enforcement import log_dm_sent
-                                            log_dm_sent(
-                                                user_id=account.user_id,
-                                                instagram_account_id=account.id,
-                                                recipient_username=str(sender_id),
-                                                message=fallback_message,
-                                                db=db,
-                                                instagram_username=account.username,
-                                                instagram_igsid=getattr(account, "igsid", None)
-                                            )
-                                        except Exception as log_err:
-                                            print(f"⚠️ Failed to log DM: {str(log_err)}")
-                                        
-                                        # Send public comment reply if applicable
-                                        if comment_id:
-                                            is_lead_capture = rule.config.get("is_lead_capture", False)
-                                            if is_lead_capture:
-                                                auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                                                comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
-                                            else:
-                                                auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                                                comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
-                                            
-                                            if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
-                                                valid_replies = [r for r in comment_replies if r and str(r).strip()]
-                                                if valid_replies:
-                                                    import random
-                                                    selected_reply = random.choice(valid_replies)
-                                                    print(f"💬 [FALLBACK] Sending public comment reply after fallback message")
-                                                    try:
-                                                        from app.utils.instagram_api import send_public_comment_reply
-                                                        send_public_comment_reply(comment_id, selected_reply, access_token)
-                                                        print(f"✅ Public comment reply sent: {selected_reply[:50]}...")
-                                                        
-                                                        from app.services.pre_dm_handler import mark_comment_replied
-                                                        mark_comment_replied(str(sender_id), rule_id, comment_id)
-                                                        from app.services.lead_capture import update_automation_stats
-                                                        update_automation_stats(rule.id, "comment_replied", db)
-                                                        try:
-                                                            from app.utils.analytics import log_analytics_event_sync
-                                                            from app.models.analytics_event import EventType
-                                                            _mid = rule.config.get("media_id") if isinstance(getattr(rule, "config", None), dict) else None
-                                                            log_analytics_event_sync(db=db, user_id=account.user_id, event_type=EventType.COMMENT_REPLIED, rule_id=rule.id, media_id=_mid, instagram_account_id=account.id, metadata={"comment_id": comment_id})
-                                                        except Exception as _ae:
-                                                            pass
-                                                    except Exception as reply_error:
-                                                        print(f"⚠️ Failed to send fallback comment reply: {str(reply_error)}")
-                                    except Exception as fallback_error:
-                                        print(f"❌ Fallback also failed: {str(fallback_error)}")
+                                    print(f"⚠️ Could not send follow message via private reply: {str(btn_error)}")
+                                    print(f"🔄 This should not happen - private replies bypass 24-hour window. Error: {str(btn_error)}")
+                                    # Note: If private reply fails, there's no fallback - this is unexpected
+                                    # The error will be logged and flow will wait for user interaction
                             except Exception as e:
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:

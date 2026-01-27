@@ -62,9 +62,9 @@ def send_public_comment_reply(comment_id: str, message: str, instagram_access_to
     return result
 
 
-def send_private_reply(comment_id: str, message: str, page_access_token: str, page_id: str = None) -> dict:
+def send_private_reply(comment_id: str, message: str, page_access_token: str, page_id: str = None, quick_replies: list = None) -> dict:
     """
-    Send a private reply to an Instagram comment.
+    Send a private reply to an Instagram comment with optional quick replies.
     
     This endpoint allows replying to comments without the 24-hour messaging window restriction.
     For Instagram, we use the standard messages endpoint with a special recipient format.
@@ -77,6 +77,8 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
         message: The message text to send as a private reply
         page_access_token: The Instagram Business Account access token (Instagram-native)
         page_id: Optional page ID. For Instagram-native tokens, this is typically None (uses me/messages)
+        quick_replies: Optional list of quick reply objects with format: [{"content_type": "text", "title": "Button Text", "payload": "PAYLOAD"}]
+                      Maximum 13 quick replies, title max 20 characters
         
     Returns:
         dict: API response
@@ -96,15 +98,38 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
     print(f"   Using Token: {token_preview}")
     print(f"   Comment ID: {comment_id}")
     print(f"   Message: {message[:50]}..." if len(message) > 50 else f"   Message: {message}")
+    if quick_replies:
+        print(f"   Quick Replies: {len(quick_replies)} button(s)")
     
     # Instagram private reply format: recipient uses comment_id instead of id
+    message_payload = {
+        "text": message
+    }
+    
+    # Add quick replies if provided
+    if quick_replies and isinstance(quick_replies, list) and len(quick_replies) > 0:
+        # Filter valid quick replies (must have content_type, title, and payload)
+        valid_quick_replies = []
+        for qr in quick_replies:
+            if qr.get("content_type") == "text" and qr.get("title") and qr.get("payload"):
+                # Truncate title to 20 characters (Instagram's max)
+                valid_quick_replies.append({
+                    "content_type": "text",
+                    "title": str(qr["title"])[:20],
+                    "payload": str(qr["payload"])
+                })
+        
+        # Limit to 13 quick replies (Instagram's max)
+        valid_quick_replies = valid_quick_replies[:13]
+        
+        if valid_quick_replies:
+            message_payload["quick_replies"] = valid_quick_replies
+    
     payload = {
         "recipient": {
             "comment_id": comment_id
         },
-        "message": {
-            "text": message
-        }
+        "message": message_payload
     }
     
     headers = {
