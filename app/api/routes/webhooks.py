@@ -119,10 +119,19 @@ def handle_checkout_session_completed(session_data: dict, db: Session):
                 print(f"⚠️ Defaulting to 'pro' plan for active subscription")
                 plan_tier = "pro"
         
+        # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
+        previous_plan_tier = user.plan_tier
+        is_upgrading_to_pro = previous_plan_tier not in ["pro", "enterprise"] and plan_tier in ["pro", "enterprise"]
+        
         user.plan_tier = plan_tier
         
-        # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
-        if plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:
+        # Reset billing cycle start date when upgrading TO Pro/Enterprise (fresh start)
+        # This ensures DMs count resets to zero on upgrade
+        if is_upgrading_to_pro:
+            db_subscription.billing_cycle_start_date = datetime.utcnow()
+            print(f"✅ Reset billing cycle start date for user {user_id} (upgrading to {plan_tier}): {db_subscription.billing_cycle_start_date}")
+        # Set billing cycle start date for Pro/Enterprise users if not set (new subscription)
+        elif plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:
             db_subscription.billing_cycle_start_date = datetime.utcnow()
             print(f"✅ Set billing cycle start date for user {user_id}: {db_subscription.billing_cycle_start_date}")
         
@@ -175,10 +184,20 @@ def handle_subscription_created(subscription_data: dict, db: Session):
 
     # Update user plan tier based on subscription
     plan_tier = get_plan_tier_from_subscription(subscription_data)
+    
+    # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
+    previous_plan_tier = user.plan_tier
+    is_upgrading_to_pro = previous_plan_tier not in ["pro", "enterprise"] and plan_tier in ["pro", "enterprise"]
+    
     user.plan_tier = plan_tier
     
-    # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
-    if plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
+    # Reset billing cycle start date when upgrading TO Pro/Enterprise (fresh start)
+    # This ensures DMs count resets to zero on upgrade
+    if is_upgrading_to_pro:
+        subscription.billing_cycle_start_date = datetime.utcnow()
+        print(f"✅ Reset billing cycle start date for user {user.id} (upgrading to {plan_tier}): {subscription.billing_cycle_start_date}")
+    # Set billing cycle start date for Pro/Enterprise users if not set (new subscription)
+    elif plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
         subscription.billing_cycle_start_date = datetime.utcnow()
         print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
     
@@ -211,10 +230,20 @@ def handle_subscription_updated(subscription_data: dict, db: Session):
     if user:
         if status == "active":
             plan_tier = get_plan_tier_from_subscription(subscription_data)
+            
+            # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
+            previous_plan_tier = user.plan_tier
+            is_upgrading_to_pro = previous_plan_tier not in ["pro", "enterprise"] and plan_tier in ["pro", "enterprise"]
+            
             user.plan_tier = plan_tier
             
-            # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
-            if plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
+            # Reset billing cycle start date when upgrading TO Pro/Enterprise (fresh start)
+            # This ensures DMs count resets to zero on upgrade
+            if is_upgrading_to_pro:
+                subscription.billing_cycle_start_date = datetime.utcnow()
+                print(f"✅ Reset billing cycle start date for user {user.id} (upgrading to {plan_tier}): {subscription.billing_cycle_start_date}")
+            # Set billing cycle start date for Pro/Enterprise users if not set (new subscription)
+            elif plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
                 subscription.billing_cycle_start_date = datetime.utcnow()
                 print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
             

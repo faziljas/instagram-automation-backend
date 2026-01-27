@@ -220,11 +220,21 @@ async def verify_checkout_session(
                 print(f"⚠️ Defaulting to 'pro' plan for active subscription")
                 plan_tier = "pro"
         
+        # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
+        previous_plan_tier = user.plan_tier
+        is_upgrading_to_pro = previous_plan_tier not in ["pro", "enterprise"] and plan_tier in ["pro", "enterprise"]
+        
         user.plan_tier = plan_tier
         print(f"✅ Updated user {user_id} plan_tier to: {plan_tier}")
         
-        # Set billing cycle start date for Pro/Enterprise users (30-day cycle from upgrade date)
-        if plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:
+        # Reset billing cycle start date when upgrading TO Pro/Enterprise (fresh start)
+        # This ensures DMs count resets to zero on upgrade
+        if is_upgrading_to_pro:
+            from datetime import datetime
+            db_subscription.billing_cycle_start_date = datetime.utcnow()
+            print(f"✅ Reset billing cycle start date for user {user_id} (upgrading to {plan_tier}): {db_subscription.billing_cycle_start_date}")
+        # Set billing cycle start date for Pro/Enterprise users if not set (new subscription)
+        elif plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:
             from datetime import datetime
             db_subscription.billing_cycle_start_date = datetime.utcnow()
             print(f"✅ Set billing cycle start date for user {user_id}: {db_subscription.billing_cycle_start_date}")
