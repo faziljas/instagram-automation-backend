@@ -25,6 +25,7 @@ MIGRATIONS = [
     "make_captured_leads_instagram_account_id_nullable_migration",
     "add_supabase_id_migration",
     "update_high_volume_limits_migration",
+    "update_pro_plan_limits_migration",
 ]
 
 

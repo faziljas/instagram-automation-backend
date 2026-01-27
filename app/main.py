@@ -167,6 +167,16 @@ async def startup_event():
         print(f"⚠️ High Volume limits migration warning (may not be needed): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent and limits are primarily in code
     
+    # Run Pro Plan limits migration (updates account_limit for Pro users)
+    try:
+        print("🔄 Running Pro Plan limits migration...", file=sys.stderr)
+        from update_pro_plan_limits_migration import run_migration as run_pro_plan_limits_migration
+        run_pro_plan_limits_migration()
+        print("✅ Pro Plan limits migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Pro Plan limits migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
+    
     # Try Alembic migrations (if Alembic is configured)
     try:
         import subprocess

@@ -90,7 +90,7 @@ def check_account_limit(user_id: int, db: Session) -> bool:
     if current_accounts >= max_accounts:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Account limit reached. Your {user.plan_tier} plan allows {max_accounts} account(s). Upgrade to add more."
+            detail="Upgrade to Pro to connect more accounts."
         )
 
     return True
@@ -240,6 +240,8 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
     Also checks persistent global usage tracker per Instagram account (IGSID) to prevent abuse.
     
     Returns True if limit not reached, logs warning if at limit but doesn't raise exception.
+    
+    NOTE: Pro users have unlimited DMs, so this check is skipped for them.
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -248,7 +250,15 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
             detail="User not found"
         )
 
+    # Pro users have unlimited DMs - skip limit check entirely
+    if user.plan_tier == "pro":
+        return True
+
     max_dms = get_plan_limit(user.plan_tier, "max_dms_per_month")
+    
+    # If max_dms is -1, unlimited DMs allowed - skip limit check
+    if max_dms == -1:
+        return True
 
     # Get billing cycle start (calendar month for free/basic, 30-day cycle for pro/enterprise)
     cycle_start = get_billing_cycle_start(user_id, db)

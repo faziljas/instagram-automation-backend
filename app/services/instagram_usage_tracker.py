@@ -131,6 +131,10 @@ def check_dm_limit(tracker: InstagramGlobalTracker, subscription_plan: str) -> t
         limit = FREE_DM_LIMIT
         limit_type = "lifetime"
     
+    # If limit is -1, unlimited DMs allowed (Pro tier with High Volume pricing)
+    if limit == -1:
+        return True, ""
+    
     # Check if limit reached
     if tracker.dms_sent_count >= limit:
         return False, (

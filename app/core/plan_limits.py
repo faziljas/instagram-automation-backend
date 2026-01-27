@@ -14,9 +14,9 @@ PLAN_LIMITS: Dict[str, Dict[str, int]] = {
         "max_automation_rules": 10,
     },
     "pro": {
-        "max_accounts": 10,
-        "max_dms_per_month": 5000,
-        "max_automation_rules": 50,
+        "max_accounts": 3,
+        "max_dms_per_month": -1,  # -1 means unlimited (High Volume pricing)
+        "max_automation_rules": -1,  # -1 means unlimited
     },
     "enterprise": {
         "max_accounts": 50,
@@ -28,9 +28,9 @@ PLAN_LIMITS: Dict[str, Dict[str, int]] = {
 # Global usage tracking limits (per Instagram account, not per user)
 # These are used for persistent tracking to prevent free tier abuse
 FREE_DM_LIMIT = 1000  # Lifetime limit for free tier (High Volume pricing)
-PRO_DM_LIMIT = 5000  # Monthly limit for pro tier
+PRO_DM_LIMIT = -1  # -1 means unlimited for pro tier (High Volume pricing)
 FREE_RULE_LIMIT = -1  # -1 means unlimited for free tier (High Volume pricing)
-PRO_RULE_LIMIT = 100  # Monthly limit for pro tier (total rules created, not active)
+PRO_RULE_LIMIT = -1  # -1 means unlimited for pro tier (High Volume pricing)
 
 
 def get_plan_limit(plan_tier: str, limit_type: str) -> int:
