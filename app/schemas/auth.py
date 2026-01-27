@@ -87,4 +87,5 @@ class SubscriptionResponse(BaseModel):
     effective_plan_tier: str  # Effective plan tier for display (shows Pro limits if still within paid Pro cycle)
     status: str
     stripe_subscription_id: Optional[str] = None
+    cancellation_end_date: Optional[str] = None  # When Pro access ends after cancellation (ISO format)
     usage: SubscriptionUsage

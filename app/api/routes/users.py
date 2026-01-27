@@ -299,28 +299,46 @@ def get_subscription(
     
     # Determine effective plan tier for display purposes
     # If Free user is still within paid Pro cycle period, show Pro limits
+    # Also check if cancelled Pro subscription is still within paid period
     effective_plan_tier = user.plan_tier
-    if user.plan_tier == "free" and subscription and subscription.billing_cycle_start_date:
+    cancellation_end_date = None
+    
+    if subscription and subscription.billing_cycle_start_date:
         from datetime import datetime, timedelta
         cycle_start = subscription.billing_cycle_start_date
         now = datetime.utcnow()
         days_since_start = (now - cycle_start).days
         
-        # Check if still within Pro cycle period (first 30 days)
+        # Calculate current cycle end (30 days from cycle start)
         cycles_passed = days_since_start // 30
         current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
         current_cycle_end = current_cycle_start + timedelta(days=30)
         
-        # If still within paid Pro cycle, show Pro limits
+        # If still within paid Pro cycle period
         if now < current_cycle_end:
-            effective_plan_tier = "pro"
-            print(f"✅ User {user_id} is Free tier but still within Pro cycle period - showing Pro limits")
+            # If Free tier but within Pro cycle, show Pro limits
+            if user.plan_tier == "free":
+                effective_plan_tier = "pro"
+                print(f"✅ User {user_id} is Free tier but still within Pro cycle period - showing Pro limits")
+            
+            # If cancelled Pro subscription, calculate when access ends
+            if subscription.status == "cancelled" and user.plan_tier in ["pro", "enterprise"]:
+                cancellation_end_date = current_cycle_end
+                print(f"✅ User {user_id} has cancelled Pro subscription - access until {cancellation_end_date}")
+        else:
+            # Pro cycle has ended - if subscription was cancelled, downgrade to Free now
+            if subscription.status == "cancelled" and user.plan_tier in ["pro", "enterprise"]:
+                user.plan_tier = "free"
+                subscription.billing_cycle_start_date = None  # Clear since cycle ended
+                db.commit()
+                print(f"✅ User {user_id} Pro cycle ended - downgraded to Free tier")
     
     return {
         "plan_tier": user.plan_tier,
         "effective_plan_tier": effective_plan_tier,  # Use this for display limits
         "status": status_value,
         "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
+        "cancellation_end_date": cancellation_end_date.isoformat() if cancellation_end_date else None,
         "usage": {
             "accounts": accounts_count,
             "rules": rules_count,  # Total rules created (from tracker, persists even after deletion)
@@ -334,7 +352,7 @@ def cancel_subscription(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    """Cancel user's subscription"""
+    """Cancel user's subscription - user keeps Pro access until paid period ends"""
     subscription = db.query(Subscription).filter(
         Subscription.user_id == user_id
     ).first()
@@ -345,24 +363,37 @@ def cancel_subscription(
             detail="No active subscription found"
         )
     
-    # Update subscription status
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    # Update subscription status to cancelled
     subscription.status = "cancelled"
     subscription.updated_at = datetime.utcnow()
     
-    # Downgrade user to free plan
-    user = db.query(User).filter(User.id == user_id).first()
-    user.plan_tier = "free"
+    # DON'T downgrade plan_tier immediately - user paid for 30 days, so keep Pro access
+    # Plan will automatically downgrade after billing cycle ends (handled by webhook or cycle logic)
+    # DON'T clear billing_cycle_start_date - needed to calculate when Pro access ends
     
-    # DON'T clear billing_cycle_start_date - user paid for 30 days, so they should
-    # continue using Pro cycle logic until the paid period ends (30 days from start)
-    # The billing cycle logic will automatically switch to calendar month after 30 days
-    print(f"✅ User {user_id} cancelled subscription, but keeping Pro cycle until paid period ends")
+    # Calculate when Pro access ends (30 days from billing cycle start)
+    cancellation_end_date = None
+    if subscription.billing_cycle_start_date:
+        from datetime import timedelta
+        cycle_start = subscription.billing_cycle_start_date
+        now = datetime.utcnow()
+        days_since_start = (now - cycle_start).days
+        
+        # Calculate current cycle end (30 days from cycle start)
+        cycles_passed = days_since_start // 30
+        current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
+        cancellation_end_date = current_cycle_start + timedelta(days=30)
+    
+    print(f"✅ User {user_id} cancelled subscription - keeping Pro access until {cancellation_end_date}")
     
     db.commit()
     
     return {
         "message": "Subscription cancelled successfully",
-        "plan_tier": "free"
+        "plan_tier": user.plan_tier,  # Still Pro until cycle ends
+        "cancellation_end_date": cancellation_end_date.isoformat() if cancellation_end_date else None
     }
 
 

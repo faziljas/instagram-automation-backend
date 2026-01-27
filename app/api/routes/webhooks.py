@@ -254,11 +254,10 @@ def handle_subscription_updated(subscription_data: dict, db: Session):
                 # Reset all trackers for this user
                 reset_tracker_for_pro_upgrade(user.id, db)
         elif status in ["canceled", "incomplete_expired", "past_due"]:
-            user.plan_tier = "free"
-            # DON'T clear billing_cycle_start_date - user paid for 30 days, so they should
-            # continue using Pro cycle logic until the paid period ends (30 days from start)
-            # The billing cycle logic will automatically switch to calendar month after 30 days
-            print(f"✅ User {user.id} downgraded to free, but keeping Pro cycle until paid period ends")
+            # DON'T downgrade plan_tier immediately - user paid for 30 days, so keep Pro access
+            # Only mark subscription as cancelled - plan will downgrade after cycle ends
+            # DON'T clear billing_cycle_start_date - needed to calculate when Pro access ends
+            print(f"✅ User {user.id} subscription cancelled - keeping Pro access until paid period ends")
 
     db.commit()
 
@@ -276,10 +275,10 @@ def handle_subscription_deleted(subscription_data: dict, db: Session):
 
     subscription.status = "canceled"
 
-    # Downgrade user to free tier
-    user = db.query(User).filter(User.id == subscription.user_id).first()
-    if user:
-        user.plan_tier = "free"
+    # DON'T downgrade user immediately - user paid for 30 days, so keep Pro access
+    # Plan will automatically downgrade after billing cycle ends
+    # DON'T clear billing_cycle_start_date - needed to calculate when Pro access ends
+    print(f"✅ Subscription {stripe_subscription_id} cancelled - user keeps Pro access until paid period ends")
 
     db.commit()
 
