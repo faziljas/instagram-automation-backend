@@ -1081,8 +1081,15 @@ async def process_instagram_message(event: dict, db: Session):
             rules_waiting_for_email = []  # Collect all rules waiting for email to send primary DM
             
             # VIP USER HANDLING: If user is already converted, send primary DM for ONLY ONE matching rule
-            # This prevents duplicate primary DMs when multiple rules match
+            # IMPORTANT STRICT MODE: Only do this for Story replies (story_id present).
+            # For plain DMs (no story_id), do NOT auto-send anything for VIP users – their
+            # messages should be handled manually by the account owner.
             if is_vip_user:
+                if story_id is None:
+                    log_print(f"⭐ [VIP] User {sender_id} is converted and this DM is NOT a story reply. Skipping all pre-DM VIP auto-send.")
+                    # Do not send any primary DM here; message will be handled manually.
+                    return
+
                 vip_rule_processed = False
                 for rule in pre_dm_rules:
                     # If this is a Story reply, only process rules that match this Story
