@@ -18,7 +18,7 @@ router = APIRouter()
 class CapturedLeadResponse(BaseModel):
     id: int
     user_id: int
-    instagram_account_id: int
+    instagram_account_id: int | None  # Can be None when account is disconnected
     automation_rule_id: int
     email: str | None
     phone: str | None
@@ -44,8 +44,12 @@ def get_captured_leads(
     """
     Get all captured leads for the current user.
     Optionally filter by automation_rule_id or instagram_account_id.
+    Excludes leads with NULL instagram_account_id (disconnected accounts) to match analytics behavior.
     """
-    query = db.query(CapturedLead).filter(CapturedLead.user_id == user_id)
+    query = db.query(CapturedLead).filter(
+        CapturedLead.user_id == user_id,
+        CapturedLead.instagram_account_id.isnot(None)  # Exclude disconnected account leads
+    )
     
     if automation_rule_id:
         query = query.filter(CapturedLead.automation_rule_id == automation_rule_id)
