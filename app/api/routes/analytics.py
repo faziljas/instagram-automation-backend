@@ -268,11 +268,13 @@ def get_analytics_dashboard(
         start_date = end_date - timedelta(days=days)
         
         # Build base query - filter by user_id and date range
+        # Exclude events with NULL instagram_account_id (disconnected accounts) to reset analytics to zero
         base_query = db.query(AnalyticsEvent).filter(
             and_(
                 AnalyticsEvent.user_id == user_id,
                 AnalyticsEvent.created_at >= start_date,
-                AnalyticsEvent.created_at <= end_date
+                AnalyticsEvent.created_at <= end_date,
+                AnalyticsEvent.instagram_account_id.isnot(None)  # Exclude disconnected account events
             )
         )
         
@@ -590,13 +592,15 @@ def get_media_analytics(
             rule_ids = [r.id for r in rules_list]
             
             # Query analytics events for these rules and this media
+            # Exclude events with NULL instagram_account_id (disconnected accounts) to reset analytics to zero
             base_query = db.query(AnalyticsEvent).filter(
                 and_(
                     AnalyticsEvent.user_id == user_id,
                     AnalyticsEvent.media_id == media_id,
                     AnalyticsEvent.created_at >= start_date,
                     AnalyticsEvent.created_at <= end_date,
-                    AnalyticsEvent.rule_id.in_(rule_ids)
+                    AnalyticsEvent.rule_id.in_(rule_ids),
+                    AnalyticsEvent.instagram_account_id.isnot(None)  # Exclude disconnected account events
                 )
             )
             
