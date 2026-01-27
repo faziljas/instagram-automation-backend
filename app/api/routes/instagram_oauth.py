@@ -5,10 +5,12 @@ Supports both server-side redirect flow and Facebook SDK popup flow
 """
 import os
 import requests
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, Request, Body
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import update
 from app.db.session import get_db
 from app.models.instagram_account import InstagramAccount
 from app.dependencies.auth import get_current_user_id
@@ -358,8 +360,14 @@ async def instagram_oauth_callback(
                 print(f"✅ Tracker for user {user_id}, IGSID {new_account.igsid}: rules={tracker.rules_created_count}, dms={tracker.dms_sent_count}")
             
             # Reconnect any disconnected automation rules for this user + IGSID
+            # Also restore analytics data if same user, or delete if different user
             from app.models.automation_rule import AutomationRule
+            from app.models.analytics_event import AnalyticsEvent
+            from app.models.captured_lead import CapturedLead
+            from app.models.automation_rule_stats import AutomationRuleStats
             from sqlalchemy import update
+            from sqlalchemy.orm.attributes import flag_modified
+            
             disconnected_rules = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id.is_(None),
                 AutomationRule.deleted_at.is_(None)
@@ -367,25 +375,67 @@ async def instagram_oauth_callback(
             
             print(f"🔍 [RECONNECT] Found {len(disconnected_rules)} disconnected rules. Looking for IGSID: {new_account.igsid}, user_id: {user_id}")
             
-            reconnected_count = 0
+            # Check if this is a different user connecting to the same IG account
+            is_different_user = False
             for rule in disconnected_rules:
                 if rule.config and isinstance(rule.config, dict):
                     disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
                     disconnected_user_id = rule.config.get("disconnected_user_id")
-                    print(f"🔍 [RECONNECT] Rule {rule.id}: disconnected_igsid={disconnected_igsid}, disconnected_user_id={disconnected_user_id}, new_igsid={new_account.igsid}, user_id={user_id}")
-                    # Match by IGSID AND user_id to ensure we only reconnect rules for the same user
+                    if disconnected_igsid == str(new_account.igsid) and disconnected_user_id != user_id:
+                        is_different_user = True
+                        print(f"⚠️ [RECONNECT] Different user connecting to same IG account. Will reset analytics data.")
+                        break
+            
+            if is_different_user:
+                # Delete analytics data for this IG account (from previous user)
+                rules_to_clean = [r for r in disconnected_rules if r.config and isinstance(r.config, dict) and 
+                                str(r.config.get("disconnected_igsid", "")) == str(new_account.igsid)]
+                rule_ids_to_clean = [r.id for r in rules_to_clean]
+                
+                if rule_ids_to_clean:
+                    db.query(AnalyticsEvent).filter(AnalyticsEvent.rule_id.in_(rule_ids_to_clean)).delete(synchronize_session=False)
+                    db.query(AutomationRuleStats).filter(AutomationRuleStats.automation_rule_id.in_(rule_ids_to_clean)).delete(synchronize_session=False)
+                    db.query(CapturedLead).filter(CapturedLead.automation_rule_id.in_(rule_ids_to_clean)).delete(synchronize_session=False)
+                    for rule in rules_to_clean:
+                        rule.deleted_at = datetime.utcnow()
+                    db.flush()
+            
+            # Now reconnect rules for the same user
+            reconnected_count = 0
+            restored_analytics_count = 0
+            restored_leads_count = 0
+            
+            for rule in disconnected_rules:
+                if rule.config and isinstance(rule.config, dict):
+                    disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
+                    disconnected_user_id = rule.config.get("disconnected_user_id")
                     if disconnected_igsid == str(new_account.igsid) and disconnected_user_id == user_id:
-                        # Reconnect this rule to the new account
                         rule.instagram_account_id = new_account.id
-                        # Remove disconnected_igsid from config
+                        
+                        # Restore analytics events for this rule
+                        analytics_restored = db.execute(
+                            update(AnalyticsEvent).where(
+                                AnalyticsEvent.rule_id == rule.id,
+                                AnalyticsEvent.instagram_account_id.is_(None)
+                            ).values(instagram_account_id=new_account.id)
+                        )
+                        restored_analytics_count += analytics_restored.rowcount
+                        
+                        # Restore captured leads for this rule
+                        leads_restored = db.execute(
+                            update(CapturedLead).where(
+                                CapturedLead.automation_rule_id == rule.id,
+                                CapturedLead.instagram_account_id.is_(None)
+                            ).values(instagram_account_id=new_account.id)
+                        )
+                        restored_leads_count += leads_restored.rowcount
+                        
                         if "disconnected_igsid" in rule.config:
                             del rule.config["disconnected_igsid"]
                         if "disconnected_username" in rule.config:
                             del rule.config["disconnected_username"]
                         if "disconnected_user_id" in rule.config:
                             del rule.config["disconnected_user_id"]
-                        # Mark JSON column as modified so SQLAlchemy saves the changes
-                        from sqlalchemy.orm.attributes import flag_modified
                         flag_modified(rule, "config")
                         reconnected_count += 1
                         print(f"✅ [RECONNECT] Reconnecting rule {rule.id} to account {new_account.id}")
@@ -393,6 +443,7 @@ async def instagram_oauth_callback(
             if reconnected_count > 0:
                 db.commit()
                 print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {new_account.username}")
+                print(f"✅ Restored {restored_analytics_count} analytics events and {restored_leads_count} captured leads")
             else:
                 print(f"⚠️ [RECONNECT] No rules matched for reconnection (IGSID: {new_account.igsid}, user_id: {user_id})")
         
@@ -988,36 +1039,84 @@ async def exchange_instagram_code(
             db.commit()
             
             # Reconnect any disconnected automation rules for this user + IGSID
+            # Also restore analytics data if same user, or delete if different user
             from app.models.automation_rule import AutomationRule
+            from app.models.analytics_event import AnalyticsEvent
+            from app.models.captured_lead import CapturedLead
+            from app.models.automation_rule_stats import AutomationRuleStats
+            from sqlalchemy import update
+            from sqlalchemy.orm.attributes import flag_modified
+            
             disconnected_rules = db.query(AutomationRule).filter(
                 AutomationRule.instagram_account_id.is_(None),
                 AutomationRule.deleted_at.is_(None)
             ).all()
             
-            reconnected_count = 0
+            # Check if this is a different user (shouldn't happen in this path, but check anyway)
+            is_different_user = False
             for rule in disconnected_rules:
                 if rule.config and isinstance(rule.config, dict):
                     disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
                     disconnected_user_id = rule.config.get("disconnected_user_id")
-                    # Match by IGSID AND user_id to ensure we only reconnect rules for the same user
+                    if disconnected_igsid == str(existing_account_same_user.igsid) and disconnected_user_id != user_id:
+                        is_different_user = True
+                        break
+            
+            if is_different_user:
+                rules_to_clean = [r for r in disconnected_rules if r.config and isinstance(r.config, dict) and 
+                                str(r.config.get("disconnected_igsid", "")) == str(existing_account_same_user.igsid)]
+                rule_ids_to_clean = [r.id for r in rules_to_clean]
+                if rule_ids_to_clean:
+                    db.query(AnalyticsEvent).filter(AnalyticsEvent.rule_id.in_(rule_ids_to_clean)).delete(synchronize_session=False)
+                    db.query(AutomationRuleStats).filter(AutomationRuleStats.automation_rule_id.in_(rule_ids_to_clean)).delete(synchronize_session=False)
+                    db.query(CapturedLead).filter(CapturedLead.automation_rule_id.in_(rule_ids_to_clean)).delete(synchronize_session=False)
+                    for rule in rules_to_clean:
+                        rule.deleted_at = datetime.utcnow()
+                    db.flush()
+            
+            # Now reconnect rules for the same user
+            reconnected_count = 0
+            restored_analytics_count = 0
+            restored_leads_count = 0
+            
+            for rule in disconnected_rules:
+                if rule.config and isinstance(rule.config, dict):
+                    disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
+                    disconnected_user_id = rule.config.get("disconnected_user_id")
                     if disconnected_igsid == str(existing_account_same_user.igsid) and disconnected_user_id == user_id:
-                        # Reconnect this rule to the existing account
                         rule.instagram_account_id = existing_account_same_user.id
-                        # Remove disconnected_igsid from config
+                        
+                        # Restore analytics events for this rule
+                        analytics_restored = db.execute(
+                            update(AnalyticsEvent).where(
+                                AnalyticsEvent.rule_id == rule.id,
+                                AnalyticsEvent.instagram_account_id.is_(None)
+                            ).values(instagram_account_id=existing_account_same_user.id)
+                        )
+                        restored_analytics_count += analytics_restored.rowcount
+                        
+                        # Restore captured leads for this rule
+                        leads_restored = db.execute(
+                            update(CapturedLead).where(
+                                CapturedLead.automation_rule_id == rule.id,
+                                CapturedLead.instagram_account_id.is_(None)
+                            ).values(instagram_account_id=existing_account_same_user.id)
+                        )
+                        restored_leads_count += leads_restored.rowcount
+                        
                         if "disconnected_igsid" in rule.config:
                             del rule.config["disconnected_igsid"]
                         if "disconnected_username" in rule.config:
                             del rule.config["disconnected_username"]
                         if "disconnected_user_id" in rule.config:
                             del rule.config["disconnected_user_id"]
-                        # Mark JSON column as modified so SQLAlchemy saves the changes
-                        from sqlalchemy.orm.attributes import flag_modified
                         flag_modified(rule, "config")
                         reconnected_count += 1
             
             if reconnected_count > 0:
                 db.commit()
                 print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {existing_account_same_user.username}")
+                print(f"✅ Restored {restored_analytics_count} analytics events and {restored_leads_count} captured leads")
             
             print(f"✅ Instagram account {existing_account_same_user.username} reconnected successfully for user {user_id}!")
             
@@ -1073,7 +1172,13 @@ async def exchange_instagram_code(
             print(f"✅ Tracker for user {user_id}, IGSID {new_account.igsid}: rules={tracker.rules_created_count}, dms={tracker.dms_sent_count}")
         
         # Reconnect any disconnected automation rules for this user + IGSID
+        # Also restore analytics data if same user, or delete if different user
         from app.models.automation_rule import AutomationRule
+        from app.models.analytics_event import AnalyticsEvent
+        from app.models.captured_lead import CapturedLead
+        from app.models.automation_rule_stats import AutomationRuleStats
+        from sqlalchemy.orm.attributes import flag_modified
+        
         disconnected_rules = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id.is_(None),
             AutomationRule.deleted_at.is_(None)
@@ -1081,16 +1186,88 @@ async def exchange_instagram_code(
         
         print(f"🔍 [RECONNECT] Found {len(disconnected_rules)} disconnected rules. Looking for IGSID: {new_account.igsid}, user_id: {user_id}")
         
-        reconnected_count = 0
+        # Check if this is a different user connecting to the same IG account
+        # If so, delete analytics data from previous user
+        is_different_user = False
         for rule in disconnected_rules:
             if rule.config and isinstance(rule.config, dict):
                 disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
                 disconnected_user_id = rule.config.get("disconnected_user_id")
-                print(f"🔍 [RECONNECT] Rule {rule.id}: disconnected_igsid={disconnected_igsid}, disconnected_user_id={disconnected_user_id}, new_igsid={new_account.igsid}, user_id={user_id}")
+                # If IGSID matches but user_id is different, it's a different user
+                if disconnected_igsid == str(new_account.igsid) and disconnected_user_id != user_id:
+                    is_different_user = True
+                    print(f"⚠️ [RECONNECT] Different user connecting to same IG account. Will reset analytics data.")
+                    break
+        
+        if is_different_user:
+            # Delete analytics data for this IG account (from previous user)
+            print(f"🗑️ [RECONNECT] Deleting analytics data for IG account {new_account.igsid} (different user)")
+            
+            # Find all rules that were connected to this IG account (by IGSID)
+            rules_to_clean = [r for r in disconnected_rules if r.config and isinstance(r.config, dict) and 
+                            str(r.config.get("disconnected_igsid", "")) == str(new_account.igsid)]
+            
+            rule_ids_to_clean = [r.id for r in rules_to_clean]
+            
+            if rule_ids_to_clean:
+                # Delete analytics events for these rules
+                deleted_analytics = db.query(AnalyticsEvent).filter(
+                    AnalyticsEvent.rule_id.in_(rule_ids_to_clean)
+                ).delete(synchronize_session=False)
+                print(f"✅ [RECONNECT] Deleted {deleted_analytics} analytics events from previous user")
+                
+                # Delete rule stats
+                deleted_stats = db.query(AutomationRuleStats).filter(
+                    AutomationRuleStats.automation_rule_id.in_(rule_ids_to_clean)
+                ).delete(synchronize_session=False)
+                print(f"✅ [RECONNECT] Deleted {deleted_stats} rule stats from previous user")
+                
+                # Delete captured leads
+                deleted_leads = db.query(CapturedLead).filter(
+                    CapturedLead.automation_rule_id.in_(rule_ids_to_clean)
+                ).delete(synchronize_session=False)
+                print(f"✅ [RECONNECT] Deleted {deleted_leads} captured leads from previous user")
+                
+                # Delete the disconnected rules themselves (different user, so they shouldn't get these rules)
+                for rule in rules_to_clean:
+                    rule.deleted_at = datetime.utcnow()
+                print(f"✅ [RECONNECT] Marked {len(rules_to_clean)} rules as deleted (different user)")
+                
+                db.flush()
+        
+        # Now reconnect rules for the same user
+        reconnected_count = 0
+        restored_analytics_count = 0
+        restored_leads_count = 0
+        
+        for rule in disconnected_rules:
+            if rule.config and isinstance(rule.config, dict):
+                disconnected_igsid = str(rule.config.get("disconnected_igsid", ""))
+                disconnected_user_id = rule.config.get("disconnected_user_id")
+                print(f"🔍 [RECONNECT] Rule {rule.id}: disconnected_igsid={disconnected_igsid}, disconnected_user_id={disconnected_user_id}, new_igsid={new_account.igsid}, user_id: {user_id}")
                 # Match by IGSID AND user_id to ensure we only reconnect rules for the same user
                 if disconnected_igsid == str(new_account.igsid) and disconnected_user_id == user_id:
                     # Reconnect this rule to the new account
                     rule.instagram_account_id = new_account.id
+                    
+                    # Restore analytics events for this rule
+                    analytics_restored = db.execute(
+                        update(AnalyticsEvent).where(
+                            AnalyticsEvent.rule_id == rule.id,
+                            AnalyticsEvent.instagram_account_id.is_(None)
+                        ).values(instagram_account_id=new_account.id)
+                    )
+                    restored_analytics_count += analytics_restored.rowcount
+                    
+                    # Restore captured leads for this rule
+                    leads_restored = db.execute(
+                        update(CapturedLead).where(
+                            CapturedLead.automation_rule_id == rule.id,
+                            CapturedLead.instagram_account_id.is_(None)
+                        ).values(instagram_account_id=new_account.id)
+                    )
+                    restored_leads_count += leads_restored.rowcount
+                    
                     # Remove disconnected_igsid from config
                     if "disconnected_igsid" in rule.config:
                         del rule.config["disconnected_igsid"]
@@ -1099,7 +1276,6 @@ async def exchange_instagram_code(
                     if "disconnected_user_id" in rule.config:
                         del rule.config["disconnected_user_id"]
                     # Mark JSON column as modified so SQLAlchemy saves the changes
-                    from sqlalchemy.orm.attributes import flag_modified
                     flag_modified(rule, "config")
                     reconnected_count += 1
                     print(f"✅ [RECONNECT] Reconnecting rule {rule.id} to account {new_account.id}")
@@ -1107,6 +1283,7 @@ async def exchange_instagram_code(
         if reconnected_count > 0:
             db.commit()
             print(f"✅ Reconnected {reconnected_count} automation rule(s) to account {new_account.username}")
+            print(f"✅ Restored {restored_analytics_count} analytics events and {restored_leads_count} captured leads")
         else:
             print(f"⚠️ [RECONNECT] No rules matched for reconnection (IGSID: {new_account.igsid}, user_id: {user_id})")
         

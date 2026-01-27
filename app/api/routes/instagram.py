@@ -5217,42 +5217,37 @@ def delete_instagram_account(
         AutomationRule.instagram_account_id == account_id
     ).all()
     
-    # For each rule, delete associated data first (to avoid foreign key constraint violation)
+    # PRESERVE analytics data: nullify instagram_account_id instead of deleting
+    # This allows analytics to persist across disconnect/reconnect for the same user
+    # Analytics will be deleted only if a different user connects to the same IG account
     from app.models.automation_rule_stats import AutomationRuleStats
     from app.models.captured_lead import CapturedLead
     from app.models.analytics_event import AnalyticsEvent
+    from sqlalchemy import update
     
-    for rule in automation_rules:
-        # Delete analytics events first (they reference automation_rules via foreign key)
-        analytics_events = db.query(AnalyticsEvent).filter(
-            AnalyticsEvent.rule_id == rule.id
-        ).all()
-        for event in analytics_events:
-            db.delete(event)
-        
-        # Delete automation rule stats
-        stats = db.query(AutomationRuleStats).filter(
-            AutomationRuleStats.automation_rule_id == rule.id
-        ).all()
-        for stat in stats:
-            db.delete(stat)
-        
-        # Delete captured leads
-        leads = db.query(CapturedLead).filter(
-            CapturedLead.automation_rule_id == rule.id
-        ).all()
-        for lead in leads:
-            db.delete(lead)
+    print(f"🔍 [DISCONNECT] Preserving analytics data by nullifying instagram_account_id (will be restored on reconnect if same user)")
     
-    # Flush to ensure deletions are processed before updating rules
-    db.flush()
+    # Nullify instagram_account_id in analytics events (preserve for potential reconnection)
+    analytics_updated = db.execute(
+        update(AnalyticsEvent).where(AnalyticsEvent.instagram_account_id == account_id).values(
+            instagram_account_id=None
+        )
+    )
+    print(f"✅ [DISCONNECT] Nullified instagram_account_id for {analytics_updated.rowcount} analytics events")
     
-    # Also delete any analytics events that reference this account (even if rule_id is NULL)
-    db.query(AnalyticsEvent).filter(
-        AnalyticsEvent.instagram_account_id == account_id
-    ).delete()
+    # Nullify instagram_account_id in automation rule stats (preserve stats)
+    # Note: AutomationRuleStats doesn't have instagram_account_id, but we'll preserve by rule_id
+    # Stats are linked to rules, which will be reconnected, so stats will be accessible again
     
-    # Flush again
+    # Nullify instagram_account_id in captured leads (preserve leads)
+    leads_updated = db.execute(
+        update(CapturedLead).where(CapturedLead.instagram_account_id == account_id).values(
+            instagram_account_id=None
+        )
+    )
+    print(f"✅ [DISCONNECT] Nullified instagram_account_id for {leads_updated.rowcount} captured leads")
+    
+    # Flush to ensure updates are processed
     db.flush()
     
     # Preserve automation rules: store igsid and user_id in config and nullify instagram_account_id

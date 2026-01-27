@@ -11,7 +11,7 @@ class CapturedLead(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id"), nullable=False, index=True)
+    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id"), nullable=True, index=True)  # Made nullable to preserve leads on disconnect/reconnect
     automation_rule_id = Column(Integer, ForeignKey("automation_rules.id"), nullable=False, index=True)
     
     # Lead data fields
