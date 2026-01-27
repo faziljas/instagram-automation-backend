@@ -258,6 +258,16 @@ async def process_instagram_message(event: dict, db: Session):
                 if len(_processed_message_ids) > _MAX_CACHE_SIZE:
                     _processed_message_ids.clear()
             return
+
+        # DEDUPLICATION: Skip if we've already processed this message_id (Meta can retry events)
+        if message_id:
+            if message_id in _processed_message_ids:
+                log_print(f"⏭️ Skipping duplicate message event (mid={message_id}) - already processed")
+                return
+            _processed_message_ids.add(message_id)
+            # Clean cache if it gets too large
+            if len(_processed_message_ids) > _MAX_CACHE_SIZE:
+                _processed_message_ids.clear()
         
         # Find account using Smart Fallback (same as comment webhook logic)
         # This must happen BEFORE checking pre-DM actions or triggering rules
