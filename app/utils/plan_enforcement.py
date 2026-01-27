@@ -94,6 +94,10 @@ def check_rule_limit(user_id: int, db: Session, instagram_account_id: int = None
 
     max_rules = get_plan_limit(user.plan_tier, "max_automation_rules")
     
+    # If max_rules is -1, unlimited rules allowed (High Volume pricing for free tier)
+    if max_rules == -1:
+        return True
+    
     # If instagram_account_id is provided, check limit for that specific account
     if instagram_account_id:
         account = db.query(InstagramAccount).filter(
@@ -126,7 +130,8 @@ def check_rule_limit(user_id: int, db: Session, instagram_account_id: int = None
                 AutomationRule.deleted_at.is_(None)
             ).count()
             
-            if current_rules >= max_rules:
+            # Only check limit if max_rules is not unlimited (-1)
+            if max_rules != -1 and current_rules >= max_rules:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Rule limit reached. Your {user.plan_tier} plan allows {max_rules} automation rule(s). Upgrade to add more."
@@ -155,8 +160,8 @@ def check_rule_limit(user_id: int, db: Session, instagram_account_id: int = None
                     max_rules_created = tracker.rules_created_count
                     limiting_account = account
         
-        # Check if any account has reached the limit
-        if max_rules_created >= max_rules:
+        # Check if any account has reached the limit (only if max_rules is not unlimited)
+        if max_rules != -1 and max_rules_created >= max_rules:
             account_name = limiting_account.username if limiting_account else "your account"
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -245,7 +250,7 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
                 print(f"⚠️ Global DM limit reached for IGSID {account.igsid}: {error_message}")
                 return False
             
-            # For Free tier: Global tracker enforces lifetime limit (50 DMs total, never resets)
+            # For Free tier: Global tracker enforces lifetime limit (1000 DMs total, never resets) - High Volume pricing
             # For Pro/Enterprise: Global tracker enforces monthly limit (resets every 30 days)
             # No need to check monthly limit for free tier since it's lifetime
             if user.plan_tier in ["pro", "enterprise"]:

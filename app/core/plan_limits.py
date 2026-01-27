@@ -1,12 +1,12 @@
 from typing import Dict
 
 # Plan limits configuration
-# Free tier: 1 Account, 3 Rules, 50 DMs/month
+# Free tier: 1 Account, Unlimited Rules, 1000 DMs/month (High Volume pricing)
 PLAN_LIMITS: Dict[str, Dict[str, int]] = {
     "free": {
         "max_accounts": 1,
-        "max_dms_per_month": 50,  # Monthly limit, not daily
-        "max_automation_rules": 3,
+        "max_dms_per_month": 1000,  # Monthly limit, not daily
+        "max_automation_rules": -1,  # -1 means unlimited
     },
     "basic": {
         "max_accounts": 3,
@@ -27,9 +27,9 @@ PLAN_LIMITS: Dict[str, Dict[str, int]] = {
 
 # Global usage tracking limits (per Instagram account, not per user)
 # These are used for persistent tracking to prevent free tier abuse
-FREE_DM_LIMIT = 50  # Lifetime limit for free tier
+FREE_DM_LIMIT = 1000  # Lifetime limit for free tier (High Volume pricing)
 PRO_DM_LIMIT = 5000  # Monthly limit for pro tier
-FREE_RULE_LIMIT = 3  # Lifetime limit for free tier (total rules created, not active)
+FREE_RULE_LIMIT = -1  # -1 means unlimited for free tier (High Volume pricing)
 PRO_RULE_LIMIT = 100  # Monthly limit for pro tier (total rules created, not active)
 
 

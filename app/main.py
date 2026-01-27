@@ -147,6 +147,16 @@ async def startup_event():
         print(f"⚠️ supabase_id migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
     
+    # Run High Volume limits migration (updates metadata if limits are stored in database)
+    try:
+        print("🔄 Running High Volume limits migration...", file=sys.stderr)
+        from update_high_volume_limits_migration import run_migration as run_high_volume_migration
+        run_high_volume_migration()
+        print("✅ High Volume limits migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ High Volume limits migration warning (may not be needed): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent and limits are primarily in code
+    
     # Try Alembic migrations (if Alembic is configured)
     try:
         import subprocess

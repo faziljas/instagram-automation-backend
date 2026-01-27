@@ -100,6 +100,10 @@ def check_rule_limit(tracker: InstagramGlobalTracker, subscription_plan: str) ->
         limit = FREE_RULE_LIMIT
         limit_type = "lifetime"
     
+    # If limit is -1, unlimited rules allowed (High Volume pricing for free tier)
+    if limit == -1:
+        return True, ""
+    
     # Check if limit reached
     if tracker.rules_created_count >= limit:
         return False, (

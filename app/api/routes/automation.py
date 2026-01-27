@@ -45,8 +45,8 @@ def create_automation_rule(
             detail="User not found"
         )
 
-    # Check rule limit at user level (user-based tracking for MVP)
-    check_rule_limit(user_id, db, instagram_account_id=rule_data.instagram_account_id)
+    # Rule limit check removed - free tier now has unlimited rules (High Volume pricing)
+    # check_rule_limit(user_id, db, instagram_account_id=rule_data.instagram_account_id)
 
     # Create automation rule
     rule = AutomationRule(
