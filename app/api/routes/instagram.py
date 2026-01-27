@@ -1101,6 +1101,41 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     if not (ask_to_follow or ask_for_email):
                         continue
+
+                    # STRICT MODE: For story-based KEYWORD rules, only auto-send for VIP
+                    # if this message actually matches one of the configured keywords.
+                    try:
+                        if getattr(rule, "trigger_type", None) == "keyword":
+                            cfg = rule.config or {}
+                            keywords_list = []
+                            if cfg.get("keywords") and isinstance(cfg.get("keywords"), list):
+                                keywords_list = [str(k).strip().lower() for k in cfg.get("keywords") if k and str(k).strip()]
+                            elif cfg.get("keyword"):
+                                keywords_list = [str(cfg.get("keyword", "")).strip().lower()]
+
+                            matched_keyword = None
+                            if keywords_list and message_text:
+                                message_text_lower = message_text.strip().lower()
+                                for kw in keywords_list:
+                                    kw_clean = kw.strip().lower()
+                                    msg_clean = message_text_lower
+                                    # Exact match
+                                    if kw_clean == msg_clean:
+                                        matched_keyword = kw
+                                        break
+                                    # Whole-word contains
+                                    if kw_clean in msg_clean:
+                                        import re
+                                        pattern = r'\b' + re.escape(kw_clean) + r'\b'
+                                        if re.search(pattern, msg_clean):
+                                            matched_keyword = kw
+                                            break
+
+                            if keywords_list and not matched_keyword:
+                                log_print(f"⏭️ [VIP] Story reply '{message_text}' does NOT match any keywords for rule '{rule.name}' (ID: {rule.id}), skipping VIP auto-send for this rule")
+                                continue
+                    except Exception as vip_kw_err:
+                        log_print(f"⚠️ [VIP] Error while checking story keyword match for rule {rule.id}: {str(vip_kw_err)}")
                     
                     # Only process the FIRST matching rule for VIP users to avoid duplicates
                     if not vip_rule_processed:
