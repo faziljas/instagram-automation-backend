@@ -136,6 +136,16 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ automation_rules account_id nullable migration warning (may already be applied): {str(e)}", file=sys.stderr)
         # Don't raise - migrations are idempotent
+
+    # Run captured_leads instagram_account_id nullable migration (allows leads to persist across disconnect/reconnect)
+    try:
+        print("🔄 Running captured_leads instagram_account_id nullable migration...", file=sys.stderr)
+        from make_captured_leads_instagram_account_id_nullable_migration import run_migration as run_captured_leads_nullable_migration
+        run_captured_leads_nullable_migration()
+        print("✅ captured_leads instagram_account_id nullable migration completed", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ captured_leads instagram_account_id nullable migration warning (may already be applied): {str(e)}", file=sys.stderr)
+        # Don't raise - migrations are idempotent
     
     # Run supabase_id migration (prevents duplicate registrations when users sign up with different providers)
     try:

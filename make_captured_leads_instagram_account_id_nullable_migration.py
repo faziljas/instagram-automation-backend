@@ -29,24 +29,24 @@ def run_migration():
             """))
             result = r.fetchone()
 
-            if result:
-                is_nullable = result[0]
-                if is_nullable == 'YES':
-                    print("✅ captured_leads.instagram_account_id is already nullable")
-                else:
-                    # Make the column nullable
-                    print("🔧 Making captured_leads.instagram_account_id nullable...")
-                    conn.execute(text("""
-                        ALTER TABLE captured_leads
-                        ALTER COLUMN instagram_account_id DROP NOT NULL
-                    """))
-                    conn.commit()
-                    print("✅ Made instagram_account_id nullable in captured_leads table")
-            else:
-                print("⚠️ Column instagram_account_id not found in captured_leads table")
+        if result:
+            is_nullable = result[0]
+            if is_nullable == 'YES':
+                print("✅ captured_leads.instagram_account_id is already nullable")
+                return True
+            # Make the column nullable in its own transaction (auto-commits)
+            print("🔧 Making captured_leads.instagram_account_id nullable...")
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    ALTER TABLE captured_leads
+                    ALTER COLUMN instagram_account_id DROP NOT NULL
+                """))
+            print("✅ Made instagram_account_id nullable in captured_leads table")
+        else:
+            print("⚠️ Column instagram_account_id not found in captured_leads table")
 
-            print("✅ Captured leads instagram_account_id nullable migration completed successfully")
-            return True
+        print("✅ Captured leads instagram_account_id nullable migration completed successfully")
+        return True
 
     except Exception as e:
         print(f"❌ Migration failed: {str(e)}")

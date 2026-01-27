@@ -1,8 +1,9 @@
 """
-Run schema migrations before each deploy.
-Called by Render's preDeployCommand so migrations run automatically on every deployment.
+Run schema migrations before the app starts.
+Render startCommand runs: python run_migrations.py && uvicorn ...
+So every auto-deploy from git runs all migrations with no manual step.
 
-Add new migration modules here when they should run on deploy.
+Add new migration modules to MIGRATIONS (same order as app/main.py startup).
 Migrations must be idempotent (safe to run multiple times).
 """
 import importlib.util
@@ -10,9 +11,20 @@ import os
 import sys
 
 # Migrations to run on every deploy, in order. Each must define run_migration() and be idempotent.
+# Order matches app/main.py startup so Render auto-deploy runs all migrations with no manual step.
 MIGRATIONS = [
+    "add_follow_button_clicks_migration",
+    "add_conversation_migration",
+    "add_instagram_audience_migration",
+    "add_billing_cycle_migration",
+    "add_dm_log_username_igsid_migration",
+    "add_instagram_account_created_at_migration",
+    "add_instagram_global_tracker_migration",
+    "update_instagram_global_tracker_user_id_migration",
     "make_automation_rules_account_id_nullable_migration",
     "make_captured_leads_instagram_account_id_nullable_migration",
+    "add_supabase_id_migration",
+    "update_high_volume_limits_migration",
 ]
 
 
