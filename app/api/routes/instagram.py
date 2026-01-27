@@ -504,17 +504,22 @@ async def process_instagram_message(event: dict, db: Session):
                         ).first()
 
                         if not existing_lead:
+                            # Mirror the structure used in pre_dm_handler so leads behave consistently
                             captured_lead = CapturedLead(
                                 user_id=account.user_id,
                                 instagram_account_id=account.id,
                                 automation_rule_id=rule.id,
                                 email=user_email,
-                                instagram_user_id=str(sender_id),
-                                source="quick_reply_button"
+                                extra_metadata={
+                                    "sender_id": str(sender_id),
+                                    "captured_via": "quick_reply_button",
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                },
                             )
                             db.add(captured_lead)
                             db.commit()
-                            log_print(f"✅ Saved email to leads database: {user_email}")
+                            db.refresh(captured_lead)
+                            log_print(f"✅ Saved email to leads database: {user_email} (lead_id={captured_lead.id})")
                         else:
                             log_print(f"ℹ️ Lead already exists for email: {user_email}")
                     except Exception as save_err:
