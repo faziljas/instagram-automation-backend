@@ -1177,6 +1177,7 @@ async def exchange_instagram_code(
         from app.models.analytics_event import AnalyticsEvent
         from app.models.captured_lead import CapturedLead
         from app.models.automation_rule_stats import AutomationRuleStats
+        from sqlalchemy import update
         from sqlalchemy.orm.attributes import flag_modified
         
         disconnected_rules = db.query(AutomationRule).filter(
