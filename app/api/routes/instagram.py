@@ -526,8 +526,16 @@ async def process_instagram_message(event: dict, db: Session):
                         log_print(f"⚠️ Failed to save email to leads: {str(save_err)}", "WARNING")
                         db.rollback()
 
-                    # Update automation stats + analytics so analytics screen matches text‑email flow
+                    # Update global audience + automation stats + analytics so analytics screen matches text‑email flow
                     try:
+                        # Mark email on global audience so VIP detection works immediately
+                        try:
+                            from app.services.global_conversion_check import update_audience_email
+                            update_audience_email(db, str(sender_id), account.id, account.user_id, user_email)
+                            log_print(f"✅ Updated global audience email for sender {sender_id}: {user_email}")
+                        except Exception as audience_err:
+                            log_print(f"⚠️ Failed to update global audience with email for quick reply: {str(audience_err)}", "WARNING")
+
                         # Increment lead_captured counter
                         update_automation_stats(rule.id, "lead_captured", db)
 

@@ -507,13 +507,12 @@ async def process_pre_dm_actions(
                     "email": None
                 }
         else:
-            # FIX ISSUE 2: Random text received while waiting for follow confirmation - send reminder
-            follow_reminder_message = config.get("follow_reminder_message", 
-                "Hey! I'm waiting for you to confirm that you're following me. Please type 'done', 'followed', or 'I'm following' to continue! 😊")
-            print(f"💬 [FIX ISSUE 2] User sent random text while waiting for follow confirmation, sending reminder")
+            # STRICT MODE: Random / gibberish text while waiting for follow confirmation.
+            # Do NOT send any reminder or extra message – just keep waiting silently.
+            print(f"🚫 [STRICT MODE] Ignoring non-confirmation text while waiting for follow confirmation: '{incoming_message}'")
             return {
-                "action": "send_follow_reminder",
-                "message": follow_reminder_message,
+                "action": "wait_for_follow",
+                "message": None,
                 "should_save_email": False,
                 "email": None
             }
@@ -629,15 +628,12 @@ async def process_pre_dm_actions(
                     "email": None
                 }
             
-            # STRICT MODE: Invalid email - send retry message and WAIT
-            print(f"⚠️ [STRICT MODE] Invalid email format: {incoming_message}")
-            email_retry_message = config.get("email_retry_message", "")
-            # Ensure we have a valid retry message - use default if empty or not configured
-            if not email_retry_message or not email_retry_message.strip():
-                email_retry_message = "Hmm, that doesn't look like a valid email address. 🤔\n\nPlease type it again so I can send you the guide! 📧"
+            # STRICT MODE: Invalid / gibberish text while waiting for email.
+            # Do NOT send any retry or helper message – just keep waiting silently.
+            print(f"🚫 [STRICT MODE] Ignoring non-email text while waiting for email: '{incoming_message}'")
             return {
-                "action": "send_email_retry",
-                "message": email_retry_message,
+                "action": "wait_for_email",
+                "message": None,
                 "should_save_email": False,
                 "email": None
             }
