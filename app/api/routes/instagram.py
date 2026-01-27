@@ -2294,6 +2294,16 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         # This ensures comment replies are sent right away, regardless of pre-DM flow
         comment_reply_sent = False
         
+        # Helper function to get config value with camelCase and snake_case fallback
+        def get_config_value(config, snake_key, camel_key=None, default=None):
+            """Get config value checking both snake_case and camelCase formats for backward compatibility."""
+            if camel_key is None:
+                # Auto-generate camelCase from snake_case (e.g., "lead_auto_reply_to_comments" -> "leadAutoReplyToComments")
+                parts = snake_key.split('_')
+                camel_key = parts[0] + ''.join(word.capitalize() for word in parts[1:])
+            # Check snake_case first (preferred), then camelCase, then default
+            return config.get(snake_key) or config.get(camel_key) or default
+        
         # Helper function to send comment reply for a rule
         def send_comment_reply_for_rule(rule, comment_id, commenter_id, account, db):
             """Send public comment reply for a rule if enabled."""
@@ -2301,14 +2311,28 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
                 return False
             
             # Check if auto-reply to comments is enabled for this rule
-            is_lead_capture = rule.config.get("is_lead_capture", False)
+            is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
             
             if is_lead_capture:
-                auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+                # Check both snake_case and camelCase formats for backward compatibility
+                auto_reply_to_comments = (
+                    get_config_value(rule.config, "lead_auto_reply_to_comments", default=False) or
+                    get_config_value(rule.config, "auto_reply_to_comments", default=False)
+                )
+                comment_replies = (
+                    get_config_value(rule.config, "lead_comment_replies", default=[]) or
+                    get_config_value(rule.config, "comment_replies", default=[])
+                )
             else:
-                auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+                # Check both snake_case and camelCase formats for backward compatibility
+                auto_reply_to_comments = (
+                    get_config_value(rule.config, "simple_auto_reply_to_comments", default=False) or
+                    get_config_value(rule.config, "auto_reply_to_comments", default=False)
+                )
+                comment_replies = (
+                    get_config_value(rule.config, "simple_comment_replies", default=[]) or
+                    get_config_value(rule.config, "comment_replies", default=[])
+                )
             
             print(f"🔍 [COMMENT REPLY] Checking rule {rule.id}: auto_reply_to_comments={auto_reply_to_comments}, comment_replies={comment_replies}")
             
@@ -2918,13 +2942,20 @@ async def execute_automation_action(
                 
                 if rule_state.get("primary_dm_sent") and not should_send_email_success_first and not vip_comment_again:
                     # Primary DM was already sent - check if lead capture flow is also completed
-                    is_lead_capture = rule.config.get("is_lead_capture", False)
+                    is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
                     # FIX ISSUE 1: Check for simple reply rules (not lead capture)
+                    # Helper to get config with camelCase/snake_case fallback
+                    def get_cfg(key_snake, key_camel=None, default=None):
+                        if key_camel is None:
+                            parts = key_snake.split('_')
+                            key_camel = parts[0] + ''.join(word.capitalize() for word in parts[1:])
+                        return rule.config.get(key_snake) or rule.config.get(key_camel) or default
+                    
                     is_simple_reply = not is_lead_capture and (
-                        rule.config.get("simple_auto_reply_to_comments", False) or 
-                        rule.config.get("auto_reply_to_comments", False) or
-                        rule.config.get("message_template") or
-                        rule.config.get("message_variations")
+                        get_cfg("simple_auto_reply_to_comments", default=False) or 
+                        get_cfg("auto_reply_to_comments", default=False) or
+                        rule.config.get("message_template") or rule.config.get("messageTemplate") or
+                        rule.config.get("message_variations") or rule.config.get("messageVariations")
                     )
                     has_incoming_message = incoming_message and incoming_message.strip()
                     
@@ -3222,15 +3253,22 @@ async def execute_automation_action(
                                     
                                     # Send public comment reply IMMEDIATELY after follow-up message (not waiting for email)
                                     if comment_id:
-                                        is_lead_capture = rule.config.get("is_lead_capture", False)
+                                        is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
                                         
                                         # Determine which comment reply fields to use based on rule type
+                                        # Helper to get config with camelCase/snake_case fallback
+                                        def get_cfg_val(key_snake, key_camel=None, default=None):
+                                            if key_camel is None:
+                                                parts = key_snake.split('_')
+                                                key_camel = parts[0] + ''.join(word.capitalize() for word in parts[1:])
+                                            return rule.config.get(key_snake) or rule.config.get(key_camel) or default
+                                        
                                         if is_lead_capture:
-                                            auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                                            comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+                                            auto_reply_to_comments = get_cfg_val("lead_auto_reply_to_comments", default=False) or get_cfg_val("auto_reply_to_comments", default=False)
+                                            comment_replies = get_cfg_val("lead_comment_replies", default=[]) or get_cfg_val("comment_replies", default=[])
                                         else:
-                                            auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                                            comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+                                            auto_reply_to_comments = get_cfg_val("simple_auto_reply_to_comments", default=False) or get_cfg_val("auto_reply_to_comments", default=False)
+                                            comment_replies = get_cfg_val("simple_comment_replies", default=[]) or get_cfg_val("comment_replies", default=[])
                                         
                                         if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
                                             valid_replies = [r for r in comment_replies if r and str(r).strip()]
@@ -3309,15 +3347,22 @@ async def execute_automation_action(
                                 
                                 # Send public comment reply IMMEDIATELY after follow-up message (not waiting for email)
                                 if comment_id:
-                                    is_lead_capture = rule.config.get("is_lead_capture", False)
+                                    is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
                                     
                                     # Determine which comment reply fields to use based on rule type
+                                    # Helper to get config with camelCase/snake_case fallback
+                                    def get_cfg_val(key_snake, key_camel=None, default=None):
+                                        if key_camel is None:
+                                            parts = key_snake.split('_')
+                                            key_camel = parts[0] + ''.join(word.capitalize() for word in parts[1:])
+                                        return rule.config.get(key_snake) or rule.config.get(key_camel) or default
+                                    
                                     if is_lead_capture:
-                                        auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                                        comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+                                        auto_reply_to_comments = get_cfg_val("lead_auto_reply_to_comments", default=False) or get_cfg_val("auto_reply_to_comments", default=False)
+                                        comment_replies = get_cfg_val("lead_comment_replies", default=[]) or get_cfg_val("comment_replies", default=[])
                                     else:
-                                        auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                                        comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+                                        auto_reply_to_comments = get_cfg_val("simple_auto_reply_to_comments", default=False) or get_cfg_val("auto_reply_to_comments", default=False)
+                                        comment_replies = get_cfg_val("simple_comment_replies", default=[]) or get_cfg_val("comment_replies", default=[])
                                     
                                     if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
                                         valid_replies = [r for r in comment_replies if r and str(r).strip()]
@@ -4171,7 +4216,8 @@ async def execute_automation_action(
                 return  # Don't continue to primary DM
             
             # Check if this is a lead capture flow
-            is_lead_capture = rule.config.get("is_lead_capture", False)
+            # Support both camelCase (from frontend) and snake_case (legacy) formats
+            is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
             
             # Process lead capture flow if:
             # 1. It's a lead capture rule AND we're not coming from pre-DM with send_primary, OR
@@ -4297,7 +4343,8 @@ async def execute_automation_action(
                 # Check if we need to load template (either None or when send_primary action)
                 should_load_template = message_template is None or (pre_dm_result and pre_dm_result.get("action") == "send_primary")
                 if should_load_template:
-                    is_lead_capture = rule.config.get("is_lead_capture", False)
+                    # Support both camelCase (from frontend) and snake_case (legacy) formats
+                    is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
                     
                     # For Lead Capture rules, try lead_dm_messages first
                     if is_lead_capture:
@@ -4540,17 +4587,27 @@ async def execute_automation_action(
                 # (keyword triggers can come from comments if the rule has keywords configured)
                 
                 # Check for comment reply settings - support both old format and new simple/lead format
-                is_lead_capture = rule.config.get("is_lead_capture", False)
+                # Support both camelCase (from frontend) and snake_case (legacy) formats
+                is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
                 
                 # Determine which comment reply fields to use based on rule type
+                # Helper to get config with camelCase/snake_case fallback for backward compatibility
+                def get_cfg_val(key_snake, key_camel=None, default=None):
+                    if key_camel is None:
+                        parts = key_snake.split('_')
+                        key_camel = parts[0] + ''.join(word.capitalize() for word in parts[1:])
+                    return rule.config.get(key_snake) or rule.config.get(key_camel) or default
+                
                 if is_lead_capture:
                     # Lead Capture rule: check lead-specific fields first, then fallback to shared
-                    auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                    comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+                    # Supports both camelCase (from frontend) and snake_case (legacy) formats
+                    auto_reply_to_comments = get_cfg_val("lead_auto_reply_to_comments", default=False) or get_cfg_val("auto_reply_to_comments", default=False)
+                    comment_replies = get_cfg_val("lead_comment_replies", default=[]) or get_cfg_val("comment_replies", default=[])
                 else:
                     # Simple Reply rule: check simple-specific fields first, then fallback to shared
-                    auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
-                    comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+                    # Supports both camelCase (from frontend) and snake_case (legacy) formats
+                    auto_reply_to_comments = get_cfg_val("simple_auto_reply_to_comments", default=False) or get_cfg_val("auto_reply_to_comments", default=False)
+                    comment_replies = get_cfg_val("simple_comment_replies", default=[]) or get_cfg_val("comment_replies", default=[])
                 
                 print(f"🔍 [COMMENT REPLY] Rule {rule.id} (is_lead_capture={is_lead_capture}): auto_reply_to_comments={auto_reply_to_comments}, comment_replies type={type(comment_replies)}, len={len(comment_replies) if isinstance(comment_replies, list) else 'N/A'}")
                 print(f"🔍 [COMMENT REPLY] Config fields: auto_reply_to_comments={rule.config.get('auto_reply_to_comments')}, simple_auto_reply_to_comments={rule.config.get('simple_auto_reply_to_comments')}, lead_auto_reply_to_comments={rule.config.get('lead_auto_reply_to_comments')}")
