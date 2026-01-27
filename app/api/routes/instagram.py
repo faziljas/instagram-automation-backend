@@ -4295,9 +4295,26 @@ async def execute_automation_action(
                     if email_success_message and str(email_success_message).strip():
                         print(f"📧 Sending email success message before primary DM")
                         try:
-                            # Send with PDF button if available (prevents unwanted link preview card)
-                            send_dm_api(sender_id, email_success_message, access_token, account_page_id, buttons=pdf_buttons, quick_replies=None)
-                            print(f"✅ Email success message sent successfully")
+                            # Check if this is a comment-based trigger (use private reply to bypass 24-hour window)
+                            is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                            
+                            # Determine which message to send and log
+                            message_to_send = email_success_message
+                            
+                            if is_comment_trigger:
+                                # For comment triggers: Use private reply (bypasses 24-hour window)
+                                # Private replies don't support URL buttons, so include PDF URL in message text
+                                if pdf_link and str(pdf_link).strip():
+                                    pdf_url_in_text = f"\n\n🔗 Get your PDF here: {pdf_link_clean}"
+                                    message_to_send = f"{email_success_message}{pdf_url_in_text}"
+                                
+                                from app.utils.instagram_api import send_private_reply
+                                send_private_reply(comment_id, message_to_send, access_token, account_page_id)
+                                print(f"✅ Email success message sent via private reply (bypasses 24-hour window)")
+                            else:
+                                # For non-comment triggers: Use regular DM with button (conversation already active)
+                                send_dm_api(sender_id, message_to_send, access_token, account_page_id, buttons=pdf_buttons, quick_replies=None)
+                                print(f"✅ Email success message sent successfully with PDF button")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             try:
@@ -4306,7 +4323,7 @@ async def execute_automation_action(
                                     user_id=user_id,
                                     instagram_account_id=account_id,
                                     recipient_username=str(sender_id),
-                                    message=email_success_message,
+                                    message=message_to_send,
                                     db=db,
                                     instagram_username=username,
                                     instagram_igsid=account_igsid
