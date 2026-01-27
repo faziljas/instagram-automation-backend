@@ -450,7 +450,11 @@ async def process_instagram_message(event: dict, db: Session):
                 user_email = quick_reply_payload.replace("email_use_", "")
                 log_print(f"📧 User clicked their email button, auto-submitting: {user_email}")
                 from app.models.automation_rule import AutomationRule
-                from app.services.pre_dm_handler import update_pre_dm_state
+                from app.services.pre_dm_handler import (
+                    update_pre_dm_state,
+                    check_if_email_response,  # kept for backward compatibility / future use
+                    get_pre_dm_state,
+                )
                 from app.services.lead_capture import validate_email, update_automation_stats
                 
                 # Validate the email
@@ -465,61 +469,68 @@ async def process_instagram_message(event: dict, db: Session):
                     AutomationRule.is_active == True,
                     AutomationRule.action_type == "send_dm"
                 ).all()
-                
-                for rule in rules:
-                    if rule.config.get("ask_for_email", False):
-                        # Mark email as received and proceed to primary DM
-                        update_pre_dm_state(sender_id, rule.id, {
-                            "email_received": True,
-                            "email": user_email,
-                            "email_request_sent": True
-                        })
-                        log_print(f"✅ Email auto-submitted from quick reply: {user_email} for rule {rule.id}")
-                        
-                        # Save email to leads database
-                        try:
-                            from app.models.captured_lead import CapturedLead
-                            from sqlalchemy import and_
-                            
-                            # Check if lead already exists
-                            existing_lead = db.query(CapturedLead).filter(
-                                and_(
-                                    CapturedLead.instagram_account_id == account.id,
-                                    CapturedLead.automation_rule_id == rule.id,
-                                    CapturedLead.email == user_email
-                                )
-                            ).first()
-                            
-                            if not existing_lead:
-                                captured_lead = CapturedLead(
-                                    user_id=account.user_id,
-                                    instagram_account_id=account.id,
-                                    automation_rule_id=rule.id,
-                                    email=user_email,
-                                    instagram_user_id=str(sender_id),
-                                    source="quick_reply_button"
-                                )
-                                db.add(captured_lead)
-                                db.commit()
-                                log_print(f"✅ Saved email to leads database: {user_email}")
-                            else:
-                                log_print(f"ℹ️ Lead already exists for email: {user_email}")
-                        except Exception as save_err:
-                            log_print(f"⚠️ Failed to save email to leads: {str(save_err)}", "WARNING")
-                            db.rollback()
 
-                        # Update automation stats + log EMAIL_COLLECTED analytics event
+                # Process only the rule that is currently waiting for this sender's email
+                processed_rule = False
+                for rule in rules:
+                    if not rule.config.get("ask_for_email", False):
+                        continue
+
+                    # Only handle rules where this sender is actually in the email step
+                    state = get_pre_dm_state(str(sender_id), rule.id)
+                    if not state.get("email_request_sent") or state.get("email_received"):
+                        continue
+
+                    # Mark email as received and proceed to primary DM
+                    update_pre_dm_state(sender_id, rule.id, {
+                        "email_received": True,
+                        "email": user_email,
+                        "email_request_sent": True
+                    })
+                    log_print(f"✅ Email auto-submitted from quick reply: {user_email} for rule {rule.id}")
+
+                    # Save email to leads database
+                    try:
+                        from app.models.captured_lead import CapturedLead
+                        from sqlalchemy import and_
+
+                        # Check if lead already exists
+                        existing_lead = db.query(CapturedLead).filter(
+                            and_(
+                                CapturedLead.instagram_account_id == account.id,
+                                CapturedLead.automation_rule_id == rule.id,
+                                CapturedLead.email == user_email
+                            )
+                        ).first()
+
+                        if not existing_lead:
+                            captured_lead = CapturedLead(
+                                user_id=account.user_id,
+                                instagram_account_id=account.id,
+                                automation_rule_id=rule.id,
+                                email=user_email,
+                                instagram_user_id=str(sender_id),
+                                source="quick_reply_button"
+                            )
+                            db.add(captured_lead)
+                            db.commit()
+                            log_print(f"✅ Saved email to leads database: {user_email}")
+                        else:
+                            log_print(f"ℹ️ Lead already exists for email: {user_email}")
+                    except Exception as save_err:
+                        log_print(f"⚠️ Failed to save email to leads: {str(save_err)}", "WARNING")
+                        db.rollback()
+
+                    # Update automation stats + analytics so analytics screen matches text‑email flow
+                    try:
+                        # Increment lead_captured counter
+                        update_automation_stats(rule.id, "lead_captured", db)
+
+                        # Log EMAIL_COLLECTED analytics event
                         try:
-                            # Increment lead_captured stats for this rule
-                            try:
-                                update_automation_stats(rule.id, "lead_captured", db)
-                            except Exception as stats_err:
-                                log_print(f"⚠️ Failed to update automation stats for quick-reply email: {str(stats_err)}", "WARNING")
-                            
-                            # Log EMAIL_COLLECTED analytics event so it appears in dashboard
                             from app.utils.analytics import log_analytics_event_sync
                             from app.models.analytics_event import EventType
-                            media_id = rule.config.get("media_id") if isinstance(rule.config, dict) else None
+                            media_id = rule.config.get("media_id") if hasattr(rule, "config") else None
                             log_analytics_event_sync(
                                 db=db,
                                 user_id=account.user_id,
@@ -528,27 +539,35 @@ async def process_instagram_message(event: dict, db: Session):
                                 media_id=media_id,
                                 instagram_account_id=account.id,
                                 metadata={
-                                    "sender_id": sender_id,
+                                    "sender_id": str(sender_id),
                                     "email": user_email,
-                                    "captured_via": "quick_reply_button"
-                                }
+                                    "captured_via": "quick_reply_button",
+                                },
                             )
-                            log_print(f"✅ EMAIL_COLLECTED analytics event logged for quick-reply email: {user_email}")
+                            log_print(f"✅ Logged EMAIL_COLLECTED analytics event for quick reply email: {user_email}")
                         except Exception as analytics_err:
-                            log_print(f"⚠️ Failed to log EMAIL_COLLECTED event for quick-reply email: {str(analytics_err)}", "WARNING")
-                        
-                        # Proceed to primary DM
-                        asyncio.create_task(execute_automation_action(
-                            rule, sender_id, account, db,
-                            trigger_type="postback",
-                            message_id=message_id,
-                            pre_dm_result_override={
-                                "action": "send_primary",
-                                "email": user_email,
-                                "send_email_success": True
-                            }
-                        ))
-                
+                            log_print(f"⚠️ Failed to log EMAIL_COLLECTED analytics event: {str(analytics_err)}", "WARNING")
+                    except Exception as stats_err:
+                        log_print(f"⚠️ Failed to update automation stats for quick reply email: {str(stats_err)}", "WARNING")
+
+                    # Proceed to primary DM (single rule only)
+                    asyncio.create_task(execute_automation_action(
+                        rule, sender_id, account, db,
+                        trigger_type="postback",
+                        message_id=message_id,
+                        pre_dm_result_override={
+                            "action": "send_primary",
+                            "email": user_email,
+                            "send_email_success": True
+                        }
+                    ))
+
+                    processed_rule = True
+                    break
+
+                if not processed_rule:
+                    log_print(f"ℹ️ No matching rule found waiting for email for quick reply payload, nothing to execute")
+
                 return  # Exit early, don't process as regular message
             
             # 2) Handle "I'm following" quick reply button (payload: im_following_{rule_id})
