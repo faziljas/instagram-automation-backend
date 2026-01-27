@@ -1591,13 +1591,13 @@ async def process_instagram_message(event: dict, db: Session):
                     log_print(f"   - {rule.name}: trigger={rule.trigger_type}, media_id={rule.media_id}")
         
         # new_message rules (work for all DMs including stories)
-        new_message_rules = db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id == account.id,
-            AutomationRule.trigger_type == "new_message",
-            AutomationRule.is_active == True
-        ).all()
-        
-        log_print(f"📋 [DM] Found {len(new_message_rules)} 'new_message' rules for account '{account.username}'")
+        # BACKEND STRICT MODE: Disable trigger_type="new_message" for now.
+        # We only want automations to fire when they were initiated from
+        # post/reel comments, story replies, or explicit keyword triggers.
+        # Frontend still allows creating 'new_message' rules, but they are
+        # ignored here to avoid unexpected DMs when users type arbitrary text.
+        new_message_rules = []
+        log_print(f"📋 [DM] Ignoring 'new_message' trigger_type rules for account '{account.username}' (backend disabled)")
         
         # Filter keyword rules for DMs
         # For story DMs: match rules specifically for that story OR global rules (no media_id)
