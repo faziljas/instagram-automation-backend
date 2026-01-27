@@ -83,7 +83,8 @@ class SubscriptionUsage(BaseModel):
 
 
 class SubscriptionResponse(BaseModel):
-    plan_tier: str
+    plan_tier: str  # Actual plan tier (free/pro/enterprise)
+    effective_plan_tier: str  # Effective plan tier for display (shows Pro limits if still within paid Pro cycle)
     status: str
     stripe_subscription_id: Optional[str] = None
     usage: SubscriptionUsage

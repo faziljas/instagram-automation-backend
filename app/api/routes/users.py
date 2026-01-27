@@ -297,8 +297,28 @@ def get_subscription(
     # Paid users show their subscription status
     status_value = "active" if user.plan_tier == "free" else (subscription.status if subscription else "inactive")
     
+    # Determine effective plan tier for display purposes
+    # If Free user is still within paid Pro cycle period, show Pro limits
+    effective_plan_tier = user.plan_tier
+    if user.plan_tier == "free" and subscription and subscription.billing_cycle_start_date:
+        from datetime import datetime, timedelta
+        cycle_start = subscription.billing_cycle_start_date
+        now = datetime.utcnow()
+        days_since_start = (now - cycle_start).days
+        
+        # Check if still within Pro cycle period (first 30 days)
+        cycles_passed = days_since_start // 30
+        current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
+        current_cycle_end = current_cycle_start + timedelta(days=30)
+        
+        # If still within paid Pro cycle, show Pro limits
+        if now < current_cycle_end:
+            effective_plan_tier = "pro"
+            print(f"✅ User {user_id} is Free tier but still within Pro cycle period - showing Pro limits")
+    
     return {
         "plan_tier": user.plan_tier,
+        "effective_plan_tier": effective_plan_tier,  # Use this for display limits
         "status": status_value,
         "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
         "usage": {
