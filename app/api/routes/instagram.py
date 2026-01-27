@@ -2290,6 +2290,88 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         
         print(f"📋 After media_id filtering: Found {len(post_comment_rules)} 'post_comment' rules and {len(keyword_rules)} 'keyword' rules for media_id {media_id_str}")
         
+        # SEND PUBLIC COMMENT REPLY IMMEDIATELY (before processing automation rules)
+        # This ensures comment replies are sent right away, regardless of pre-DM flow
+        all_rules_for_comment_reply = post_comment_rules + keyword_rules
+        comment_reply_sent = False
+        
+        for rule in all_rules_for_comment_reply:
+            if comment_reply_sent:
+                break  # Only send one comment reply per comment
+            
+            # Check if auto-reply to comments is enabled for this rule
+            is_lead_capture = rule.config.get("is_lead_capture", False) if rule.config else False
+            
+            if is_lead_capture:
+                auto_reply_to_comments = rule.config.get("lead_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                comment_replies = rule.config.get("lead_comment_replies", []) or rule.config.get("comment_replies", [])
+            else:
+                auto_reply_to_comments = rule.config.get("simple_auto_reply_to_comments", False) or rule.config.get("auto_reply_to_comments", False)
+                comment_replies = rule.config.get("simple_comment_replies", []) or rule.config.get("comment_replies", [])
+            
+            # Check if we already replied to this comment
+            from app.services.pre_dm_handler import was_comment_replied
+            if was_comment_replied(str(commenter_id), rule.id, comment_id):
+                print(f"⏭️ [COMMENT REPLY] Already replied to comment {comment_id} for rule {rule.id}, skipping")
+                continue
+            
+            # Send public comment reply if enabled
+            if auto_reply_to_comments and comment_replies and isinstance(comment_replies, list):
+                valid_replies = [r for r in comment_replies if r and str(r).strip()]
+                if valid_replies:
+                    import random
+                    selected_reply = random.choice(valid_replies)
+                    print(f"💬 [IMMEDIATE] Sending public comment reply immediately for rule {rule.id}")
+                    print(f"   Comment ID: {comment_id}, Reply: {selected_reply[:50]}...")
+                    
+                    try:
+                        from app.utils.instagram_api import send_public_comment_reply
+                        from app.utils.encryption import decrypt_credentials
+                        
+                        # Get access token
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            print(f"⚠️ [COMMENT REPLY] No access token found for account {account.id}")
+                            continue
+                        
+                        send_public_comment_reply(comment_id, selected_reply, access_token)
+                        print(f"✅ Public comment reply sent immediately: {selected_reply[:50]}...")
+                        
+                        # Mark as replied
+                        from app.services.pre_dm_handler import mark_comment_replied
+                        mark_comment_replied(str(commenter_id), rule.id, comment_id)
+                        
+                        # Update stats
+                        from app.services.lead_capture import update_automation_stats
+                        update_automation_stats(rule.id, "comment_replied", db)
+                        
+                        # Log analytics
+                        try:
+                            from app.utils.analytics import log_analytics_event_sync
+                            from app.models.analytics_event import EventType
+                            _mid = rule.config.get("media_id") if isinstance(rule.config, dict) else None
+                            log_analytics_event_sync(
+                                db=db, 
+                                user_id=account.user_id, 
+                                event_type=EventType.COMMENT_REPLIED, 
+                                rule_id=rule.id, 
+                                media_id=_mid, 
+                                instagram_account_id=account.id, 
+                                metadata={"comment_id": comment_id}
+                            )
+                        except Exception as _ae:
+                            pass
+                        
+                        comment_reply_sent = True
+                        break  # Only send one comment reply per comment
+                    except Exception as reply_error:
+                        print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
+                        print(f"   Continuing with automation flow...")
+                        # Continue to next rule or automation flow
+        
         # DEBUG: Show all accounts and all rules for troubleshooting
         all_accounts = db.query(InstagramAccount).filter(InstagramAccount.is_active == True).all()
         print(f"🔍 DEBUG: All active Instagram accounts:")
