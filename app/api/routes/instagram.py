@@ -434,6 +434,84 @@ async def process_instagram_message(event: dict, db: Session):
                 # Don't process further - wait for user to type their email
                 return  # Exit early, don't process as regular message
             
+            # 1.6) Handle "Use My Email" quick reply button (user's logged-in email)
+            if quick_reply_payload.startswith("email_use_"):
+                # User clicked their email button - auto-submit that email
+                user_email = quick_reply_payload.replace("email_use_", "")
+                log_print(f"📧 User clicked their email button, auto-submitting: {user_email}")
+                from app.models.automation_rule import AutomationRule
+                from app.services.pre_dm_handler import update_pre_dm_state, check_if_email_response
+                from app.services.lead_capture import validate_email
+                
+                # Validate the email
+                is_valid, _ = validate_email(user_email)
+                if not is_valid:
+                    log_print(f"⚠️ Invalid email from quick reply button: {user_email}", "WARNING")
+                    return
+                
+                # Find active rules that have email enabled
+                rules = db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id == account.id,
+                    AutomationRule.is_active == True,
+                    AutomationRule.action_type == "send_dm"
+                ).all()
+                
+                for rule in rules:
+                    if rule.config.get("ask_for_email", False):
+                        # Mark email as received and proceed to primary DM
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "email_received": True,
+                            "email": user_email,
+                            "email_request_sent": True
+                        })
+                        log_print(f"✅ Email auto-submitted from quick reply: {user_email} for rule {rule.id}")
+                        
+                        # Save email to leads database
+                        try:
+                            from app.models.captured_lead import CapturedLead
+                            from sqlalchemy import and_
+                            
+                            # Check if lead already exists
+                            existing_lead = db.query(CapturedLead).filter(
+                                and_(
+                                    CapturedLead.instagram_account_id == account.id,
+                                    CapturedLead.automation_rule_id == rule.id,
+                                    CapturedLead.email == user_email
+                                )
+                            ).first()
+                            
+                            if not existing_lead:
+                                captured_lead = CapturedLead(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    automation_rule_id=rule.id,
+                                    email=user_email,
+                                    instagram_user_id=str(sender_id),
+                                    source="quick_reply_button"
+                                )
+                                db.add(captured_lead)
+                                db.commit()
+                                log_print(f"✅ Saved email to leads database: {user_email}")
+                            else:
+                                log_print(f"ℹ️ Lead already exists for email: {user_email}")
+                        except Exception as save_err:
+                            log_print(f"⚠️ Failed to save email to leads: {str(save_err)}", "WARNING")
+                            db.rollback()
+                        
+                        # Proceed to primary DM
+                        asyncio.create_task(execute_automation_action(
+                            rule, sender_id, account, db,
+                            trigger_type="postback",
+                            message_id=message_id,
+                            pre_dm_result_override={
+                                "action": "send_primary",
+                                "email": user_email,
+                                "send_email_success": True
+                            }
+                        ))
+                
+                return  # Exit early, don't process as regular message
+            
             # 2) Handle "I'm following" quick reply button (payload: im_following_{rule_id})
             if quick_reply_payload.startswith("im_following_"):
                 log_print(f"✅ [STRICT MODE] User clicked 'I'm following' button! Payload={quick_reply_payload}")
@@ -532,9 +610,49 @@ async def process_instagram_message(event: dict, db: Session):
                             
                             page_id_for_dm = account.page_id
                             
-                            # Send email request as plain text (no buttons)
-                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
-                            log_print(f"✅ Email request sent after 'I'm following' button click")
+                            # Create Quick Reply buttons for email collection
+                            quick_replies = [
+                                {
+                                    "content_type": "text",
+                                    "title": "Share Email",
+                                    "payload": "email_shared"
+                                },
+                                {
+                                    "content_type": "text",
+                                    "title": "Skip for Now",
+                                    "payload": "email_skip"
+                                }
+                            ]
+                            
+                            # IMPROVEMENT: Add user's email as quick reply button if available
+                            try:
+                                from app.models.user import User
+                                user = db.query(User).filter(User.id == account.user_id).first()
+                                if user and user.email:
+                                    email_display = user.email
+                                    if len(email_display) > 20:
+                                        email_parts = email_display.split('@')
+                                        if len(email_parts) > 0:
+                                            username = email_parts[0]
+                                            if len(username) <= 15:
+                                                email_display = f"{username}@{email_parts[1][:15-len(username)]}..."
+                                            else:
+                                                email_display = f"{username[:17]}..."
+                                        else:
+                                            email_display = email_display[:17] + "..."
+                                    
+                                    quick_replies.insert(0, {
+                                        "content_type": "text",
+                                        "title": email_display,
+                                        "payload": f"email_use_{user.email}"
+                                    })
+                                    print(f"✅ Added user's email ({user.email}) as quick reply button")
+                            except Exception as email_err:
+                                print(f"⚠️ Could not add user email to quick replies: {str(email_err)}")
+                            
+                            # Send email request with quick reply buttons
+                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                            log_print(f"✅ Email request sent after 'I'm following' button click with quick replies")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             try:
@@ -758,9 +876,49 @@ async def process_instagram_message(event: dict, db: Session):
                             
                             page_id_for_dm = account.page_id
                             
-                            # Send email request as plain text (no buttons)
-                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
-                            log_print(f"✅ Email request sent after Follow Me button click")
+                            # Create Quick Reply buttons for email collection
+                            quick_replies = [
+                                {
+                                    "content_type": "text",
+                                    "title": "Share Email",
+                                    "payload": "email_shared"
+                                },
+                                {
+                                    "content_type": "text",
+                                    "title": "Skip for Now",
+                                    "payload": "email_skip"
+                                }
+                            ]
+                            
+                            # IMPROVEMENT: Add user's email as quick reply button if available
+                            try:
+                                from app.models.user import User
+                                user = db.query(User).filter(User.id == account.user_id).first()
+                                if user and user.email:
+                                    email_display = user.email
+                                    if len(email_display) > 20:
+                                        email_parts = email_display.split('@')
+                                        if len(email_parts) > 0:
+                                            username = email_parts[0]
+                                            if len(username) <= 15:
+                                                email_display = f"{username}@{email_parts[1][:15-len(username)]}..."
+                                            else:
+                                                email_display = f"{username[:17]}..."
+                                        else:
+                                            email_display = email_display[:17] + "..."
+                                    
+                                    quick_replies.insert(0, {
+                                        "content_type": "text",
+                                        "title": email_display,
+                                        "payload": f"email_use_{user.email}"
+                                    })
+                                    print(f"✅ Added user's email ({user.email}) as quick reply button")
+                            except Exception as email_err:
+                                print(f"⚠️ Could not add user email to quick replies: {str(email_err)}")
+                            
+                            # Send email request with quick reply buttons
+                            send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
+                            log_print(f"✅ Email request sent after Follow Me button click with quick replies")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             try:
@@ -3494,6 +3652,40 @@ async def execute_automation_action(
                             "payload": "email_skip"
                         }
                     ]
+                    
+                    # IMPROVEMENT: Add user's email as quick reply button if available
+                    # This allows users to quickly select their logged-in email instead of typing
+                    try:
+                        from app.models.user import User
+                        user = db.query(User).filter(User.id == account.user_id).first()
+                        if user and user.email:
+                            # Instagram quick reply title limit is 20 characters
+                            # Truncate email to fit, showing the most important part (before @)
+                            email_display = user.email
+                            if len(email_display) > 20:
+                                # Show first part of email (before @) if possible
+                                email_parts = email_display.split('@')
+                                if len(email_parts) > 0:
+                                    # Try to fit username + @ + first few chars of domain
+                                    username = email_parts[0]
+                                    if len(username) <= 15:
+                                        email_display = f"{username}@{email_parts[1][:15-len(username)]}..."
+                                    else:
+                                        email_display = f"{username[:17]}..."
+                                else:
+                                    email_display = email_display[:17] + "..."
+                            
+                            # Add email button as first option (most convenient)
+                            quick_replies.insert(0, {
+                                "content_type": "text",
+                                "title": email_display,
+                                "payload": f"email_use_{user.email}"  # Include full email in payload
+                            })
+                            print(f"✅ Added user's email ({user.email}) as quick reply button")
+                    except Exception as email_err:
+                        print(f"⚠️ Could not add user email to quick replies: {str(email_err)}")
+                        # Continue without email button - not critical
+                    
                     pre_dm_result["quick_replies"] = quick_replies
                     print(f"📧 Sending email request DM to {sender_id} with Quick Reply buttons")
                     
@@ -3827,6 +4019,34 @@ async def execute_automation_action(
                                 "payload": "email_skip"
                             }
                         ]
+                        
+                        # IMPROVEMENT: Add user's email as quick reply button if available
+                        try:
+                            from app.models.user import User
+                            user = db.query(User).filter(User.id == account.user_id).first()
+                            if user and user.email:
+                                # Instagram quick reply title limit is 20 characters
+                                email_display = user.email
+                                if len(email_display) > 20:
+                                    email_parts = email_display.split('@')
+                                    if len(email_parts) > 0:
+                                        username = email_parts[0]
+                                        if len(username) <= 15:
+                                            email_display = f"{username}@{email_parts[1][:15-len(username)]}..."
+                                        else:
+                                            email_display = f"{username[:17]}..."
+                                    else:
+                                        email_display = email_display[:17] + "..."
+                                
+                                # Add email button as first option
+                                quick_replies.insert(0, {
+                                    "content_type": "text",
+                                    "title": email_display,
+                                    "payload": f"email_use_{user.email}"
+                                })
+                                print(f"✅ Added user's email ({user.email}) as quick reply button for comment reminder")
+                        except Exception as email_err:
+                            print(f"⚠️ Could not add user email to quick replies: {str(email_err)}")
                         
                         # Get access token
                         from app.utils.encryption import decrypt_credentials
