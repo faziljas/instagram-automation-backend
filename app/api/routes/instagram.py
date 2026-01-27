@@ -3049,8 +3049,9 @@ async def execute_automation_action(
                                 # We must continue using comment_id for all messages to avoid "outside allowed window" errors
                                 try:
                                     # Send follow message as private reply (plain text, no URL buttons - Instagram private replies don't support URL buttons)
-                                    # Combine follow message with quick reply prompt
-                                    follow_with_quick_replies = f"{follow_message_with_instructions}\n\nClick one of the options below:"
+                                    # Include profile URL in message text since buttons aren't supported
+                                    # Combine follow message with profile URL and quick reply prompt
+                                    follow_with_quick_replies = f"{follow_message_with_instructions}\n\n🔗 Visit my profile: {profile_url}\n\nClick one of the options below:"
                                     send_private_reply(comment_id, follow_with_quick_replies, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
                                     print(f"✅ Follow request sent via private reply with quick replies (bypasses 24-hour window)")
                                     
