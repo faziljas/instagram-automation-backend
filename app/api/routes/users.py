@@ -333,6 +333,11 @@ def cancel_subscription(
     user = db.query(User).filter(User.id == user_id).first()
     user.plan_tier = "free"
     
+    # DON'T clear billing_cycle_start_date - user paid for 30 days, so they should
+    # continue using Pro cycle logic until the paid period ends (30 days from start)
+    # The billing cycle logic will automatically switch to calendar month after 30 days
+    print(f"✅ User {user_id} cancelled subscription, but keeping Pro cycle until paid period ends")
+    
     db.commit()
     
     return {

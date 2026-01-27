@@ -20,31 +20,53 @@ def get_billing_cycle_start(user_id: int, db: Session) -> datetime:
     """
     Get the billing cycle start date for Pro/Enterprise users.
     For Pro users: Returns billing_cycle_start_date from subscription (30-day cycle from upgrade)
-    For Free/Basic users: Returns start of current calendar month
+    For Free/Basic users: 
+      - If they have a billing_cycle_start_date from previous Pro subscription and are still within
+        the paid 30-day period, continue using Pro cycle logic (they paid for 30 days)
+      - Otherwise, use calendar month
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    # For Pro/Enterprise users, use billing cycle start date
-    if user.plan_tier in ["pro", "enterprise"]:
-        subscription = db.query(Subscription).filter(
-            Subscription.user_id == user_id
-        ).first()
+    subscription = db.query(Subscription).filter(
+        Subscription.user_id == user_id
+    ).first()
+    
+    # Check if user has a billing cycle start date (from Pro subscription)
+    if subscription and subscription.billing_cycle_start_date:
+        cycle_start = subscription.billing_cycle_start_date
+        now = datetime.utcnow()
         
-        if subscription and subscription.billing_cycle_start_date:
-            # Calculate current billing cycle start (30 days from original start)
-            cycle_start = subscription.billing_cycle_start_date
-            now = datetime.utcnow()
-            
+        # Calculate how many days since the original Pro cycle started
+        days_since_start = (now - cycle_start).days
+        
+        # For Pro/Enterprise users, use Pro cycle logic (30-day cycles)
+        if user.plan_tier in ["pro", "enterprise"]:
             # Find the most recent cycle start date (every 30 days)
-            days_since_start = (now - cycle_start).days
             cycles_passed = days_since_start // 30
             current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
-            
             return current_cycle_start
+        
+        # For Free/Basic users: Check if still within their current Pro cycle period
+        # User paid for Pro subscription, so they should get Pro benefits until current cycle ends
+        # Calculate which cycle they're in and when it ends
+        cycles_passed = days_since_start // 30
+        current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
+        current_cycle_end = current_cycle_start + timedelta(days=30)
+        
+        # If still within the current Pro cycle (before cycle end), use Pro cycle logic
+        if now < current_cycle_end:
+            # Still within paid Pro cycle - use Pro cycle logic
+            return current_cycle_start
+        else:
+            # Current Pro cycle has ended - switch to Free calendar month
+            # Clear the billing_cycle_start_date since it's no longer needed
+            subscription.billing_cycle_start_date = None
+            db.commit()
+            return datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    # For Free/Basic users, use calendar month
+    # For Free/Basic users without Pro cycle history, use calendar month
     return datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
