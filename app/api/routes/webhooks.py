@@ -154,7 +154,9 @@ def handle_subscription_created(subscription_data: dict, db: Session):
     """Handle new subscription creation from Stripe."""
     stripe_subscription_id = subscription_data["id"]
     stripe_customer_id = subscription_data["customer"]
-    status = subscription_data["status"]
+    stripe_status = subscription_data["status"]
+    # Normalize Stripe's American spelling to our internal status
+    status = "cancelled" if stripe_status == "canceled" else stripe_status
 
     # Get user by stripe customer ID (assumes user.email or custom metadata)
     # For simplicity, we'll look up by subscription metadata
@@ -214,7 +216,7 @@ def handle_subscription_created(subscription_data: dict, db: Session):
 def handle_subscription_updated(subscription_data: dict, db: Session):
     """Handle subscription updates (status changes, plan changes)."""
     stripe_subscription_id = subscription_data["id"]
-    status = subscription_data["status"]
+    stripe_status = subscription_data["status"]
 
     subscription = db.query(Subscription).filter(
         Subscription.stripe_subscription_id == stripe_subscription_id
@@ -223,12 +225,13 @@ def handle_subscription_updated(subscription_data: dict, db: Session):
     if not subscription:
         return
 
-    subscription.status = status
+    # Store normalized status in our DB, but keep Stripe status for logic checks below
+    subscription.status = "cancelled" if stripe_status == "canceled" else stripe_status
 
     # Update user plan tier
     user = db.query(User).filter(User.id == subscription.user_id).first()
     if user:
-        if status == "active":
+        if stripe_status == "active":
             plan_tier = get_plan_tier_from_subscription(subscription_data)
             
             # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
@@ -253,7 +256,7 @@ def handle_subscription_updated(subscription_data: dict, db: Session):
                 
                 # Reset all trackers for this user
                 reset_tracker_for_pro_upgrade(user.id, db)
-        elif status in ["canceled", "incomplete_expired", "past_due"]:
+        elif stripe_status in ["canceled", "incomplete_expired", "past_due"]:
             # DON'T downgrade plan_tier immediately - user paid for 30 days, so keep Pro access
             # Only mark subscription as cancelled - plan will downgrade after cycle ends
             # DON'T clear billing_cycle_start_date - needed to calculate when Pro access ends
