@@ -6090,18 +6090,24 @@ async def get_instagram_conversations(
         )
 
 
+MESSAGES_LIMIT_DEFAULT = 100
+MESSAGES_LIMIT_MAX = 100
+
+
 @router.get("/conversations/{username}/messages")
 async def get_conversation_messages(
     username: str,
     account_id: int = Query(..., description="Instagram account ID"),
-    limit: int = Query(100, description="Number of messages to fetch"),
+    limit: int = Query(MESSAGES_LIMIT_DEFAULT, ge=1, le=MESSAGES_LIMIT_MAX, description="Messages per page (max 100)"),
+    offset: int = Query(0, ge=0, description="Offset for pagination (0 = newest page)"),
     participant_user_id: str = Query(None, description="Instagram user_id (IGSID) of the participant - more reliable than username for Unknown users"),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     """
     Fetch messages for a specific conversation (by recipient username).
-    Returns both sent and received messages.
+    Newest-first pagination: offset=0 returns most recent messages. Use next_offset for "Load older".
+    Returns messages in chronological order (oldest first) for display.
     """
     try:
         # Check Pro plan access for DMs
@@ -6170,13 +6176,16 @@ async def get_conversation_messages(
             ).first()
         
         # If we have a conversation_id, use it directly (most reliable)
+        has_more = False
         if conversation and conversation.id:
             query = db.query(Message).filter(
                 Message.instagram_account_id == account_id,
                 Message.user_id == user_id,
                 Message.conversation_id == conversation.id
             )
-            messages = query.order_by(Message.created_at.asc()).limit(limit).all()
+            raw = query.order_by(Message.created_at.desc()).offset(offset).limit(limit + 1).all()
+            has_more = len(raw) > limit
+            messages = list(reversed(raw[:limit]))  # chronological (oldest first) for display
             print(f"📨 Found {len(messages)} messages using conversation_id={conversation.id}")
         else:
             # Fallback: search by participant_id and username
@@ -6209,12 +6218,14 @@ async def get_conversation_messages(
             if combined_condition:
                 query = query.filter(combined_condition)
             
-            messages = query.order_by(Message.created_at.asc()).limit(limit).all()
+            raw = query.order_by(Message.created_at.desc()).offset(offset).limit(limit + 1).all()
+            has_more = len(raw) > limit
+            messages = list(reversed(raw[:limit]))
             print(f"📨 Found {len(messages)} messages using participant_id/username search")
         
         print(f"📨 Total messages found: {len(messages)} for username='{username}', participant_id={participant_id_to_search}")
         
-        # If no messages in Message table, check DmLog as fallback
+        # If no messages in Message table, check DmLog as fallback (no pagination)
         if len(messages) == 0:
             dm_logs = db.query(DmLog).filter(
                 DmLog.instagram_account_id == account_id,
@@ -6237,6 +6248,10 @@ async def get_conversation_messages(
                         self.created_at = sent_at
                 messages.append(MockMessage(dm_log.id, dm_log.message, dm_log.sent_at, dm_log.recipient_username))
         
+        # DmLog fallback: no pagination (messages are MockMessage, not Message)
+        if len(messages) > 0 and not hasattr(messages[0], "conversation_id"):
+            has_more = False
+
         # Format messages
         formatted_messages = []
         for msg in messages:
@@ -6260,7 +6275,9 @@ async def get_conversation_messages(
         return {
             "success": True,
             "messages": formatted_messages,
-            "count": len(formatted_messages)
+            "count": len(formatted_messages),
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
         }
         
     except HTTPException:
