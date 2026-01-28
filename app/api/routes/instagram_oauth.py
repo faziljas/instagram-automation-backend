@@ -23,7 +23,7 @@ router = APIRouter()
 # Fallback to FACEBOOK_* variables if INSTAGRAM_* are not set (they're the same in Meta)
 INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID", os.getenv("FACEBOOK_APP_ID", ""))
 INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET", os.getenv("FACEBOOK_APP_SECRET", ""))
-INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", os.getenv("FACEBOOK_REDIRECT_URI", "https://instagram-automation-backend-065d.onrender.com/api/instagram/oauth/callback"))
+INSTAGRAM_REDIRECT_URI = os.getenv("INSTAGRAM_REDIRECT_URI", os.getenv("FACEBOOK_REDIRECT_URI", ""))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 FACEBOOK_API_VERSION = "v19.0"
 # Note: FRONTEND_URL validation happens at runtime in endpoints to avoid import failures
