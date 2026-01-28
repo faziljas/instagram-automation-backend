@@ -5467,6 +5467,37 @@ async def test_instagram_api():
     return response.json()
 
 
+def _dummy_media_for_load_test(media_type: str, limit: int, username: str):
+    """Return dummy media for load-test accounts (no Instagram API). Used for stress testing."""
+    from datetime import datetime, timezone
+    types_map = {
+        "posts": [("IMAGE", "FEED"), ("VIDEO", "REELS"), ("CAROUSEL_ALBUM", "FEED")],
+        "reels": [("VIDEO", "REELS")],
+        "stories": [("IMAGE", "STORY"), ("VIDEO", "STORY")],
+        "live": [("VIDEO", "LIVE")],
+    }
+    variants = types_map.get(media_type, types_map["posts"])
+    base = "https://picsum.photos/400/400"
+    now = datetime.now(timezone.utc)
+    formatted = []
+    for i in range(limit):
+        mt, mpt = variants[i % len(variants)]
+        ts = (now - timedelta(days=i % 60, hours=i % 24)).strftime("%Y-%m-%dT%H:%M:%S+0000")
+        formatted.append({
+            "id": f"load_test_{username}_{media_type}_{i}",
+            "media_type": mt,
+            "media_product_type": mpt,
+            "caption": f"[Load test] {media_type} #{i + 1} — {username}",
+            "media_url": f"{base}?sig={i}",
+            "thumbnail_url": f"{base}?sig={i}",
+            "permalink": f"https://www.instagram.com/p/load_test_{i}/",
+            "timestamp": ts,
+            "like_count": (i * 11) % 500,
+            "comments_count": (i * 7) % 100,
+        })
+    return formatted
+
+
 @router.get("/media")
 async def get_instagram_media(
     account_id: int = Query(..., description="Instagram account ID"),
@@ -5479,6 +5510,7 @@ async def get_instagram_media(
     Fetch Instagram media (posts/reels/stories) for a specific account.
     Returns list of media items with metadata.
     
+    For load-test accounts (username load_test_*), returns dummy media instead of calling Instagram API.
     Note: Stories, DMs, and IG Live require Pro plan or higher.
     """
     try:
@@ -5498,6 +5530,12 @@ async def get_instagram_media(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Instagram account not found"
             )
+        
+        # Load-test accounts: return dummy media (no API call), at least 1000 for stress testing
+        if account.username and account.username.startswith("load_test_"):
+            n = max(limit, 1000)
+            dummy = _dummy_media_for_load_test(media_type, n, account.username)
+            return {"success": True, "media": dummy, "count": len(dummy)}
         
         # Decrypt access token
         if account.encrypted_page_token:
