@@ -62,7 +62,6 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
         "instagram_business_basic",
         "instagram_business_manage_messages",
         "instagram_business_manage_comments",
-        "instagram_business_content_publish"
     ]
     
     # Construct frontend callback URL (popup redirects here to close window)
