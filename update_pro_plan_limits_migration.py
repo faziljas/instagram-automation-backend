@@ -2,7 +2,7 @@
 Migration: Update Pro Plan Limits
 This migration updates account_limit for Pro users and creates the column if it doesn't exist.
 - Adds account_limit column to profiles table (or users table if profiles doesn't exist)
-- Sets account_limit to 3 for all Pro users
+- Sets account_limit to 5 for all Pro users
 """
 from sqlalchemy import create_engine, text
 import os
@@ -16,7 +16,7 @@ if not DATABASE_URL:
 
 
 def run_migration():
-    """Add/update account_limit column and set Pro users to 3 accounts"""
+    """Add/update account_limit column and set Pro users to 5 accounts"""
     engine = create_engine(DATABASE_URL)
 
     try:
@@ -79,25 +79,25 @@ def run_migration():
             else:
                 print(f"✅ Column 'account_limit' already exists in '{target_table}' table")
             
-            # Update account_limit to 3 for Pro users
+            # Update account_limit to 5 for Pro users
             # Join with users table to check plan_tier
             if use_profiles:
                 # profiles table exists, join with users table
                 update_query = text(f"""
                     UPDATE {target_table} 
-                    SET account_limit = 3
+                    SET account_limit = 5
                     WHERE {user_id_column} IN (
                         SELECT id FROM users WHERE plan_tier = 'pro'
                     )
-                    AND (account_limit IS NULL OR account_limit != 3)
+                    AND (account_limit IS NULL OR account_limit != 5)
                 """)
             else:
                 # Using users table directly
                 update_query = text(f"""
                     UPDATE {target_table} 
-                    SET account_limit = 3
+                    SET account_limit = 5
                     WHERE plan_tier = 'pro' 
-                    AND (account_limit IS NULL OR account_limit != 3)
+                    AND (account_limit IS NULL OR account_limit != 5)
                 """)
             
             result = conn.execute(update_query)
@@ -105,9 +105,9 @@ def run_migration():
             updated_count = result.rowcount
             
             if updated_count > 0:
-                print(f"✅ Updated account_limit to 3 for {updated_count} Pro user(s)")
+                print(f"✅ Updated account_limit to 5 for {updated_count} Pro user(s)")
             else:
-                print(f"✅ All Pro users already have account_limit = 3")
+                print(f"✅ All Pro users already have account_limit = 5")
             
             return True
 

@@ -14,7 +14,7 @@ PLAN_LIMITS: Dict[str, Dict[str, int]] = {
         "max_automation_rules": 10,
     },
     "pro": {
-        "max_accounts": 3,
+        "max_accounts": 5,
         "max_dms_per_month": -1,  # -1 means unlimited (High Volume pricing)
         "max_automation_rules": -1,  # -1 means unlimited
     },
