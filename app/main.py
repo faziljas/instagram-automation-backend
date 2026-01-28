@@ -7,7 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import logging
+import os
 import sys
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
 
 # Configure logging for Render compatibility
 # Render captures stdout/stderr, but logging module is more reliable
@@ -23,12 +28,30 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+def run_migrations() -> None:
+    """Run Alembic migrations programmatically. Uses alembic.ini and DATABASE_URL."""
+    try:
+        project_root = Path(__file__).resolve().parent.parent
+        alembic_ini = project_root / "alembic.ini"
+        if not alembic_ini.exists():
+            logger.info("alembic.ini not found, skipping Alembic migrations")
+            return
+        alembic_cfg = Config(str(alembic_ini))
+        db_url = os.getenv("DATABASE_URL")
+        if db_url:
+            alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations completed successfully")
+    except Exception as e:
+        logger.exception("Alembic migration error: %s", e)
+
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router, leads, analytics, support
 from app.db.session import engine
 from app.db.base import Base
-from sqlalchemy import text
 # Import all models to ensure they're registered with Base
 from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message, Conversation, InstagramAudience, InstagramGlobalTracker
 
@@ -36,289 +59,23 @@ app = FastAPI(title="Instagram Automation SaaS")
 
 @app.on_event("startup")
 async def startup_event():
-    """Create all database tables and handle migrations"""
+    """Create tables, then run Alembic migrations. All schema changes live in revision files."""
     import sys
-    
-    # Create all tables first
+
     try:
         print("🔄 Creating database tables...", file=sys.stderr)
         Base.metadata.create_all(bind=engine)
-        print("✅ Database tables created successfully", file=sys.stderr)
+        print("✅ Database tables created", file=sys.stderr)
     except Exception as e:
         print(f"⚠️ Error creating tables: {str(e)}", file=sys.stderr)
         raise
-    
-    # Run migrations automatically
-    try:
-        print("🔄 Running database migrations...", file=sys.stderr)
-        from add_follow_button_clicks_migration import run_migration
-        run_migration()
-        print("✅ Migrations completed successfully", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ Migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent and may already be applied
-    
-    # Run conversation migration
-    try:
-        from add_conversation_migration import run_migration as run_conv_migration
-        run_conv_migration()
-        print("✅ Conversation migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ Conversation migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Run InstagramAudience migration (for global conversion tracking)
-    try:
-        print("🔄 Running InstagramAudience migration...", file=sys.stderr)
-        from add_instagram_audience_migration import run_migration as run_audience_migration
-        run_audience_migration()
-        print("✅ InstagramAudience migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ InstagramAudience migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Run billing cycle migration
-    try:
-        print("🔄 Running billing cycle migration...", file=sys.stderr)
-        from add_billing_cycle_migration import run_migration as run_billing_cycle_migration
-        run_billing_cycle_migration()
-        print("✅ Billing cycle migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ Billing cycle migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
 
-    # Run dm_logs username/igsid migration (allows account delete while preserving usage)
     try:
-        print("🔄 Running dm_logs username/igsid migration...", file=sys.stderr)
-        from add_dm_log_username_igsid_migration import run_migration as run_dm_log_migration
-        run_dm_log_migration()
-        print("✅ dm_logs migration completed", file=sys.stderr)
+        print("🔄 Running Alembic migrations...", file=sys.stderr)
+        run_migrations()
+        print("✅ Alembic migrations completed", file=sys.stderr)
     except Exception as e:
-        print(f"⚠️ dm_logs migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-
-    # Run instagram_accounts created_at migration
-    try:
-        print("🔄 Running instagram_accounts created_at migration...", file=sys.stderr)
-        from add_instagram_account_created_at_migration import run_migration as run_account_created_at_migration
-        run_account_created_at_migration()
-        print("✅ instagram_accounts created_at migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ instagram_accounts created_at migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Run Instagram global tracker migration (for persistent usage tracking per IGSID)
-    try:
-        print("🔄 Running Instagram global tracker migration...", file=sys.stderr)
-        from add_instagram_global_tracker_migration import run_migration as run_global_tracker_migration
-        run_global_tracker_migration()
-        print("✅ Instagram global tracker migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ Instagram global tracker migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Run Instagram global tracker user_id migration (change to per User+Instagram tracking)
-    try:
-        print("🔄 Running Instagram global tracker user_id migration...", file=sys.stderr)
-        from update_instagram_global_tracker_user_id_migration import run_migration as run_tracker_user_id_migration
-        run_tracker_user_id_migration()
-        print("✅ Instagram global tracker user_id migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ Instagram global tracker user_id migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Run automation_rules account_id nullable migration (allows rules to persist across disconnect/reconnect)
-    try:
-        print("🔄 Running automation_rules account_id nullable migration...", file=sys.stderr)
-        from make_automation_rules_account_id_nullable_migration import run_migration as run_account_id_nullable_migration
-        run_account_id_nullable_migration()
-        print("✅ automation_rules account_id nullable migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ automation_rules account_id nullable migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-
-    # Run captured_leads instagram_account_id nullable migration (allows leads to persist across disconnect/reconnect)
-    try:
-        print("🔄 Running captured_leads instagram_account_id nullable migration...", file=sys.stderr)
-        from make_captured_leads_instagram_account_id_nullable_migration import run_migration as run_captured_leads_nullable_migration
-        run_captured_leads_nullable_migration()
-        print("✅ captured_leads instagram_account_id nullable migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ captured_leads instagram_account_id nullable migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Run supabase_id migration (prevents duplicate registrations when users sign up with different providers)
-    try:
-        print("🔄 Running supabase_id migration...", file=sys.stderr)
-        from add_supabase_id_migration import run_migration as run_supabase_id_migration
-        run_supabase_id_migration()
-        print("✅ supabase_id migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ supabase_id migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Run High Volume limits migration (updates metadata if limits are stored in database)
-    try:
-        print("🔄 Running High Volume limits migration...", file=sys.stderr)
-        from update_high_volume_limits_migration import run_migration as run_high_volume_migration
-        run_high_volume_migration()
-        print("✅ High Volume limits migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ High Volume limits migration warning (may not be needed): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent and limits are primarily in code
-    
-    # Run Pro Plan limits migration (updates account_limit for Pro users)
-    try:
-        print("🔄 Running Pro Plan limits migration...", file=sys.stderr)
-        from update_pro_plan_limits_migration import run_migration as run_pro_plan_limits_migration
-        run_pro_plan_limits_migration()
-        print("✅ Pro Plan limits migration completed", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ Pro Plan limits migration warning (may already be applied): {str(e)}", file=sys.stderr)
-        # Don't raise - migrations are idempotent
-    
-    # Try Alembic migrations (if Alembic is configured)
-    try:
-        import subprocess
-        import os
-        print("🔄 Attempting Alembic migrations...", file=sys.stderr)
-        # Check if alembic.ini exists
-        if os.path.exists("alembic.ini"):
-            # Run alembic upgrade head
-            result = subprocess.run(
-                ["alembic", "upgrade", "head"],
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            if result.returncode == 0:
-                print("✅ Alembic migrations completed successfully", file=sys.stderr)
-            else:
-                print(f"⚠️ Alembic migration output: {result.stdout}", file=sys.stderr)
-                print(f"⚠️ Alembic migration errors: {result.stderr}", file=sys.stderr)
-        else:
-            print("ℹ️ Alembic not configured (alembic.ini not found), skipping Alembic migrations", file=sys.stderr)
-    except FileNotFoundError:
-        print("ℹ️ Alembic command not found, skipping Alembic migrations", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ Alembic migration warning (may not be configured): {str(e)}", file=sys.stderr)
-        # Don't raise - Alembic is optional
-    
-    # Auto-migrate: Add columns if they don't exist
-    try:
-        with engine.begin() as conn:
-            # Check database type for compatibility
-            db_type = str(engine.url).split("://")[0]
-            
-            def column_exists(table_name: str, column_name: str) -> bool:
-                """Check if a column exists in a table (SQLite/PostgreSQL compatible)"""
-                if db_type == "postgresql":
-                    result = conn.execute(text(f"""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name='{table_name}' AND column_name='{column_name}'
-                    """))
-                    return result.fetchone() is not None
-                else:  # SQLite
-                    pragma_result = conn.execute(text(f"PRAGMA table_info({table_name})"))
-                    columns = [row[1] for row in pragma_result.fetchall()]
-                    return column_name in columns
-            
-            # Check and add igsid column
-            if not column_exists('instagram_accounts', 'igsid'):
-                print("🔄 Auto-migrating: Adding igsid column to instagram_accounts...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN igsid VARCHAR(255)"))
-                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_instagram_accounts_igsid ON instagram_accounts(igsid)"))
-                print("✅ Auto-migration complete: igsid column added", file=sys.stderr)
-            else:
-                print("✅ igsid column already exists", file=sys.stderr)
-            
-            # Check and add page_id column
-            if not column_exists('instagram_accounts', 'page_id'):
-                print("🔄 Auto-migrating: Adding page_id column to instagram_accounts...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN page_id VARCHAR(255)"))
-                print("✅ Auto-migration complete: page_id column added", file=sys.stderr)
-            else:
-                print("✅ page_id column already exists", file=sys.stderr)
-            
-            # Check and add encrypted_page_token column
-            if not column_exists('instagram_accounts', 'encrypted_page_token'):
-                print("🔄 Auto-migrating: Adding encrypted_page_token column to instagram_accounts...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN encrypted_page_token TEXT"))
-                print("✅ Auto-migration complete: encrypted_page_token column added", file=sys.stderr)
-            else:
-                print("✅ encrypted_page_token column already exists", file=sys.stderr)
-            
-            # Check and add media_id column to automation_rules
-            if not column_exists('automation_rules', 'media_id'):
-                print("🔄 Auto-migrating: Adding media_id column to automation_rules...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rules ADD COLUMN media_id VARCHAR(255)"))
-                print("✅ Auto-migration complete: media_id column added", file=sys.stderr)
-            else:
-                print("✅ media_id column already exists", file=sys.stderr)
-            
-            # Check and add deleted_at column to automation_rules (soft-delete; exclude from list)
-            if not column_exists('automation_rules', 'deleted_at'):
-                print("🔄 Auto-migrating: Adding deleted_at column to automation_rules...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rules ADD COLUMN deleted_at TIMESTAMP"))
-                print("✅ Auto-migration complete: deleted_at column added", file=sys.stderr)
-            else:
-                print("✅ deleted_at column already exists", file=sys.stderr)
-            
-            # Check and add follow_button_clicks columns to automation_rule_stats
-            if not column_exists('automation_rule_stats', 'total_follow_button_clicks'):
-                print("🔄 Auto-migrating: Adding total_follow_button_clicks column...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN total_follow_button_clicks INTEGER DEFAULT 0"))
-                print("✅ Auto-migration complete: total_follow_button_clicks column added", file=sys.stderr)
-            else:
-                print("✅ total_follow_button_clicks column already exists", file=sys.stderr)
-            
-            if not column_exists('automation_rule_stats', 'last_follow_button_clicked_at'):
-                print("🔄 Auto-migrating: Adding last_follow_button_clicked_at column...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN last_follow_button_clicked_at TIMESTAMP"))
-                print("✅ Auto-migration complete: last_follow_button_clicked_at column added", file=sys.stderr)
-            else:
-                print("✅ last_follow_button_clicked_at column already exists", file=sys.stderr)
-            
-            # Check and add button analytics columns to automation_rule_stats
-            if not column_exists('automation_rule_stats', 'total_profile_visits'):
-                print("🔄 Auto-migrating: Adding total_profile_visits column...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN total_profile_visits INTEGER DEFAULT 0"))
-                print("✅ Auto-migration complete: total_profile_visits column added", file=sys.stderr)
-            else:
-                print("✅ total_profile_visits column already exists", file=sys.stderr)
-            
-            if not column_exists('automation_rule_stats', 'total_im_following_clicks'):
-                print("🔄 Auto-migrating: Adding total_im_following_clicks column...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN total_im_following_clicks INTEGER DEFAULT 0"))
-                print("✅ Auto-migration complete: total_im_following_clicks column added", file=sys.stderr)
-            else:
-                print("✅ total_im_following_clicks column already exists", file=sys.stderr)
-            
-            if not column_exists('automation_rule_stats', 'last_profile_visit_at'):
-                print("🔄 Auto-migrating: Adding last_profile_visit_at column...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN last_profile_visit_at TIMESTAMP"))
-                print("✅ Auto-migration complete: last_profile_visit_at column added", file=sys.stderr)
-            else:
-                print("✅ last_profile_visit_at column already exists", file=sys.stderr)
-            
-            if not column_exists('automation_rule_stats', 'last_im_following_clicked_at'):
-                print("🔄 Auto-migrating: Adding last_im_following_clicked_at column...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE automation_rule_stats ADD COLUMN last_im_following_clicked_at TIMESTAMP"))
-                print("✅ Auto-migration complete: last_im_following_clicked_at column added", file=sys.stderr)
-            else:
-                print("✅ last_im_following_clicked_at column already exists", file=sys.stderr)
-            
-            # Check and add media_preview_url column to analytics_events
-            if not column_exists('analytics_events', 'media_preview_url'):
-                print("🔄 Auto-migrating: Adding media_preview_url column to analytics_events...", file=sys.stderr)
-                conn.execute(text("ALTER TABLE analytics_events ADD COLUMN media_preview_url VARCHAR(500)"))
-                print("✅ Auto-migration complete: media_preview_url column added", file=sys.stderr)
-            else:
-                print("✅ media_preview_url column already exists", file=sys.stderr)
-            
-    except Exception as e:
-        print(f"⚠️ Auto-migration warning: {str(e)}", file=sys.stderr)
+        print(f"⚠️ Alembic migration warning: {str(e)}", file=sys.stderr)
 
 # Add CORS middleware
 app.add_middleware(
