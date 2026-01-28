@@ -5498,17 +5498,22 @@ def _dummy_media_for_load_test(media_type: str, limit: int, username: str):
     return formatted
 
 
+MEDIA_LIMIT_DEFAULT = 100
+MEDIA_LIMIT_MAX = 100
+
+
 @router.get("/media")
 async def get_instagram_media(
     account_id: int = Query(..., description="Instagram account ID"),
     media_type: str = Query("posts", description="Type of media: posts, stories, reels, live"),
-    limit: int = Query(25, description="Number of items to fetch"),
+    limit: int = Query(MEDIA_LIMIT_DEFAULT, ge=1, le=MEDIA_LIMIT_MAX, description="Items per page (max 100)"),
+    after: str | None = Query(None, description="Cursor for next page (from previous response next_cursor)"),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     """
     Fetch Instagram media (posts/reels/stories) for a specific account.
-    Returns list of media items with metadata.
+    Returns list of media items with metadata. Supports pagination via 'after' cursor.
     
     For load-test accounts (username load_test_*), returns dummy media instead of calling Instagram API.
     Note: Stories, DMs, and IG Live require Pro plan or higher.
@@ -5535,7 +5540,7 @@ async def get_instagram_media(
         if account.username and account.username.startswith("load_test_"):
             n = max(limit, 1000)
             dummy = _dummy_media_for_load_test(media_type, n, account.username)
-            return {"success": True, "media": dummy, "count": len(dummy)}
+            return {"success": True, "media": dummy, "count": len(dummy), "next_cursor": None, "has_more": False}
         
         # Decrypt access token
         if account.encrypted_page_token:
@@ -5559,6 +5564,9 @@ async def get_instagram_media(
         
         media_items = []
         
+        next_cursor: str | None = None
+        has_more = False
+
         if media_type == "posts" or media_type == "reels":
             # Fetch posts and reels
             # For Instagram Graph API, we use the media edge
@@ -5568,9 +5576,11 @@ async def get_instagram_media(
                 "limit": limit,
                 "access_token": access_token
             }
-            
+            if after:
+                params["after"] = after
+
             response = requests.get(url, params=params)
-            
+
             if response.status_code != 200:
                 error_detail = response.text
                 print(f"❌ Failed to fetch media: {error_detail}")
@@ -5578,58 +5588,63 @@ async def get_instagram_media(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Failed to fetch Instagram media: {error_detail}"
                 )
-            
+
             data = response.json()
             media_items = data.get("data", [])
-            
+            paging = data.get("paging") or {}
+            cursors = paging.get("cursors") or {}
+            next_cursor = cursors.get("after") if isinstance(cursors.get("after"), str) else None
+            has_more = "next" in paging and bool(paging.get("next"))
+
             # Filter by type if specified
             if media_type == "reels":
                 # Reels have media_product_type == "REELS"
                 media_items = [item for item in media_items if item.get("media_product_type") == "REELS"]
             elif media_type == "posts":
                 # Posts/Reels tab: include both FEED (posts) and REELS, but exclude STORY
-                # This allows the "Posts/Reels" tab to show both types of content
                 media_items = [item for item in media_items if item.get("media_product_type") != "STORY"]
-        
+
         elif media_type == "stories":
             # Fetch stories (requires stories_read permission and different endpoint)
             # Note: Stories are only available for 24 hours after posting
-            # Note: Stories don't have public comments in the traditional sense - interactions are via DMs (replies)
-            # But we'll request comments_count anyway in case Instagram API provides it
             url = f"https://graph.instagram.com/v21.0/{igsid}/stories"
             params = {
                 "fields": "id,media_type,media_url,thumbnail_url,timestamp,media_product_type,comments_count",
                 "limit": limit,
                 "access_token": access_token
             }
-            
+            if after:
+                params["after"] = after
+
             response = requests.get(url, params=params)
-            
+
             if response.status_code != 200:
                 error_detail = response.text
                 print(f"⚠️ Stories may not be available: {error_detail}")
-                # Stories might not be available (no active stories, or missing permissions)
                 media_items = []
             else:
                 data = response.json()
                 media_items = data.get("data", [])
-                # Ensure all stories have media_product_type set to STORY
+                paging = data.get("paging") or {}
+                cursors = paging.get("cursors") or {}
+                next_cursor = cursors.get("after") if isinstance(cursors.get("after"), str) else None
+                has_more = "next" in paging and bool(paging.get("next"))
                 for item in media_items:
                     if "media_product_type" not in item:
                         item["media_product_type"] = "STORY"
-        
+
         elif media_type == "live":
-            # For live videos, we'd need to check live_media endpoint
-            # This is more complex and may require different permissions
             url = f"https://graph.instagram.com/v21.0/{igsid}/live_media"
             params = {
                 "fields": "id,media_type,media_url,permalink,timestamp,status",
                 "limit": limit,
                 "access_token": access_token
             }
-            
+            if after:
+                params["after"] = after
+
             response = requests.get(url, params=params)
-            
+
             if response.status_code != 200:
                 error_detail = response.text
                 print(f"⚠️ Live media may not be available: {error_detail}")
@@ -5637,6 +5652,10 @@ async def get_instagram_media(
             else:
                 data = response.json()
                 media_items = data.get("data", [])
+                paging = data.get("paging") or {}
+                cursors = paging.get("cursors") or {}
+                next_cursor = cursors.get("after") if isinstance(cursors.get("after"), str) else None
+                has_more = "next" in paging and bool(paging.get("next"))
         
         # Format response
         formatted_media = []
@@ -5655,14 +5674,12 @@ async def get_instagram_media(
             })
         
         # NOTE: We do NOT auto-disable rules here. Media list is tab-specific (posts OR stories OR reels).
-        # Comparing rules against the current tab's list would incorrectly disable rules when switching tabs
-        # (e.g. story rules disabled on Posts tab, post rules on Stories tab). Rules are only disabled
-        # when we get an explicit "does not exist" from the API (e.g. in analytics when fetching media).
-        
         return {
             "success": True,
             "media": formatted_media,
-            "count": len(formatted_media)
+            "count": len(formatted_media),
+            "next_cursor": next_cursor,
+            "has_more": has_more,
         }
         
     except HTTPException:
@@ -5678,7 +5695,7 @@ async def get_instagram_media(
 @router.get("/conversations")
 async def get_instagram_conversations(
     account_id: int = Query(..., description="Instagram account ID"),
-    limit: int = Query(25, description="Number of conversations to fetch"),
+    limit: int = Query(50, ge=1, le=100, description="Number of conversations to fetch (max 100)"),
     sync: bool = Query(False, description="Whether to sync conversations from API"),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)

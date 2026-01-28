@@ -46,7 +46,7 @@ def sync_instagram_conversations(
     user_id: int,
     account_id: int,
     db: Session,
-    limit: int = 25
+    limit: int = 50
 ) -> Dict:
     """
     Sync Instagram DM conversations from Instagram Graph API.
