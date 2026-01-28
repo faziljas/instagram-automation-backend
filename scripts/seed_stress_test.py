@@ -7,6 +7,7 @@ target user_id (or use --email / --supabase-id), then seeds:
   - 5 connected Instagram accounts (@load_test_1 .. @load_test_5)
   - 5,000 analytics events (1,000 per account) as "media post"–like data
   - 1,000 DmLog rows (200 per account) as automation logs
+  - 3,000 captured leads (600 per account) for "Recent Email leads" load-test
 
 Uses bulk inserts for performance. Run from project root:
   python scripts/seed_stress_test.py
@@ -47,6 +48,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.models.analytics_event import AnalyticsEvent, EventType
+from app.models.automation_rule import AutomationRule
+from app.models.captured_lead import CapturedLead
 from app.models.dm_log import DmLog
 from app.models.instagram_account import InstagramAccount
 
@@ -192,6 +195,52 @@ def main() -> None:
             sess.flush()
         print(f"  Inserted {len(dm_logs)} DmLogs.")
 
+        # 4. Create one minimal automation rule per load-test account (for leads FK)
+        print("Creating 5 automation rules (one per load-test account)...")
+        rules = []
+        for aid in account_ids:
+            r = AutomationRule(
+                instagram_account_id=aid,
+                name=f"Load-test rule #{aid}",
+                trigger_type="post_comment",
+                action_type="send_dm",
+                config={"stats": {}},
+                is_active=True,
+            )
+            sess.add(r)
+            rules.append(r)
+        sess.flush()
+        rule_ids = [r.id for r in rules]
+        account_to_rule = dict(zip(account_ids, rule_ids))
+        print(f"  Created rule ids: {rule_ids}")
+
+        # 5. Bulk-insert 3,000 captured leads (600 per account) — Recent Email leads load-test
+        print("Bulk-inserting 3,000 captured leads (600 per account)...")
+        num_leads_per_account = 600
+        leads = []
+        for aid in account_ids:
+            rid = account_to_rule[aid]
+            for i in range(num_leads_per_account):
+                ts = base_ts - timedelta(days=random.uniform(0, 60))
+                leads.append({
+                    "user_id": user_id,
+                    "instagram_account_id": aid,
+                    "automation_rule_id": rid,
+                    "email": f"load_test_lead_{aid}_{i}@example.com",
+                    "phone": None,
+                    "name": f"Load Test Lead {aid}-{i}",
+                    "custom_fields": None,
+                    "extra_metadata": None,
+                    "captured_at": ts,
+                    "notified": False,
+                    "exported": False,
+                })
+        for start in range(0, len(leads), BATCH_SIZE):
+            batch = leads[start : start + BATCH_SIZE]
+            sess.bulk_insert_mappings(CapturedLead, batch)
+            sess.flush()
+        print(f"  Inserted {len(leads)} captured leads.")
+
         sess.commit()
         print("\nDone. Stress-test data seeded successfully.")
     except Exception as e:
@@ -202,13 +251,19 @@ def main() -> None:
         sess.close()
         # Always print cleanup SQL (run in order; FK constraints)
         print("\n--- Cleanup (run these in order to remove only this test data) ---\n")
-        print("-- 1. DmLogs for load-test accounts")
+        print("-- 1. Captured leads for load-test accounts")
+        print("DELETE FROM captured_leads WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
+        print()
+        print("-- 2. Automation rules for load-test accounts")
+        print("DELETE FROM automation_rules WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
+        print()
+        print("-- 3. DmLogs for load-test accounts")
         print("DELETE FROM dm_logs WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
         print()
-        print("-- 2. Analytics events for load-test accounts")
+        print("-- 4. Analytics events for load-test accounts")
         print("DELETE FROM analytics_events WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
         print()
-        print("-- 3. Load-test Instagram accounts")
+        print("-- 5. Load-test Instagram accounts")
         print("DELETE FROM instagram_accounts WHERE username LIKE 'load_test_%';")
         print()
 
