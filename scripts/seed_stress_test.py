@@ -18,7 +18,10 @@ Requires: DATABASE_URL in environment (.env or export).
 
 For stress-testing the production UI (logicdm.app): use Render's Postgres URL,
 e.g. run:
-  DATABASE_URL='postgresql://...' python scripts/seed_stress_test.py --email you@example.com
+  DATABASE_URL='postgresql://...'   python scripts/seed_stress_test.py --email you@example.com
+
+  Leads-only (use existing load-test accounts):
+  python scripts/seed_stress_test.py --email you@example.com --leads-only
 """
 
 from __future__ import annotations
@@ -100,13 +103,46 @@ def resolve_user_id(sess, email: str | None, supabase_id: str | None) -> int:
     raise ValueError("need --email or --supabase-id")
 
 
+def _seed_leads_only(sess, user_id: int, account_ids: list[int], account_to_rule: dict[int, int]) -> None:
+    base_ts = datetime.now(timezone.utc)
+    num_leads_per_account = 600
+    leads = []
+    for aid in account_ids:
+        rid = account_to_rule[aid]
+        for i in range(num_leads_per_account):
+            ts = base_ts - timedelta(days=random.uniform(0, 60))
+            leads.append({
+                "user_id": user_id,
+                "instagram_account_id": aid,
+                "automation_rule_id": rid,
+                "email": f"load_test_lead_{aid}_{i}@example.com",
+                "phone": None,
+                "name": f"Load Test Lead {aid}-{i}",
+                "custom_fields": None,
+                "extra_metadata": None,
+                "captured_at": ts,
+                "notified": False,
+                "exported": False,
+            })
+    for start in range(0, len(leads), BATCH_SIZE):
+        batch = leads[start : start + BATCH_SIZE]
+        sess.bulk_insert_mappings(CapturedLead, batch)
+        sess.flush()
+    print(f"  Inserted {len(leads)} captured leads.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Seed stress-test data (5 accounts, 5k events, 1k DmLogs) for a user."
+        description="Seed stress-test data (5 accounts, 5k events, 1k DmLogs, 3k leads) for a user."
     )
     parser.add_argument("--email", type=str, help="User email (from backend users table)")
     parser.add_argument("--supabase-id", type=str, dest="supabase_id", help="Supabase Auth UID")
+    parser.add_argument("--leads-only", action="store_true", help="Only seed 3k leads; use existing load_test_* accounts")
     args = parser.parse_args()
+
+    if args.leads_only and not (args.email or args.supabase_id):
+        print("ERROR: --leads-only requires --email or --supabase-id.")
+        sys.exit(1)
 
     print("Stress-test seeder — bulk data for pagination/lists/speed testing\n")
 
@@ -131,6 +167,51 @@ def main() -> None:
     sess = get_session()
     try:
         ensure_user_exists(sess, user_id)
+
+        if args.leads_only:
+            # Use existing load-test accounts; ensure rules; seed 3k leads only
+            print("Leads-only mode: using existing load_test_* accounts.\n")
+            rows = sess.execute(
+                text("SELECT id, username FROM instagram_accounts WHERE user_id = :uid AND username LIKE 'load_test_%' ORDER BY id"),
+                {"uid": user_id},
+            ).fetchall()
+            if not rows:
+                print("ERROR: No load_test_* accounts found for this user. Run full seed first.")
+                sys.exit(1)
+            account_ids = [r[0] for r in rows]
+            account_usernames = {r[0]: r[1] for r in rows}
+            print(f"  Found {len(account_ids)} load-test accounts: {account_ids}")
+
+            # Get or create one rule per account
+            account_to_rule: dict[int, int] = {}
+            for aid in account_ids:
+                existing = sess.execute(
+                    text("SELECT id FROM automation_rules WHERE instagram_account_id = :aid AND deleted_at IS NULL LIMIT 1"),
+                    {"aid": aid},
+                ).fetchone()
+                if existing:
+                    account_to_rule[aid] = existing[0]
+                else:
+                    r = AutomationRule(
+                        instagram_account_id=aid,
+                        name=f"Load-test rule #{aid}",
+                        trigger_type="post_comment",
+                        action_type="send_dm",
+                        config={"stats": {}},
+                        is_active=True,
+                    )
+                    sess.add(r)
+                    sess.flush()
+                    account_to_rule[aid] = r.id
+            print(f"  Rules per account: {account_to_rule}")
+
+            print("Bulk-inserting 3,000 captured leads (600 per account)...")
+            _seed_leads_only(sess, user_id, account_ids, account_to_rule)
+            sess.commit()
+            print("\nDone. 3,000 leads seeded.")
+            return
+
+        # Full seed
         # 1. Create 5 load-test Instagram accounts
         print("Creating 5 connected accounts (@load_test_1 .. @load_test_5)...")
         accounts = []
@@ -173,7 +254,6 @@ def main() -> None:
         print(f"  Inserted {len(events)} analytics events.")
 
         # 3. Bulk-insert 1,000 DmLogs (200 per account) — automation logs
-        # Note: dm_logs has no status column; all rows represent sent activity.
         print("Bulk-inserting 1,000 DmLogs (200 per account)...")
         dm_logs = []
         for aid in account_ids:
@@ -214,32 +294,9 @@ def main() -> None:
         account_to_rule = dict(zip(account_ids, rule_ids))
         print(f"  Created rule ids: {rule_ids}")
 
-        # 5. Bulk-insert 3,000 captured leads (600 per account) — Recent Email leads load-test
+        # 5. Bulk-insert 3,000 captured leads (600 per account)
         print("Bulk-inserting 3,000 captured leads (600 per account)...")
-        num_leads_per_account = 600
-        leads = []
-        for aid in account_ids:
-            rid = account_to_rule[aid]
-            for i in range(num_leads_per_account):
-                ts = base_ts - timedelta(days=random.uniform(0, 60))
-                leads.append({
-                    "user_id": user_id,
-                    "instagram_account_id": aid,
-                    "automation_rule_id": rid,
-                    "email": f"load_test_lead_{aid}_{i}@example.com",
-                    "phone": None,
-                    "name": f"Load Test Lead {aid}-{i}",
-                    "custom_fields": None,
-                    "extra_metadata": None,
-                    "captured_at": ts,
-                    "notified": False,
-                    "exported": False,
-                })
-        for start in range(0, len(leads), BATCH_SIZE):
-            batch = leads[start : start + BATCH_SIZE]
-            sess.bulk_insert_mappings(CapturedLead, batch)
-            sess.flush()
-        print(f"  Inserted {len(leads)} captured leads.")
+        _seed_leads_only(sess, user_id, account_ids, account_to_rule)
 
         sess.commit()
         print("\nDone. Stress-test data seeded successfully.")
@@ -249,23 +306,27 @@ def main() -> None:
         raise
     finally:
         sess.close()
-        # Always print cleanup SQL (run in order; FK constraints)
-        print("\n--- Cleanup (run these in order to remove only this test data) ---\n")
-        print("-- 1. Captured leads for load-test accounts")
-        print("DELETE FROM captured_leads WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
-        print()
-        print("-- 2. Automation rules for load-test accounts")
-        print("DELETE FROM automation_rules WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
-        print()
-        print("-- 3. DmLogs for load-test accounts")
-        print("DELETE FROM dm_logs WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
-        print()
-        print("-- 4. Analytics events for load-test accounts")
-        print("DELETE FROM analytics_events WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
-        print()
-        print("-- 5. Load-test Instagram accounts")
-        print("DELETE FROM instagram_accounts WHERE username LIKE 'load_test_%';")
-        print()
+        if args.leads_only:
+            print("\n--- Cleanup (leads only) ---\n")
+            print("DELETE FROM captured_leads WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
+            print()
+        else:
+            print("\n--- Cleanup (run these in order to remove only this test data) ---\n")
+            print("-- 1. Captured leads for load-test accounts")
+            print("DELETE FROM captured_leads WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
+            print()
+            print("-- 2. Automation rules for load-test accounts")
+            print("DELETE FROM automation_rules WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
+            print()
+            print("-- 3. DmLogs for load-test accounts")
+            print("DELETE FROM dm_logs WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
+            print()
+            print("-- 4. Analytics events for load-test accounts")
+            print("DELETE FROM analytics_events WHERE instagram_account_id IN (SELECT id FROM instagram_accounts WHERE username LIKE 'load_test_%');")
+            print()
+            print("-- 5. Load-test Instagram accounts")
+            print("DELETE FROM instagram_accounts WHERE username LIKE 'load_test_%';")
+            print()
 
 
 if __name__ == "__main__":
