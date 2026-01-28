@@ -1540,12 +1540,9 @@ async def process_instagram_message(event: dict, db: Session):
                 return
         
         # story_id was already extracted above (before pre_dm_rules) for story replies
-        
-        # Deduplication: Skip if we've already processed this message
-        if message_id and message_id in _processed_message_ids:
-            log_print(f"🚫 Ignoring duplicate message (already processed): mid={message_id}")
-            return
-        
+        # NOTE: Deduplication already done at webhook entry (262-267). Do NOT check again here
+        # or we would always return (same request) and never reach keyword/story DM logic.
+
         # Check for echo messages (messages sent by the bot itself)
         # Echo can be at message level or event level
         is_echo = message.get("is_echo", False) or event.get("is_echo", False)
