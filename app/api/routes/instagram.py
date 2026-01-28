@@ -5692,16 +5692,22 @@ async def get_instagram_media(
         )
 
 
+CONVERSATIONS_LIMIT_DEFAULT = 100
+CONVERSATIONS_LIMIT_MAX = 100
+
+
 @router.get("/conversations")
 async def get_instagram_conversations(
     account_id: int = Query(..., description="Instagram account ID"),
-    limit: int = Query(50, ge=1, le=100, description="Number of conversations to fetch (max 100)"),
+    limit: int = Query(CONVERSATIONS_LIMIT_DEFAULT, ge=1, le=CONVERSATIONS_LIMIT_MAX, description="Conversations per page (max 100)"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
     sync: bool = Query(False, description="Whether to sync conversations from API"),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     """
     Fetch recent Instagram DM conversations for a specific account.
+    Supports pagination via offset/limit. Returns has_more and next_offset for "Load more".
     
     Uses the Conversation model to return structured conversation data.
     Optionally syncs conversations from existing messages if sync=true.
@@ -5748,9 +5754,11 @@ async def get_instagram_conversations(
         conversations_query = db.query(Conversation).filter(
             Conversation.instagram_account_id == account_id,
             Conversation.user_id == user_id
-        ).order_by(Conversation.updated_at.desc()).limit(limit)
+        ).order_by(Conversation.updated_at.desc()).offset(offset).limit(limit + 1)
         
-        conversations_list = conversations_query.all()
+        raw_list = conversations_query.all()
+        has_more = len(raw_list) > limit
+        conversations_list = raw_list[:limit]
         
         # Debug: Log conversation count
         print(f"📋 Found {len(conversations_list)} conversations in Conversation table for account {account_id}")
@@ -5766,7 +5774,9 @@ async def get_instagram_conversations(
                 # Refresh session to see newly committed data
                 db.expire_all()
                 # Re-query after sync
-                conversations_list = conversations_query.all()
+                raw_list = conversations_query.all()
+                has_more = len(raw_list) > limit
+                conversations_list = raw_list[:limit]
                 print(f"📊 Conversations after sync: {len(conversations_list)}")
                 
                 # Debug: Log conversation details
@@ -5823,7 +5833,9 @@ async def get_instagram_conversations(
             return {
                 "success": True,
                 "conversations": formatted_conversations,
-                "count": len(formatted_conversations)
+                "count": len(formatted_conversations),
+                "has_more": has_more,
+                "next_offset": offset + limit if has_more else None,
             }
         
         # Fallback: If no conversations in Conversation table, use old logic
@@ -6055,12 +6067,17 @@ async def get_instagram_conversations(
         
         # Sort by last_message_at (handle None values)
         conversations.sort(key=lambda x: x.get('last_message_at') or '', reverse=True)
-        conversations = conversations[:limit]  # Limit results
+        # Paginate fallback list
+        paginated = conversations[offset : offset + limit + 1]
+        has_more_fb = len(paginated) > limit
+        conversations = paginated[:limit]
         
         return {
             "success": True,
             "conversations": conversations,
-            "count": len(conversations)
+            "count": len(conversations),
+            "has_more": has_more_fb,
+            "next_offset": offset + limit if has_more_fb else None,
         }
         
     except HTTPException:
@@ -6476,7 +6493,7 @@ async def sync_conversations_endpoint(
         
         # Sync conversations
         from app.services.instagram_sync import sync_instagram_conversations
-        sync_result = sync_instagram_conversations(user_id, account_id, db, limit=50)
+        sync_result = sync_instagram_conversations(user_id, account_id, db, limit=100)
         
         # Refresh session
         db.expire_all()
