@@ -355,8 +355,14 @@ def get_analytics_dashboard(
             permalink_val = None
             is_deleted = False
             is_story = False
-            
-            if instagram_account_id:
+
+            # Load-test media IDs (e.g. load_test_media_66_123): use placeholder instead of Instagram API
+            if isinstance(media_id, str) and media_id.startswith("load_test_media_"):
+                seed = sum(ord(c) for c in media_id) % 10000
+                media_url_val = f"https://picsum.photos/400/400?seed={seed}"
+                permalink_val = "https://www.instagram.com/"
+
+            elif instagram_account_id:
                 try:
                     acc = db.query(InstagramAccount).filter(
                         InstagramAccount.id == instagram_account_id,
