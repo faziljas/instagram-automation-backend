@@ -35,6 +35,7 @@ class ConnectSDKRequest(BaseModel):
 
 class ExchangeCodeRequest(BaseModel):
     code: str
+    redirect_uri: str | None = None  # Optional: exact redirect_uri used in OAuth dialog (must match to fix token exchange)
 
 
 @router.get("/oauth/authorize")
@@ -747,8 +748,13 @@ async def exchange_instagram_code(
                 detail="FRONTEND_URL environment variable is required for OAuth callback"
             )
         
-        # Build redirect URI (must match frontend callback URL used in OAuth authorization)
-        redirect_uri = f"{FRONTEND_URL.strip().rstrip('/')}/dashboard/callback"
+        # Use redirect_uri from frontend if provided (must match the one used in OAuth dialog exactly, e.g. www vs non-www)
+        # Otherwise build from FRONTEND_URL
+        if request_data.redirect_uri and request_data.redirect_uri.strip().endswith("/dashboard/callback"):
+            redirect_uri = request_data.redirect_uri.strip()
+        else:
+            redirect_uri = f"{FRONTEND_URL.strip().rstrip('/')}/dashboard/callback"
+        print(f"🔄 Token exchange using redirect_uri: {redirect_uri}")
         
         # Step 1: Exchange code for short-lived access token (Instagram OAuth)
         token_url = "https://api.instagram.com/oauth/access_token"
