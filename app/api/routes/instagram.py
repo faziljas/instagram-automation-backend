@@ -4980,6 +4980,10 @@ async def execute_automation_action(
                                 log_analytics_event_sync(db=db, user_id=account.user_id, event_type=EventType.COMMENT_REPLIED, rule_id=rule.id, media_id=_mid, instagram_account_id=account.id, metadata={"comment_id": comment_id})
                             except Exception as _ae:
                                 pass
+                            # Wait 3 seconds after sending public comment reply before sending DM
+                            print(f"⏳ Waiting 3 seconds after comment reply before sending DM...")
+                            await asyncio.sleep(3)
+                            print(f"✅ 3-second delay complete, proceeding to send DM")
                         except Exception as reply_error:
                             print(f"⚠️ Failed to send public comment reply: {str(reply_error)}")
                             print(f"   This might be due to missing permissions (instagram_business_manage_comments),")
