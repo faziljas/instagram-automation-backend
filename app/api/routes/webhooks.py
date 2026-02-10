@@ -58,12 +58,14 @@ async def dodo_webhook(request: Request, db: Session = Depends(get_db)):
     print(f"[Dodo webhook] type={event_type} keys={list(obj.keys()) if isinstance(obj, dict) else 'n/a'}")
 
     sub_id = obj.get("subscription_id")
-    customer_id = obj.get("customer_id")
+    customer = obj.get("customer") or {}
+    customer_id = customer.get("customer_id") or obj.get("customer_id")
     meta = obj.get("metadata", {}) or {}
     user_id = meta.get("user_id")
+    customer_email = customer.get("email")
 
-    if event_type == "subscription.active":
-        _handle_subscription_active(db, obj, user_id, sub_id, customer_id)
+    if event_type in ("subscription.active", "subscription.updated"):
+        _handle_subscription_active(db, obj, user_id, customer_email, sub_id, customer_id)
     elif event_type == "subscription.cancelled":
         _handle_subscription_cancelled(db, obj, sub_id)
     elif event_type in ("payment.succeeded", "payment.failed"):
@@ -77,21 +79,33 @@ def _handle_subscription_active(
     db: Session,
     obj: dict,
     user_id: str | None,
+    customer_email: str | None,
     sub_id: str | None,
     customer_id: str | None,
 ) -> None:
     """Handle subscription.active – user has an active Pro subscription."""
-    if not sub_id or not user_id:
+    if not sub_id:
         return
 
-    try:
-        user_id_int = int(user_id)
-    except (TypeError, ValueError):
-        return
+    user = None
 
-    user = db.query(User).filter(User.id == user_id_int).first()
+    # Prefer explicit user_id from metadata if available
+    if user_id is not None:
+        try:
+            user_id_int = int(user_id)
+            user = db.query(User).filter(User.id == user_id_int).first()
+        except (TypeError, ValueError):
+            user = None
+
+    # Fallback: resolve by customer email from Dodo payload
+    if user is None and customer_email:
+        user = db.query(User).filter(User.email == customer_email).first()
+
     if not user:
         return
+
+    user_id_int = user.id
+
 
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id_int).first()
     status_val = (obj.get("status") or "active").lower()
