@@ -25,17 +25,12 @@ DODO_API_KEY = (
 DODO_WEBHOOK_SECRET = os.getenv("DODO_WEBHOOK_SECRET", "")
 DODO_PRODUCT_OR_PLAN_ID = os.getenv("DODO_PRODUCT_OR_PLAN_ID", "")  # Pro plan in test mode
 DODO_BASE_URL = os.getenv("DODO_BASE_URL", "").rstrip("/")  # Test base URL, e.g. https://test.dodopayments.com
-DODO_BUSINESS_ID = os.getenv("DODO_BUSINESS_ID", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
 def _dodo_configured() -> bool:
-    return bool(
-        DODO_API_KEY
-        and DODO_BASE_URL
-        and DODO_PRODUCT_OR_PLAN_ID
-        and DODO_BUSINESS_ID
-    )
+    # Dodo only requires API key, base URL, and product/plan ID for checkout.
+    return bool(DODO_API_KEY and DODO_BASE_URL and DODO_PRODUCT_OR_PLAN_ID)
 
 
 def _dodo_missing_config_message() -> str:
@@ -47,8 +42,6 @@ def _dodo_missing_config_message() -> str:
         missing_parts.append("BASE_URL")
     if not DODO_PRODUCT_OR_PLAN_ID:
         missing_parts.append("PRODUCT_ID")
-    if not DODO_BUSINESS_ID:
-        missing_parts.append("BUSINESS_ID")
     missing = " ".join(missing_parts) if missing_parts else "UNKNOWN"
     return (
         "Payment system not configured. Missing: "
@@ -138,15 +131,17 @@ async def create_checkout_session(
         ).strip() or effective_email
 
         payload = {
-            "business_id": DODO_BUSINESS_ID,
-            "product_id": DODO_PRODUCT_OR_PLAN_ID,
-            "quantity": 1,
+            "product_cart": [
+                {
+                    "product_id": DODO_PRODUCT_OR_PLAN_ID,
+                    "quantity": 1,
+                }
+            ],
             "customer": {
                 "email": effective_email,
                 "name": full_name,
             },
-            "success_url": f"{FRONTEND_URL}/dashboard/subscription?status=success",
-            "cancel_url": f"{FRONTEND_URL}/dashboard/subscription?status=cancelled",
+            "return_url": f"{FRONTEND_URL}/dashboard/subscription",
             "metadata": {
                 "user_id": str(user_id),
             },
@@ -154,7 +149,7 @@ async def create_checkout_session(
 
         print(f"[Dodo] Payload sent to Dodo: {payload}")
 
-        dodo_url = f"{DODO_BASE_URL}/checkout/sessions"
+        dodo_url = f"{DODO_BASE_URL}/checkouts"
         print(f"[Dodo] Making request to: {dodo_url}")
 
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -186,16 +181,15 @@ async def create_checkout_session(
             )
 
         data = r.json()
-        checkout_url = data.get("checkout_url") or data.get("url") or data.get("redirect_url")
-        session_id = data.get("session_id") or data.get("id") or data.get("checkout_id")
-        print(f"[Dodo] Parsed Dodo response: checkout_url={checkout_url}, session_id={session_id}")
-        if not checkout_url or not session_id:
-            print(f"[Dodo] Missing checkout_url or session_id in response: {data}")
+        checkout_url = data.get("checkout_url")
+        print(f"[Dodo] Parsed Dodo response: checkout_url={checkout_url}")
+        if not checkout_url:
+            print(f"[Dodo] Missing checkout_url in response: {data}")
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Dodo did not return checkout_url and session_id. See DODO_INTEGRATION.md for response shape.",
+                detail="Dodo did not return checkout_url. See DODO_INTEGRATION.md for response shape.",
             )
-        return {"checkout_url": checkout_url, "session_id": str(session_id)}
+        return {"checkout_url": checkout_url}
 
     except httpx.TimeoutException as e:
         print(f"[Dodo] Timeout error when calling Dodo: {e}")
