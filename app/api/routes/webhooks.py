@@ -32,8 +32,8 @@ def _verify_dodo_signature(
     Signed payload format:
         f"{webhook_id}.{webhook_timestamp}.{raw_body}"
 
-    The resulting HMAC-SHA256 digest (with DODO_WEBHOOK_SECRET as key) is sent in the
-    `webhook-signature` header, typically prefixed with "v1,".
+    The resulting HMAC-SHA256 digest (with the decoded webhook secret as key) is sent
+    in the `webhook-signature` header, typically prefixed with "v1,".
     """
     if (
         not DODO_WEBHOOK_SECRET
@@ -50,15 +50,22 @@ def _verify_dodo_signature(
     elif raw.startswith("v1="):
         raw = raw.split("=", 1)[1].strip()
 
-    # Build the signed message exactly as Dodo/Standard Webhooks expect:
+    # Build the signed message exactly as Dodo/Standard Webhooks expects:
     # "<webhook-id>.<webhook-timestamp>.<raw_body>"
     signed_payload = f"{webhook_id}.{webhook_timestamp}.{payload.decode()}".encode()
 
-    mac = hmac.new(
-        DODO_WEBHOOK_SECRET.encode(),
-        signed_payload,
-        hashlib.sha256,
-    )
+    # Standard Webhooks secrets are base64-encoded and prefixed with "whsec_".
+    # Decode to obtain the actual HMAC key bytes.
+    secret = DODO_WEBHOOK_SECRET
+    try:
+        if secret.startswith("whsec_"):
+            key_bytes = base64.b64decode(secret.split("_", 1)[1])
+        else:
+            key_bytes = secret.encode()
+    except Exception:
+        return False
+
+    mac = hmac.new(key_bytes, signed_payload, hashlib.sha256)
     digest = mac.digest()
     expected_b64 = base64.b64encode(digest).decode()
     expected_hex = mac.hexdigest()
