@@ -303,6 +303,74 @@ async def create_portal_session(
         )
 
 
+@router.post("/cancel-subscription")
+async def cancel_dodo_subscription(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """
+    Cancel the user's Dodo subscription.
+
+    - Calls Dodo PATCH /subscriptions/{subscription_id}
+    - Uses `cancel_at_next_billing_date: true` so users keep access
+      until the end of the already-paid billing period.
+    - Webhooks (subscription.cancelled / subscription.updated) remain
+      the source of truth for final status syncing.
+    """
+    if not _dodo_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_dodo_missing_config_message(),
+        )
+
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if not subscription or not subscription.dodo_subscription_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active Dodo subscription found for this user",
+        )
+
+    dodo_sub_id = subscription.dodo_subscription_id
+    url = f"{DODO_BASE_URL}/subscriptions/{dodo_sub_id}"
+
+    payload = {
+        # Recommended path: cancel at end of cycle so access
+        # continues until the end of the billing period.
+        "cancel_at_next_billing_date": True,
+        # For immediate cancellation instead, you could send:
+        # "status": "cancelled",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {DODO_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.patch(url, json=payload, headers=headers)
+
+        if r.status_code != 200:
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=f"Dodo cancel error: {r.text or r.status_code}",
+            )
+
+        # Optionally mark as "cancelled" locally; webhooks will
+        # still reconcile the final state.
+        subscription.status = "cancelled"
+        db.commit()
+
+        return {"message": "Subscription cancellation requested with Dodo."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dodo cancel request failed: {str(e)}",
+        )
+
+
 @router.get("/test-auth")
 async def test_dodo_auth():
     """Test if Dodo API key is valid against Dodo test API."""
