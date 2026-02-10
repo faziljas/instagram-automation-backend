@@ -15,7 +15,8 @@ from app.dependencies.auth import get_current_user_id
 
 router = APIRouter()
 
-DODO_API_KEY = os.getenv("DODO_API_KEY", "")
+# Prefer the new env var name, but fall back to the old one for safety.
+DODO_API_KEY = os.getenv("DODO_PAYMENTS_API_KEY") or os.getenv("DODO_API_KEY", "")
 DODO_WEBHOOK_SECRET = os.getenv("DODO_WEBHOOK_SECRET", "")
 DODO_PRODUCT_OR_PLAN_ID = os.getenv("DODO_PRODUCT_OR_PLAN_ID", "")  # Pro plan in test mode
 DODO_BASE_URL = os.getenv("DODO_BASE_URL", "").rstrip("/")  # Test base URL, e.g. https://test.dodopayments.com
@@ -35,10 +36,16 @@ async def create_checkout_session(
     Create a Dodo Payments checkout session for subscription upgrade.
     Returns the checkout URL to redirect the user to.
     """
+    # Helpful diagnostics without leaking secrets
+    print(
+        f"[Dodo] create_checkout_session: api_key_loaded={bool(DODO_API_KEY)}, "
+        f"base_url={DODO_BASE_URL}, product_set={bool(DODO_PRODUCT_OR_PLAN_ID)}"
+    )
+
     if not _dodo_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Dodo Payments not configured. Set DODO_API_KEY, DODO_PRODUCT_OR_PLAN_ID, and DODO_BASE_URL. See DODO_INTEGRATION.md."
+            detail="Dodo Payments not configured. Set DODO_PAYMENTS_API_KEY (or DODO_API_KEY), DODO_PRODUCT_OR_PLAN_ID, and DODO_BASE_URL. See DODO_INTEGRATION.md."
         )
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -108,14 +115,11 @@ async def create_checkout_session(
             )
         return {"checkout_url": checkout_url, "session_id": str(session_id)}
     except Exception as e:
-        if "httpx" in str(type(e).__module__):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Dodo Payments request failed: {str(e)}"
-            )
+        # Surface upstream Dodo errors directly (e.g. invalid token), so the frontend
+        # can show a helpful message.
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Dodo integration requires httpx. Install with: pip install httpx. Error: {e}"
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dodo Payments request failed: {str(e)}"
         )
 
 
@@ -139,7 +143,7 @@ async def verify_checkout_session(
     if not _dodo_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Dodo Payments not configured. See DODO_INTEGRATION.md."
+            detail="Dodo Payments not configured. Set DODO_PAYMENTS_API_KEY (or DODO_API_KEY), DODO_PRODUCT_OR_PLAN_ID, and DODO_BASE_URL. See DODO_INTEGRATION.md."
         )
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -210,12 +214,7 @@ async def create_portal_session(
             )
         return {"portal_url": portal_url}
     except Exception as e:
-        if "httpx" in str(type(e).__module__):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Dodo request failed: {str(e)}"
-            )
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Install httpx: pip install httpx. Error: {e}"
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Dodo request failed: {str(e)}"
         )
