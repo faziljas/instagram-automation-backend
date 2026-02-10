@@ -248,10 +248,21 @@ def get_subscription(
     """Get user's subscription details"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        # Be defensive for brand‑new auth users who might not
+        # have a local User row yet. Treat them as Free tier with
+        # zero usage instead of failing the whole subscription page.
+        return {
+            "plan_tier": "free",
+            "effective_plan_tier": "free",
+            "status": "active",
+            "stripe_subscription_id": None,
+            "cancellation_end_date": None,
+            "usage": {
+                "accounts": 0,
+                "rules": 0,
+                "dms_sent_this_month": 0,
+            },
+        }
     
     subscription = db.query(Subscription).filter(
         Subscription.user_id == user_id
