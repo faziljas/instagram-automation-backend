@@ -59,10 +59,12 @@ def _verify_dodo_signature(
         signed_payload,
         hashlib.sha256,
     )
+    digest = mac.digest()
+    expected_b64 = base64.b64encode(digest).decode()
     expected_hex = mac.hexdigest()
 
-    # Signature is hex digest; keep comparison timing‑safe.
-    return hmac.compare_digest(raw, expected_hex)
+    # Dodo/Standard Webhooks use base64, but accept hex as fallback just in case.
+    return hmac.compare_digest(raw, expected_b64) or hmac.compare_digest(raw, expected_hex)
 
 
 @router.post("/dodo")
