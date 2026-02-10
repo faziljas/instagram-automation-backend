@@ -19,28 +19,50 @@ router = APIRouter()
 DODO_WEBHOOK_SECRET = os.getenv("DODO_WEBHOOK_SECRET", "")
 
 
-def _verify_dodo_signature(payload: bytes, signature_header: str | None) -> bool:
-    """Verify webhook signature using DODO_WEBHOOK_SECRET (HMAC-SHA256 of raw body)."""
-    if not DODO_WEBHOOK_SECRET or not signature_header:
+def _verify_dodo_signature(
+    payload: bytes,
+    signature_header: str | None,
+    webhook_id: str | None,
+    webhook_timestamp: str | None,
+) -> bool:
+    """
+    Verify webhook signature using the Standard Webhooks spec that Dodo implements.
+
+    Docs: https://docs.dodopayments.com/developer-resources/webhooks
+    Signed payload format:
+        f"{webhook_id}.{webhook_timestamp}.{raw_body}"
+
+    The resulting HMAC-SHA256 digest (with DODO_WEBHOOK_SECRET as key) is sent in the
+    `webhook-signature` header, typically prefixed with "v1,".
+    """
+    if (
+        not DODO_WEBHOOK_SECRET
+        or not signature_header
+        or not webhook_id
+        or not webhook_timestamp
+    ):
         return False
     raw = signature_header.strip()
-    # Dodo currently sends signatures in the form "v1,<signature>" where
-    # <signature> may be a hex string or base64-encoded HMAC. Normalize it.
+    # Dodo sends signatures in the form "v1,<signature>" where <signature> is the
+    # hex‑encoded HMAC digest. Normalize it.
     if raw.startswith("v1,"):
         raw = raw.split(",", 1)[1].strip()
     elif raw.startswith("v1="):
         raw = raw.split("=", 1)[1].strip()
 
+    # Build the signed message exactly as Dodo/Standard Webhooks expect:
+    # "<webhook-id>.<webhook-timestamp>.<raw_body>"
+    signed_payload = f"{webhook_id}.{webhook_timestamp}.{payload.decode()}".encode()
+
     mac = hmac.new(
         DODO_WEBHOOK_SECRET.encode(),
-        payload,
+        signed_payload,
         hashlib.sha256,
     )
     expected_hex = mac.hexdigest()
-    expected_b64 = base64.b64encode(mac.digest()).decode()
 
-    # Accept either hex or base64 representation to be robust to format changes.
-    return hmac.compare_digest(raw, expected_hex) or hmac.compare_digest(raw, expected_b64)
+    # Signature is hex digest; keep comparison timing‑safe.
+    return hmac.compare_digest(raw, expected_hex)
 
 
 @router.post("/dodo")
@@ -51,8 +73,12 @@ async def dodo_webhook(request: Request, db: Session = Depends(get_db)):
     """
     payload = await request.body()
     sig_header = request.headers.get("webhook-signature")
+    webhook_id = request.headers.get("webhook-id")
+    webhook_timestamp = request.headers.get("webhook-timestamp")
 
-    if DODO_WEBHOOK_SECRET and not _verify_dodo_signature(payload, sig_header):
+    if DODO_WEBHOOK_SECRET and not _verify_dodo_signature(
+        payload, sig_header, webhook_id, webhook_timestamp
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid webhook signature"
