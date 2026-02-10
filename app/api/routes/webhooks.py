@@ -6,6 +6,7 @@ import os
 import json
 import hmac
 import hashlib
+import base64
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from sqlalchemy.orm import Session
@@ -22,13 +23,24 @@ def _verify_dodo_signature(payload: bytes, signature_header: str | None) -> bool
     """Verify webhook signature using DODO_WEBHOOK_SECRET (HMAC-SHA256 of raw body)."""
     if not DODO_WEBHOOK_SECRET or not signature_header:
         return False
-    # Dodo uses a simple HMAC hexdigest of the raw body.
-    expected = hmac.new(
+    raw = signature_header.strip()
+    # Dodo currently sends signatures in the form "v1,<signature>" where
+    # <signature> may be a hex string or base64-encoded HMAC. Normalize it.
+    if raw.startswith("v1,"):
+        raw = raw.split(",", 1)[1].strip()
+    elif raw.startswith("v1="):
+        raw = raw.split("=", 1)[1].strip()
+
+    mac = hmac.new(
         DODO_WEBHOOK_SECRET.encode(),
         payload,
-        hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(signature_header.replace("sha256=", "").strip(), expected)
+        hashlib.sha256,
+    )
+    expected_hex = mac.hexdigest()
+    expected_b64 = base64.b64encode(mac.digest()).decode()
+
+    # Accept either hex or base64 representation to be robust to format changes.
+    return hmac.compare_digest(raw, expected_hex) or hmac.compare_digest(raw, expected_b64)
 
 
 @router.post("/dodo")
