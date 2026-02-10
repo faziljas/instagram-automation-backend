@@ -4,8 +4,9 @@ Handles checkout session creation, verification, and billing portal.
 Replace Stripe with Dodo credentials in .env (see DODO_INTEGRATION.md).
 """
 import os
+import traceback
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from app.db.session import get_db
@@ -31,18 +32,38 @@ def _dodo_configured() -> bool:
     return bool(DODO_API_KEY and DODO_PRODUCT_OR_PLAN_ID and DODO_BASE_URL)
 
 
+@router.get("/check-config")
+async def check_dodo_config():
+    """Debug endpoint to verify Dodo env vars are loaded in this process."""
+    return {
+        "api_key_exists": bool(DODO_API_KEY),
+        "api_key_length": len(DODO_API_KEY) if DODO_API_KEY else 0,
+        "api_key_prefix": DODO_API_KEY[:15] if DODO_API_KEY else "NOT_SET",
+        "base_url": DODO_BASE_URL or "NOT_SET",
+        "product_id": DODO_PRODUCT_OR_PLAN_ID or "NOT_SET",
+        "webhook_secret_exists": bool(DODO_WEBHOOK_SECRET),
+        "all_env_vars": {
+            "DODO_PAYMENTS_API_KEY": bool(os.getenv("DODO_PAYMENTS_API_KEY")),
+            "DODO_API_KEY": bool(os.getenv("DODO_API_KEY")),
+            "DODO_BASE_URL": bool(os.getenv("DODO_BASE_URL")),
+            "DODO_PRODUCT_OR_PLAN_ID": bool(os.getenv("DODO_PRODUCT_OR_PLAN_ID")),
+        },
+    }
+
+
 @router.post("/create-checkout-session")
 async def create_checkout_session(
+    request: Request,
     db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
+    user_id: int = Depends(get_current_user_id),
 ):
     """
     Create a Dodo Payments checkout session for subscription upgrade.
     Returns the checkout URL to redirect the user to.
     """
-    # Helpful diagnostics without leaking secrets
+    # Helpful diagnostics without leaking full secrets
     print(
-        f"[Dodo] create_checkout_session: "
+        "[Dodo] create_checkout_session: "
         f"api_key_loaded={bool(DODO_API_KEY)}, "
         f"key_prefix={DODO_API_KEY[:5] if DODO_API_KEY else 'None'}, "
         f"base_url={DODO_BASE_URL}, "
@@ -50,9 +71,11 @@ async def create_checkout_session(
     )
 
     if not _dodo_configured():
+        print("[Dodo] Configuration missing; aborting checkout session creation.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Dodo Payments not configured. Set DODO_PAYMENTS_API_KEY (or DODO_API_KEY), DODO_PRODUCT_OR_PLAN_ID, and DODO_BASE_URL. See DODO_INTEGRATION.md."
+            detail="Dodo Payments not configured. Set DODO_PAYMENTS_API_KEY (or DODO_API_KEY), "
+            "DODO_PRODUCT_OR_PLAN_ID, and DODO_BASE_URL. See DODO_INTEGRATION.md.",
         )
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -63,12 +86,16 @@ async def create_checkout_session(
     if subscription and subscription.status == "active":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User already has an active subscription"
+            detail="User already has an active subscription",
         )
 
     # Call Dodo API to create a checkout session for the Pro product.
     try:
-        headers = {"Authorization": f"Bearer {DODO_API_KEY}", "Content-Type": "application/json"}
+        print("[Dodo] Building checkout payload.")
+        headers = {
+            "Authorization": f"Bearer {DODO_API_KEY}",
+            "Content-Type": "application/json",
+        }
         # NOTE: Billing address values here are placeholders suitable for test mode.
         # If you want to collect real billing info, pass it from the frontend and
         # populate the fields below instead of hard-coding them.
@@ -100,34 +127,52 @@ async def create_checkout_session(
                 "user_id": str(user_id),
             },
         }
+
+        dodo_url = f"{DODO_BASE_URL}/checkout/sessions"
+        print(f"[Dodo] Making request to: {dodo_url}")
+
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # Adjust endpoint to Dodo's actual API (check their docs)
             r = await client.post(
-                f"{DODO_BASE_URL}/checkout/sessions",
+                dodo_url,
                 json=payload,
                 headers=headers,
             )
+
+        print(f"[Dodo] Response status: {r.status_code}")
+        print(f"[Dodo] Response body (truncated): {r.text[:500] if r.text else 'NO_BODY'}")
+
         if r.status_code != 200:
+            # Surface Dodo's status code directly so it's not always 502.
+            print(f"[Dodo] Non-200 response from Dodo: {r.status_code} - {r.text}")
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Dodo Payments error: {r.text or r.status_code}"
+                status_code=r.status_code,
+                detail=f"Dodo API error: {r.text or r.status_code}",
             )
+
         data = r.json()
         checkout_url = data.get("checkout_url") or data.get("url") or data.get("redirect_url")
         session_id = data.get("session_id") or data.get("id") or data.get("checkout_id")
         if not checkout_url or not session_id:
+            print(f"[Dodo] Missing checkout_url or session_id in response: {data}")
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Dodo did not return checkout_url and session_id. See DODO_INTEGRATION.md for response shape."
+                detail="Dodo did not return checkout_url and session_id. See DODO_INTEGRATION.md for response shape.",
             )
         return {"checkout_url": checkout_url, "session_id": str(session_id)}
+
+    except httpx.TimeoutException as e:
+        print(f"[Dodo] Timeout error when calling Dodo: {e}")
+        raise HTTPException(status_code=504, detail="Dodo API timeout")
+    except httpx.RequestError as e:
+        print(f"[Dodo] Request error when calling Dodo: {e}")
+        raise HTTPException(status_code=502, detail=f"Dodo request failed: {str(e)}")
+    except HTTPException:
+        # Re-raise HTTPExceptions we created above.
+        raise
     except Exception as e:
-        # Surface upstream Dodo errors directly (e.g. invalid token), so the frontend
-        # can show a helpful message.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Dodo Payments request failed: {str(e)}"
-        )
+        print(f"[Dodo] Unexpected error during checkout session creation: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 class VerifyCheckoutRequest(BaseModel):
