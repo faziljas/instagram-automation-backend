@@ -58,6 +58,10 @@ async def create_checkout_session(
         # NOTE: Billing address values here are placeholders suitable for test mode.
         # If you want to collect real billing info, pass it from the frontend and
         # populate the fields below instead of hard-coding them.
+        full_name = " ".join(
+            part for part in [user.first_name, user.last_name] if part
+        ).strip() or user.email
+
         payload = {
             "product_cart": [
                 {
@@ -74,7 +78,7 @@ async def create_checkout_session(
             },
             "customer": {
                 "email": user.email,
-                "name": user.full_name or user.email,
+                "name": full_name,
             },
             "return_url": f"{FRONTEND_URL}/dashboard/subscription",
             "payment_link": True,
