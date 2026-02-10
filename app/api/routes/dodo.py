@@ -25,11 +25,35 @@ DODO_API_KEY = (
 DODO_WEBHOOK_SECRET = os.getenv("DODO_WEBHOOK_SECRET", "")
 DODO_PRODUCT_OR_PLAN_ID = os.getenv("DODO_PRODUCT_OR_PLAN_ID", "")  # Pro plan in test mode
 DODO_BASE_URL = os.getenv("DODO_BASE_URL", "").rstrip("/")  # Test base URL, e.g. https://test.dodopayments.com
+DODO_BUSINESS_ID = os.getenv("DODO_BUSINESS_ID", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
 def _dodo_configured() -> bool:
-    return bool(DODO_API_KEY and DODO_PRODUCT_OR_PLAN_ID and DODO_BASE_URL)
+    return bool(
+        DODO_API_KEY
+        and DODO_BASE_URL
+        and DODO_PRODUCT_OR_PLAN_ID
+        and DODO_BUSINESS_ID
+    )
+
+
+def _dodo_missing_config_message() -> str:
+    """Human-readable message listing which Dodo env vars are missing."""
+    missing_parts: list[str] = []
+    if not DODO_API_KEY:
+        missing_parts.append("API_KEY")
+    if not DODO_BASE_URL:
+        missing_parts.append("BASE_URL")
+    if not DODO_PRODUCT_OR_PLAN_ID:
+        missing_parts.append("PRODUCT_ID")
+    if not DODO_BUSINESS_ID:
+        missing_parts.append("BUSINESS_ID")
+    missing = " ".join(missing_parts) if missing_parts else "UNKNOWN"
+    return (
+        "Payment system not configured. Missing: "
+        f"{missing}"
+    )
 
 
 @router.get("/check-config")
@@ -74,8 +98,7 @@ async def create_checkout_session(
         print("[Dodo] Configuration missing; aborting checkout session creation.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Dodo Payments not configured. Set DODO_PAYMENTS_API_KEY (or DODO_API_KEY), "
-            "DODO_PRODUCT_OR_PLAN_ID, and DODO_BASE_URL. See DODO_INTEGRATION.md.",
+            detail=_dodo_missing_config_message(),
         )
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -110,33 +133,20 @@ async def create_checkout_session(
             "Authorization": f"Bearer {DODO_API_KEY}",
             "Content-Type": "application/json",
         }
-        # NOTE: Billing address values here are placeholders suitable for test mode.
-        # If you want to collect real billing info, pass it from the frontend and
-        # populate the fields below instead of hard-coding them.
         full_name = " ".join(
             part for part in [request_name, user.first_name, user.last_name] if part
         ).strip() or effective_email
 
         payload = {
-            "product_cart": [
-                {
-                    "product_id": DODO_PRODUCT_OR_PLAN_ID,
-                    "quantity": 1,
-                }
-            ],
-            "billing": {
-                "country": "US",
-                "city": "New York",
-                "state": "NY",
-                "zipcode": "10001",
-                "street": "123 Main St",
-            },
+            "business_id": DODO_BUSINESS_ID,
+            "product_id": DODO_PRODUCT_OR_PLAN_ID,
+            "quantity": 1,
             "customer": {
                 "email": effective_email,
                 "name": full_name,
             },
-            "return_url": f"{FRONTEND_URL}/dashboard/subscription",
-            "payment_link": True,
+            "success_url": f"{FRONTEND_URL}/dashboard/subscription?status=success",
+            "cancel_url": f"{FRONTEND_URL}/dashboard/subscription?status=cancelled",
             "metadata": {
                 "user_id": str(user_id),
             },
@@ -222,7 +232,7 @@ async def verify_checkout_session(
     if not _dodo_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Dodo Payments not configured. Set DODO_PAYMENTS_API_KEY (or DODO_API_KEY), DODO_PRODUCT_OR_PLAN_ID, and DODO_BASE_URL. See DODO_INTEGRATION.md."
+            detail=_dodo_missing_config_message(),
         )
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -256,7 +266,7 @@ async def create_portal_session(
     if not _dodo_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Dodo Payments not configured. See DODO_INTEGRATION.md."
+            detail=_dodo_missing_config_message(),
         )
 
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
