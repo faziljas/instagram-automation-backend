@@ -1,5 +1,11 @@
+"""
+Webhooks for payment provider (Dodo Payments).
+Stripe has been removed; implement signature verification and event parsing per Dodo docs.
+"""
 import os
-import stripe
+import json
+import hmac
+import hashlib
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from sqlalchemy.orm import Session
@@ -9,322 +15,129 @@ from app.models.subscription import Subscription
 
 router = APIRouter()
 
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+DODO_WEBHOOK_SECRET = os.getenv("DODO_WEBHOOK_SECRET", "")
 
 
-@router.post("/stripe")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+def _verify_dodo_signature(payload: bytes, signature_header: str | None) -> bool:
+    """Verify webhook signature using DODO_WEBHOOK_SECRET (HMAC-SHA256 of raw body)."""
+    if not DODO_WEBHOOK_SECRET or not signature_header:
+        return False
+    # Dodo uses a simple HMAC hexdigest of the raw body.
+    expected = hmac.new(
+        DODO_WEBHOOK_SECRET.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature_header.replace("sha256=", "").strip(), expected)
+
+
+@router.post("/dodo")
+async def dodo_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Dodo Payments webhook. Register this URL in Dodo dashboard (test mode):
+    https://your-backend.com/webhooks/dodo
+    """
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
+    sig_header = request.headers.get("webhook-signature")
+
+    if DODO_WEBHOOK_SECRET and not _verify_dodo_signature(payload, sig_header):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid webhook signature"
+        )
 
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, STRIPE_WEBHOOK_SECRET
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid payload"
-        )
-    except stripe.error.SignatureVerificationError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid signature"
-        )
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON")
 
-    # Handle the event
-    if event["type"] == "checkout.session.completed":
-        # Handle successful checkout (subscription created)
-        handle_checkout_session_completed(event["data"]["object"], db)
-    elif event["type"] == "customer.subscription.created":
-        handle_subscription_created(event["data"]["object"], db)
-    elif event["type"] == "customer.subscription.updated":
-        handle_subscription_updated(event["data"]["object"], db)
-    elif event["type"] == "customer.subscription.deleted":
-        handle_subscription_deleted(event["data"]["object"], db)
+    event_type = data.get("type")
+    # Dodo payload shape: {"type": "...", "data": {...}}
+    obj = data.get("data") or {}
+
+    print(f"[Dodo webhook] type={event_type} keys={list(obj.keys()) if isinstance(obj, dict) else 'n/a'}")
+
+    sub_id = obj.get("subscription_id")
+    customer_id = obj.get("customer_id")
+    meta = obj.get("metadata", {}) or {}
+    user_id = meta.get("user_id")
+
+    if event_type == "subscription.active":
+        _handle_subscription_active(db, obj, user_id, sub_id, customer_id)
+    elif event_type == "subscription.cancelled":
+        _handle_subscription_cancelled(db, obj, sub_id)
+    elif event_type in ("payment.succeeded", "payment.failed"):
+        # For now we only log these; subscription status is handled by subscription.* events.
+        print(f"[Dodo webhook] payment event: {event_type} for subscription_id={sub_id} customer_id={customer_id}")
 
     return {"status": "success"}
 
 
-def handle_checkout_session_completed(session_data: dict, db: Session):
-    """Handle successful checkout session completion."""
-    print(f"✅ Checkout session completed: {session_data.get('id')}")
-    
-    # Extract user ID from metadata
-    user_id = session_data.get("metadata", {}).get("user_id")
-    customer_email = session_data.get("customer_email")
-    
-    if not user_id:
-        print("⚠️ No user_id in checkout session metadata")
+def _handle_subscription_active(
+    db: Session,
+    obj: dict,
+    user_id: str | None,
+    sub_id: str | None,
+    customer_id: str | None,
+) -> None:
+    """Handle subscription.active – user has an active Pro subscription."""
+    if not sub_id or not user_id:
         return
-    
-    user = db.query(User).filter(User.id == int(user_id)).first()
-    if not user:
-        print(f"❌ User not found: {user_id}")
-        return
-    
-    # Get subscription ID from checkout session
-    subscription_id_raw = session_data.get("subscription")
-    customer_id = session_data.get("customer")
-    
-    if not subscription_id_raw:
-        print("⚠️ No subscription ID in checkout session")
-        return
-    
-    # Handle subscription_id - it might be a string or an object
-    if isinstance(subscription_id_raw, str):
-        subscription_id = subscription_id_raw
-    elif hasattr(subscription_id_raw, 'id'):
-        subscription_id = subscription_id_raw.id
-    elif isinstance(subscription_id_raw, dict) and 'id' in subscription_id_raw:
-        subscription_id = subscription_id_raw['id']
-    else:
-        subscription_id = str(subscription_id_raw)
-    
-    print(f"📋 Extracted subscription ID: {subscription_id}")
-    
-    # Retrieve subscription details from Stripe
+
     try:
-        subscription = stripe.Subscription.retrieve(subscription_id)
-        
-        # Create or update subscription record
-        db_subscription = db.query(Subscription).filter(
-            Subscription.user_id == user.id
-        ).first()
-        
-        if db_subscription:
-            db_subscription.stripe_subscription_id = subscription_id
-            db_subscription.status = subscription.status
-        else:
-            db_subscription = Subscription(
-                user_id=user.id,
-                stripe_subscription_id=subscription_id,
-                status=subscription.status
-            )
-            db.add(db_subscription)
-        
-        # Update user plan tier
-        plan_tier = get_plan_tier_from_subscription(subscription.to_dict())
-        print(f"📊 Determined plan tier: {plan_tier} for subscription {subscription_id}")
-        
-        if plan_tier == "free":
-            print(f"⚠️ WARNING: Plan tier is 'free' for subscription {subscription_id}. Price ID: {subscription.items.data[0].price.id if subscription.items.data else 'N/A'}")
-            
-            # Fallback: If we have an active subscription but plan_tier is free, default to pro
-            # This handles cases where STRIPE_PRICE_ID_PRO might not be configured correctly
-            if subscription.status == "active" and subscription.items.data:
-                price_id = subscription.items.data[0].price.id
-                print(f"⚠️ Subscription is active but plan_tier is 'free'. Price ID: {price_id}")
-                print(f"⚠️ Defaulting to 'pro' plan for active subscription")
-                plan_tier = "pro"
-        
-        # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
-        previous_plan_tier = user.plan_tier
-        is_upgrading_to_pro = previous_plan_tier not in ["pro", "enterprise"] and plan_tier in ["pro", "enterprise"]
-        
-        user.plan_tier = plan_tier
-        
-        # Reset billing cycle start date when upgrading TO Pro/Enterprise (fresh start)
-        # This ensures DMs count resets to zero on upgrade
-        if is_upgrading_to_pro:
-            db_subscription.billing_cycle_start_date = datetime.utcnow()
-            print(f"✅ Reset billing cycle start date for user {user_id} (upgrading to {plan_tier}): {db_subscription.billing_cycle_start_date}")
-        # Set billing cycle start date for Pro/Enterprise users if not set (new subscription)
-        elif plan_tier in ["pro", "enterprise"] and not db_subscription.billing_cycle_start_date:
-            db_subscription.billing_cycle_start_date = datetime.utcnow()
-            print(f"✅ Set billing cycle start date for user {user_id}: {db_subscription.billing_cycle_start_date}")
-        
-        # Reset global trackers for all user's Instagram accounts when upgrading to Pro
-        if plan_tier in ["pro", "enterprise"]:
-            from app.services.instagram_usage_tracker import reset_tracker_for_pro_upgrade
-            
-            # Reset all trackers for this user
-            reset_tracker_for_pro_upgrade(user.id, db)
-        
-        db.commit()
-        print(f"✅ User {user_id} upgraded to {plan_tier} plan")
-        
-    except stripe.error.StripeError as e:
-        print(f"❌ Error retrieving subscription from Stripe: {str(e)}")
-        db.rollback()
-
-
-def handle_subscription_created(subscription_data: dict, db: Session):
-    """Handle new subscription creation from Stripe."""
-    stripe_subscription_id = subscription_data["id"]
-    stripe_customer_id = subscription_data["customer"]
-    stripe_status = subscription_data["status"]
-    # Normalize Stripe's American spelling to our internal status
-    status = "cancelled" if stripe_status == "canceled" else stripe_status
-
-    # Get user by stripe customer ID (assumes user.email or custom metadata)
-    # For simplicity, we'll look up by subscription metadata
-    user_id = subscription_data.get("metadata", {}).get("user_id")
-    if not user_id:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
         return
 
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    user = db.query(User).filter(User.id == user_id_int).first()
     if not user:
         return
 
-    # Create or update subscription
-    subscription = db.query(Subscription).filter(
-        Subscription.user_id == user.id
-    ).first()
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id_int).first()
+    status_val = (obj.get("status") or "active").lower()
+    if status_val == "canceled":
+        status_val = "cancelled"
 
     if subscription:
-        subscription.stripe_subscription_id = stripe_subscription_id
-        subscription.status = status
+        subscription.dodo_subscription_id = str(sub_id)
+        subscription.dodo_customer_id = customer_id
+        subscription.status = status_val
     else:
         subscription = Subscription(
-            user_id=user.id,
-            stripe_subscription_id=stripe_subscription_id,
-            status=status
+            user_id=user_id_int,
+            dodo_subscription_id=str(sub_id),
+            dodo_customer_id=customer_id,
+            status=status_val,
         )
         db.add(subscription)
 
-    # Update user plan tier based on subscription
-    plan_tier = get_plan_tier_from_subscription(subscription_data)
-    
-    # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
-    previous_plan_tier = user.plan_tier
-    is_upgrading_to_pro = previous_plan_tier not in ["pro", "enterprise"] and plan_tier in ["pro", "enterprise"]
-    
-    user.plan_tier = plan_tier
-    
-    # Reset billing cycle start date when upgrading TO Pro/Enterprise (fresh start)
-    # This ensures DMs count resets to zero on upgrade
-    if is_upgrading_to_pro:
-        subscription.billing_cycle_start_date = datetime.utcnow()
-        print(f"✅ Reset billing cycle start date for user {user.id} (upgrading to {plan_tier}): {subscription.billing_cycle_start_date}")
-    # Set billing cycle start date for Pro/Enterprise users if not set (new subscription)
-    elif plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
-        subscription.billing_cycle_start_date = datetime.utcnow()
-        print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
-    
-    # Reset global trackers for all user's Instagram accounts when upgrading to Pro
-    if plan_tier in ["pro", "enterprise"]:
+    if status_val == "active":
+        user.plan_tier = "pro"
+        if not subscription.billing_cycle_start_date:
+            subscription.billing_cycle_start_date = datetime.utcnow()
         from app.services.instagram_usage_tracker import reset_tracker_for_pro_upgrade
-        
-        # Reset all trackers for this user
-        reset_tracker_for_pro_upgrade(user.id, db)
+
+        reset_tracker_for_pro_upgrade(user_id_int, db)
 
     db.commit()
 
 
-def handle_subscription_updated(subscription_data: dict, db: Session):
-    """Handle subscription updates (status changes, plan changes)."""
-    stripe_subscription_id = subscription_data["id"]
-    stripe_status = subscription_data["status"]
+def _handle_subscription_cancelled(
+    db: Session,
+    obj: dict,
+    sub_id: str | None,
+) -> None:
+    """Handle subscription.cancelled – mark subscription as cancelled but keep access until period end."""
+    if not sub_id:
+        return
 
-    subscription = db.query(Subscription).filter(
-        Subscription.stripe_subscription_id == stripe_subscription_id
-    ).first()
-
+    subscription = (
+        db.query(Subscription)
+        .filter(Subscription.dodo_subscription_id == str(sub_id))
+        .first()
+    )
     if not subscription:
         return
 
-    # Store normalized status in our DB, but keep Stripe status for logic checks below
-    subscription.status = "cancelled" if stripe_status == "canceled" else stripe_status
-
-    # Update user plan tier
-    user = db.query(User).filter(User.id == subscription.user_id).first()
-    if user:
-        if stripe_status == "active":
-            plan_tier = get_plan_tier_from_subscription(subscription_data)
-            
-            # Check if user is upgrading TO Pro/Enterprise (was on free/basic before)
-            previous_plan_tier = user.plan_tier
-            is_upgrading_to_pro = previous_plan_tier not in ["pro", "enterprise"] and plan_tier in ["pro", "enterprise"]
-            
-            user.plan_tier = plan_tier
-            
-            # Reset billing cycle start date when upgrading TO Pro/Enterprise (fresh start)
-            # This ensures DMs count resets to zero on upgrade
-            if is_upgrading_to_pro:
-                subscription.billing_cycle_start_date = datetime.utcnow()
-                print(f"✅ Reset billing cycle start date for user {user.id} (upgrading to {plan_tier}): {subscription.billing_cycle_start_date}")
-            # Set billing cycle start date for Pro/Enterprise users if not set (new subscription)
-            elif plan_tier in ["pro", "enterprise"] and not subscription.billing_cycle_start_date:
-                subscription.billing_cycle_start_date = datetime.utcnow()
-                print(f"✅ Set billing cycle start date for user {user.id}: {subscription.billing_cycle_start_date}")
-            
-            # Reset global trackers for all user's Instagram accounts when upgrading to Pro
-            if plan_tier in ["pro", "enterprise"]:
-                from app.services.instagram_usage_tracker import reset_tracker_for_pro_upgrade
-                
-                # Reset all trackers for this user
-                reset_tracker_for_pro_upgrade(user.id, db)
-        elif stripe_status in ["canceled", "incomplete_expired", "past_due"]:
-            # DON'T downgrade plan_tier immediately - user paid for 30 days, so keep Pro access
-            # Only mark subscription as cancelled - plan will downgrade after cycle ends
-            # DON'T clear billing_cycle_start_date - needed to calculate when Pro access ends
-            print(f"✅ User {user.id} subscription cancelled - keeping Pro access until paid period ends")
-
+    subscription.status = "cancelled"
     db.commit()
-
-
-def handle_subscription_deleted(subscription_data: dict, db: Session):
-    """Handle subscription cancellation."""
-    stripe_subscription_id = subscription_data["id"]
-
-    subscription = db.query(Subscription).filter(
-        Subscription.stripe_subscription_id == stripe_subscription_id
-    ).first()
-
-    if not subscription:
-        return
-
-    subscription.status = "canceled"
-
-    # DON'T downgrade user immediately - user paid for 30 days, so keep Pro access
-    # Plan will automatically downgrade after billing cycle ends
-    # DON'T clear billing_cycle_start_date - needed to calculate when Pro access ends
-    print(f"✅ Subscription {stripe_subscription_id} cancelled - user keeps Pro access until paid period ends")
-
-    db.commit()
-
-
-def get_plan_tier_from_subscription(subscription_data: dict) -> str:
-    """Extract plan tier from Stripe subscription data."""
-    # Get price ID from subscription items
-    items = subscription_data.get("items", {}).get("data", [])
-    if not items:
-        print("⚠️ No items found in subscription data")
-        return "free"
-
-    price_id = items[0].get("price", {}).get("id", "")
-    
-    if not price_id:
-        print("⚠️ No price ID found in subscription items")
-        return "free"
-
-    # Map price IDs to plan tiers (configure these in environment or database)
-    # Note: STRIPE_PRICE_ID_PRO is the price ID for the Pro plan ($15/mo)
-    STRIPE_PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO", "")
-    STRIPE_BASIC_PRICE_ID = os.getenv("STRIPE_BASIC_PRICE_ID", "")
-    STRIPE_ENTERPRISE_PRICE_ID = os.getenv("STRIPE_ENTERPRISE_PRICE_ID", "")
-    
-    PRICE_TO_TIER = {
-        STRIPE_BASIC_PRICE_ID: "basic",
-        STRIPE_PRICE_ID_PRO: "pro",  # Pro plan
-        STRIPE_ENTERPRISE_PRICE_ID: "enterprise",
-    }
-    
-    print(f"🔍 Checking price ID: {price_id}")
-    print(f"🔍 STRIPE_PRICE_ID_PRO: {STRIPE_PRICE_ID_PRO}")
-    print(f"🔍 Price mapping: {PRICE_TO_TIER}")
-    
-    # Check if price ID matches Pro plan
-    if price_id == STRIPE_PRICE_ID_PRO:
-        print(f"✅ Matched Pro plan for price ID: {price_id}")
-        return "pro"
-    
-    tier = PRICE_TO_TIER.get(price_id, "free")
-    if tier != "free":
-        print(f"✅ Matched {tier} plan for price ID: {price_id}")
-    else:
-        print(f"⚠️ No matching plan tier found for price ID: {price_id}. Defaulting to 'free'")
-    
-    return tier

@@ -49,7 +49,7 @@ def run_migrations() -> None:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, stripe as stripe_router, leads, analytics, support
+from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, dodo as dodo_router, leads, analytics, support
 from app.db.session import engine
 from app.db.base import Base
 # Import all models to ensure they're registered with Base
@@ -101,7 +101,7 @@ app.include_router(instagram.router, prefix="/api/instagram", tags=["Instagram"]
 app.include_router(instagram_oauth.router, prefix="/api/instagram", tags=["Instagram OAuth"])
 app.include_router(automation.router, prefix="/automation", tags=["Automation"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
-app.include_router(stripe_router.router, prefix="/api/stripe", tags=["Stripe"])
+app.include_router(dodo_router.router, prefix="/api/dodo", tags=["Dodo Payments"])
 app.include_router(leads.router, prefix="/api", tags=["Leads"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(support.router, prefix="/support", tags=["Support"])

@@ -9,6 +9,10 @@ class Subscription(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
     stripe_subscription_id = Column(String, unique=True, nullable=True)
+    # Dodo Payments identifiers (Merchant of Record)
+    # Kept separate from Stripe to avoid confusion and ease migration.
+    dodo_subscription_id = Column(String, unique=True, nullable=True)
+    dodo_customer_id = Column(String, unique=False, nullable=True)
     status = Column(String, nullable=False, default="inactive")
     billing_cycle_start_date = Column(DateTime, nullable=True)  # For Pro users: 30-day billing cycle start
     created_at = Column(DateTime, default=datetime.utcnow)

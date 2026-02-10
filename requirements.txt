@@ -11,7 +11,7 @@ celery
 redis
 instagrapi
 cryptography
-stripe
+httpx
 email-validator
 python-dotenv==1.0.0
 requests
