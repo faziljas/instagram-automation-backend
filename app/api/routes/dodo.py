@@ -160,9 +160,19 @@ async def create_checkout_session(
         if r.status_code != 200:
             # Surface Dodo's status code directly so it's not always 502.
             print(f"[Dodo] Non-200 response from Dodo: {r.status_code} - {r.text}")
+            # Avoid leaking low-level messages like "Invalid bearer token" directly to users.
+            raw_text = r.text or ""
+            if "Invalid bearer token" in raw_text:
+                user_detail = (
+                    "Dodo API error: Our payment provider rejected the request. "
+                    "Please try again or contact support if this continues."
+                )
+            else:
+                user_detail = f"Dodo API error: {raw_text or r.status_code}"
+
             raise HTTPException(
                 status_code=r.status_code,
-                detail=f"Dodo API error: {r.text or r.status_code}",
+                detail=user_detail,
             )
 
         data = r.json()
