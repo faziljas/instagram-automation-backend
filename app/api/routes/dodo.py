@@ -16,7 +16,11 @@ from app.dependencies.auth import get_current_user_id
 router = APIRouter()
 
 # Prefer the new env var name, but fall back to the old one for safety.
-DODO_API_KEY = os.getenv("DODO_PAYMENTS_API_KEY") or os.getenv("DODO_API_KEY", "")
+# Strip whitespace to avoid invisible copy/paste errors.
+DODO_API_KEY = (
+    os.getenv("DODO_PAYMENTS_API_KEY")
+    or os.getenv("DODO_API_KEY", "")
+).strip()
 DODO_WEBHOOK_SECRET = os.getenv("DODO_WEBHOOK_SECRET", "")
 DODO_PRODUCT_OR_PLAN_ID = os.getenv("DODO_PRODUCT_OR_PLAN_ID", "")  # Pro plan in test mode
 DODO_BASE_URL = os.getenv("DODO_BASE_URL", "").rstrip("/")  # Test base URL, e.g. https://test.dodopayments.com
@@ -38,8 +42,11 @@ async def create_checkout_session(
     """
     # Helpful diagnostics without leaking secrets
     print(
-        f"[Dodo] create_checkout_session: api_key_loaded={bool(DODO_API_KEY)}, "
-        f"base_url={DODO_BASE_URL}, product_set={bool(DODO_PRODUCT_OR_PLAN_ID)}"
+        f"[Dodo] create_checkout_session: "
+        f"api_key_loaded={bool(DODO_API_KEY)}, "
+        f"key_prefix={DODO_API_KEY[:5] if DODO_API_KEY else 'None'}, "
+        f"base_url={DODO_BASE_URL}, "
+        f"product_set={bool(DODO_PRODUCT_OR_PLAN_ID)}"
     )
 
     if not _dodo_configured():
