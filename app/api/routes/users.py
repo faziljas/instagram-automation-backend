@@ -15,7 +15,14 @@ from app.models.message import Message
 from app.models.follower import Follower
 from app.models.instagram_audience import InstagramAudience
 from app.models.instagram_global_tracker import InstagramGlobalTracker
-from app.schemas.auth import UserResponse, DashboardStatsResponse, SubscriptionResponse, UserUpdate, PasswordChange
+from app.models.invoice import Invoice
+from app.schemas.auth import (
+    UserResponse,
+    DashboardStatsResponse,
+    SubscriptionResponse,
+    UserUpdate,
+    PasswordChange,
+)
 from app.utils.auth import hash_password, verify_password
 from app.dependencies.auth import get_current_user_id
 from datetime import datetime, timedelta
@@ -345,6 +352,38 @@ def get_subscription(
             "dms_sent_this_month": dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
         }
     }
+
+
+@router.get("/invoices")
+def list_invoices(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """
+    List invoices for the current user (most recent first).
+
+    This is backed by Dodo `payment.succeeded` / `payment.failed` webhooks
+    persisted into the `invoices` table.
+    """
+    invoices = (
+        db.query(Invoice)
+        .filter(Invoice.user_id == user_id)
+        .order_by(Invoice.paid_at.desc().nullslast(), Invoice.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": inv.id,
+            "amount": inv.amount,
+            "currency": inv.currency,
+            "status": inv.status,
+            "invoice_url": inv.invoice_url,
+            "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
+            "created_at": inv.created_at.isoformat() if inv.created_at else None,
+        }
+        for inv in invoices
+    ]
 
 
 @router.post("/subscription/cancel")

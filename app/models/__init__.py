@@ -11,6 +11,7 @@ from app.models.message import Message
 from app.models.conversation import Conversation
 from app.models.instagram_audience import InstagramAudience
 from app.models.instagram_global_tracker import InstagramGlobalTracker
+from app.models.invoice import Invoice
 
 __all__ = [
     "User",
@@ -26,5 +27,6 @@ __all__ = [
     "Message",
     "Conversation",
     "InstagramAudience",
-    "InstagramGlobalTracker"
+    "InstagramGlobalTracker",
+    "Invoice",
 ]

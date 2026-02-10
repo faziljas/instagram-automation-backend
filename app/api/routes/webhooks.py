@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.user import User
 from app.models.subscription import Subscription
+from app.models.invoice import Invoice
 
 router = APIRouter()
 
@@ -116,8 +117,7 @@ async def dodo_webhook(request: Request, db: Session = Depends(get_db)):
     elif event_type == "subscription.cancelled":
         _handle_subscription_cancelled(db, obj, sub_id)
     elif event_type in ("payment.succeeded", "payment.failed"):
-        # For now we only log these; subscription status is handled by subscription.* events.
-        print(f"[Dodo webhook] payment event: {event_type} for subscription_id={sub_id} customer_id={customer_id}")
+        _handle_payment_event(db, obj, event_type)
 
     return {"status": "success"}
 
@@ -201,4 +201,117 @@ def _handle_subscription_cancelled(
         return
 
     subscription.status = "cancelled"
+    db.commit()
+
+
+def _handle_payment_event(
+    db: Session,
+    obj: dict,
+    event_type: str,
+) -> None:
+    """
+    Handle payment.succeeded / payment.failed to build invoice history.
+
+    Example payload (simplified):
+    {
+      "type": "payment.succeeded",
+      "data": {
+        "customer": {"customer_id": "cus_...", "email": "..."},
+        "invoice_id": "inv_...",
+        "invoice_url": "https://...",
+        "payment_id": "pay_...",
+        "total_amount": 400,
+        "currency": "USD",
+        "status": "succeeded",
+        "created_at": "2025-08-04T05:30:31.152232Z",
+        "subscription_id": null
+      }
+    }
+    """
+    data = obj or {}
+
+    customer = data.get("customer") or {}
+    customer_id = customer.get("customer_id")
+    customer_email = customer.get("email")
+
+    invoice_id = data.get("invoice_id")
+    invoice_url = data.get("invoice_url")
+    payment_id = data.get("payment_id")
+    total_amount = data.get("total_amount")  # already in minor units per Dodo docs
+    currency = (data.get("currency") or "").upper() or "USD"
+    status = (data.get("status") or "succeeded").lower()
+    created_at_str = data.get("created_at")
+
+    # Normalise status based on event type
+    if event_type == "payment.failed":
+        status = "failed"
+
+    if not total_amount or not currency:
+        # Nothing useful to record
+        return
+
+    # Resolve user via subscription.dodo_customer_id or email fallback
+    user = None
+    if customer_id:
+        subscription = (
+            db.query(Subscription)
+            .filter(Subscription.dodo_customer_id == customer_id)
+            .first()
+        )
+        if subscription:
+            user = db.query(User).filter(User.id == subscription.user_id).first()
+
+    if user is None and customer_email:
+        user = db.query(User).filter(User.email == customer_email).first()
+
+    if user is None:
+        print(
+            f"[Dodo webhook] payment event {event_type} could not resolve user "
+            f"(customer_id={customer_id}, email={customer_email})"
+        )
+        return
+
+    # Parse created_at timestamp if present
+    paid_at = None
+    if created_at_str:
+        try:
+            paid_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+        except Exception:
+            paid_at = None
+
+    # Upsert by provider_invoice_id or payment_id
+    invoice = None
+    if invoice_id:
+        invoice = (
+            db.query(Invoice)
+            .filter(Invoice.provider_invoice_id == invoice_id)
+            .first()
+        )
+    if invoice is None and payment_id:
+        invoice = (
+            db.query(Invoice)
+            .filter(Invoice.provider_payment_id == payment_id)
+            .first()
+        )
+
+    if invoice:
+        invoice.amount = int(total_amount)
+        invoice.currency = currency
+        invoice.status = status
+        invoice.invoice_url = invoice_url or invoice.invoice_url
+        invoice.paid_at = paid_at or invoice.paid_at
+    else:
+        invoice = Invoice(
+            user_id=user.id,
+            provider="dodo",
+            provider_invoice_id=invoice_id,
+            provider_payment_id=payment_id,
+            amount=int(total_amount),
+            currency=currency,
+            status=status,
+            invoice_url=invoice_url,
+            paid_at=paid_at,
+        )
+        db.add(invoice)
+
     db.commit()
