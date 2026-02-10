@@ -225,3 +225,26 @@ async def create_portal_session(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Dodo request failed: {str(e)}"
         )
+
+
+@router.get("/test-auth")
+async def test_dodo_auth():
+    """Test if Dodo API key is valid against Dodo test API."""
+    headers = {
+        "Authorization": f"Bearer {DODO_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            # Simple read operation to verify bearer token validity
+            r = await client.get(f"{DODO_BASE_URL}/products", headers=headers)
+            return {
+                "status": r.status_code,
+                "api_key_length": len(DODO_API_KEY),
+                "api_key_prefix": DODO_API_KEY[:10],
+                "base_url": DODO_BASE_URL,
+                "response": r.text[:200] if r.text else None,
+            }
+        except Exception as e:
+            return {"error": str(e)}
