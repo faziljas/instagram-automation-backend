@@ -89,6 +89,20 @@ async def create_checkout_session(
             detail="User already has an active subscription",
         )
 
+    # Try to inspect request body for additional context (e.g. email/name overrides).
+    # This mirrors the debugging pattern suggested in Dodo integration docs.
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    request_email = body.get("email")
+    request_name = body.get("name")
+    effective_email = request_email or user.email
+    print(f"[Dodo] Creating checkout for user: {effective_email}")
+    if body:
+        print(f"[Dodo] Raw request body: {body}")
+
     # Call Dodo API to create a checkout session for the Pro product.
     try:
         print("[Dodo] Building checkout payload.")
@@ -100,8 +114,8 @@ async def create_checkout_session(
         # If you want to collect real billing info, pass it from the frontend and
         # populate the fields below instead of hard-coding them.
         full_name = " ".join(
-            part for part in [user.first_name, user.last_name] if part
-        ).strip() or user.email
+            part for part in [request_name, user.first_name, user.last_name] if part
+        ).strip() or effective_email
 
         payload = {
             "product_cart": [
@@ -118,7 +132,7 @@ async def create_checkout_session(
                 "street": "123 Main St",
             },
             "customer": {
-                "email": user.email,
+                "email": effective_email,
                 "name": full_name,
             },
             "return_url": f"{FRONTEND_URL}/dashboard/subscription",
@@ -127,6 +141,8 @@ async def create_checkout_session(
                 "user_id": str(user_id),
             },
         }
+
+        print(f"[Dodo] Payload sent to Dodo: {payload}")
 
         dodo_url = f"{DODO_BASE_URL}/checkout/sessions"
         print(f"[Dodo] Making request to: {dodo_url}")
@@ -152,6 +168,7 @@ async def create_checkout_session(
         data = r.json()
         checkout_url = data.get("checkout_url") or data.get("url") or data.get("redirect_url")
         session_id = data.get("session_id") or data.get("id") or data.get("checkout_id")
+        print(f"[Dodo] Parsed Dodo response: checkout_url={checkout_url}, session_id={session_id}")
         if not checkout_url or not session_id:
             print(f"[Dodo] Missing checkout_url or session_id in response: {data}")
             raise HTTPException(
