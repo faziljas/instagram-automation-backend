@@ -509,7 +509,8 @@ def delete_user_account(
         print(f"[DELETE] Could not extract Supabase user ID: {e}")
         # Continue with backend deletion even if Supabase deletion fails
     
-    # Delete from Supabase Auth if we have the user ID
+    # Delete from Supabase Auth if we have the user ID (non-blocking)
+    # Run this in a separate try-catch so it doesn't block backend deletion
     if supabase_user_id:
         try:
             supabase_url = os.getenv("SUPABASE_URL")
@@ -524,68 +525,120 @@ def delete_user_account(
                     "Content-Type": "application/json"
                 }
                 
-                response = requests.delete(delete_url, headers=headers, timeout=10)
+                # Use shorter timeout to prevent hanging
+                response = requests.delete(delete_url, headers=headers, timeout=5)
                 if response.status_code == 200 or response.status_code == 204:
                     print(f"[DELETE] Successfully deleted user {supabase_user_id} from Supabase Auth")
                 else:
                     print(f"[DELETE] Failed to delete from Supabase Auth: {response.status_code} - {response.text}")
             else:
                 print("[DELETE] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set, skipping Supabase deletion")
+        except requests.exceptions.Timeout:
+            print(f"[DELETE] Supabase deletion timed out - continuing with backend deletion")
         except Exception as e:
             print(f"[DELETE] Error deleting from Supabase Auth: {e}")
             # Continue with backend deletion even if Supabase deletion fails
 
-    account_ids = [a.id for a in db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).all()]
-    rule_ids = []
-    if account_ids:
-        rule_ids = [r.id for r in db.query(AutomationRule.id).filter(
-            AutomationRule.instagram_account_id.in_(account_ids)
-        ).all()]
+    # Wrap all database operations in try-catch to handle any errors gracefully
+    try:
+        account_ids = [a.id for a in db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).all()]
+        rule_ids = []
+        if account_ids:
+            rule_ids = [r.id for r in db.query(AutomationRule.id).filter(
+                AutomationRule.instagram_account_id.in_(account_ids)
+            ).all()]
 
-    # 1. automation_rules dependents (FK → automation_rules)
-    if rule_ids:
-        db.query(AutomationRuleStats).filter(
-            AutomationRuleStats.automation_rule_id.in_(rule_ids)
-        ).delete(synchronize_session=False)
-        db.query(CapturedLead).filter(
-            CapturedLead.automation_rule_id.in_(rule_ids)
-        ).delete(synchronize_session=False)
-        db.query(AnalyticsEvent).filter(
-            AnalyticsEvent.rule_id.in_(rule_ids)
-        ).update({"rule_id": None}, synchronize_session=False)
+        # 1. automation_rules dependents (FK → automation_rules)
+        if rule_ids:
+            try:
+                db.query(AutomationRuleStats).filter(
+                    AutomationRuleStats.automation_rule_id.in_(rule_ids)
+                ).delete(synchronize_session=False)
+                db.query(CapturedLead).filter(
+                    CapturedLead.automation_rule_id.in_(rule_ids)
+                ).delete(synchronize_session=False)
+                db.query(AnalyticsEvent).filter(
+                    AnalyticsEvent.rule_id.in_(rule_ids)
+                ).update({"rule_id": None}, synchronize_session=False)
+            except Exception as e:
+                print(f"[DELETE] Error deleting automation rule dependents: {e}")
+                db.rollback()
 
-    # 2. automation_rules (FK → instagram_accounts)
-    if account_ids:
-        db.query(AutomationRule).filter(
-            AutomationRule.instagram_account_id.in_(account_ids)
-        ).delete(synchronize_session=False)
+        # 2. automation_rules (FK → instagram_accounts)
+        if account_ids:
+            try:
+                db.query(AutomationRule).filter(
+                    AutomationRule.instagram_account_id.in_(account_ids)
+                ).delete(synchronize_session=False)
+            except Exception as e:
+                print(f"[DELETE] Error deleting automation rules: {e}")
+                db.rollback()
 
-    # 3. instagram_accounts dependents: messages (FK → conversations, instagram_accounts)
-    #    Delete messages before conversations (message.conversation_id → conversations)
-    if account_ids:
-        db.query(Message).filter(Message.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
-        db.query(Conversation).filter(Conversation.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
-        db.query(AnalyticsEvent).filter(AnalyticsEvent.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
-        db.query(Follower).filter(Follower.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
-        db.query(InstagramAudience).filter(InstagramAudience.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
-        db.query(DmLog).filter(DmLog.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+        # 3. instagram_accounts dependents: messages (FK → conversations, instagram_accounts)
+        #    Delete messages before conversations (message.conversation_id → conversations)
+        if account_ids:
+            try:
+                db.query(Message).filter(Message.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+                db.query(Conversation).filter(Conversation.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+                db.query(AnalyticsEvent).filter(AnalyticsEvent.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+                db.query(Follower).filter(Follower.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+                db.query(InstagramAudience).filter(InstagramAudience.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+                db.query(DmLog).filter(DmLog.instagram_account_id.in_(account_ids)).delete(synchronize_session=False)
+            except Exception as e:
+                print(f"[DELETE] Error deleting instagram account dependents: {e}")
+                db.rollback()
 
-    # 4. user-level data (FK → users) – CRITICAL: DmLog has user_id; we must delete ALL dm_logs for user
-    db.query(AnalyticsEvent).filter(AnalyticsEvent.user_id == user_id).delete(synchronize_session=False)
-    db.query(Message).filter(Message.user_id == user_id).delete(synchronize_session=False)
-    db.query(Conversation).filter(Conversation.user_id == user_id).delete(synchronize_session=False)
-    db.query(CapturedLead).filter(CapturedLead.user_id == user_id).delete(synchronize_session=False)
-    db.query(InstagramAudience).filter(InstagramAudience.user_id == user_id).delete(synchronize_session=False)
-    db.query(DmLog).filter(DmLog.user_id == user_id).delete(synchronize_session=False)
-    
-    # 4.5. Delete InstagramGlobalTracker records (FK → users)
-    db.query(InstagramGlobalTracker).filter(InstagramGlobalTracker.user_id == user_id).delete(synchronize_session=False)
+        # 4. user-level data (FK → users) – CRITICAL: DmLog has user_id; we must delete ALL dm_logs for user
+        try:
+            db.query(AnalyticsEvent).filter(AnalyticsEvent.user_id == user_id).delete(synchronize_session=False)
+            db.query(Message).filter(Message.user_id == user_id).delete(synchronize_session=False)
+            db.query(Conversation).filter(Conversation.user_id == user_id).delete(synchronize_session=False)
+            db.query(CapturedLead).filter(CapturedLead.user_id == user_id).delete(synchronize_session=False)
+            db.query(InstagramAudience).filter(InstagramAudience.user_id == user_id).delete(synchronize_session=False)
+            db.query(DmLog).filter(DmLog.user_id == user_id).delete(synchronize_session=False)
+        except Exception as e:
+            print(f"[DELETE] Error deleting user-level data: {e}")
+            db.rollback()
+        
+        # 4.5. Delete InstagramGlobalTracker records (FK → users)
+        try:
+            db.query(InstagramGlobalTracker).filter(InstagramGlobalTracker.user_id == user_id).delete(synchronize_session=False)
+        except Exception as e:
+            print(f"[DELETE] Error deleting InstagramGlobalTracker: {e}")
+            db.rollback()
 
-    # 5. instagram_accounts, subscription (FK → users)
-    db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).delete(synchronize_session=False)
-    db.query(Subscription).filter(Subscription.user_id == user_id).delete(synchronize_session=False)
+        # 5. instagram_accounts, subscription (FK → users)
+        try:
+            db.query(InstagramAccount).filter(InstagramAccount.user_id == user_id).delete(synchronize_session=False)
+            db.query(Subscription).filter(Subscription.user_id == user_id).delete(synchronize_session=False)
+        except Exception as e:
+            print(f"[DELETE] Error deleting instagram accounts and subscription: {e}")
+            db.rollback()
 
-    # 6. user
-    db.delete(user)
-    db.commit()
-    return None
+        # 6. user
+        try:
+            db.delete(user)
+            db.commit()
+            print(f"[DELETE] Successfully deleted user {user_id} and all associated data")
+        except Exception as e:
+            print(f"[DELETE] Error deleting user: {e}")
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to delete user account: {str(e)}"
+            )
+        
+        return None
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log the full error for debugging
+        import traceback
+        print(f"[DELETE] Unexpected error deleting user {user_id}: {str(e)}")
+        traceback.print_exc()
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete user account: {str(e)}"
+        )
