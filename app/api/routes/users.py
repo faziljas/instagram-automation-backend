@@ -588,8 +588,9 @@ def delete_user_account(
                 print(f"[DELETE] Error deleting instagram account dependents: {e}")
                 db.rollback()
 
-        # 4. user-level data (FK → users) – CRITICAL: DmLog has user_id; we must delete ALL dm_logs for user
+        # 4. user-level data (FK → users) – must delete ALL user-related records before deleting user
         try:
+            db.query(Invoice).filter(Invoice.user_id == user_id).delete(synchronize_session=False)
             db.query(AnalyticsEvent).filter(AnalyticsEvent.user_id == user_id).delete(synchronize_session=False)
             db.query(Message).filter(Message.user_id == user_id).delete(synchronize_session=False)
             db.query(Conversation).filter(Conversation.user_id == user_id).delete(synchronize_session=False)
