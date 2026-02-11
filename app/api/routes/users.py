@@ -246,123 +246,153 @@ def get_subscription(
     user_id: int = Depends(get_current_user_id)
 ):
     """Get user's subscription details"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        # Be defensive for brand‑new auth users who might not
-        # have a local User row yet. Treat them as Free tier with
-        # zero usage instead of failing the whole subscription page.
-        return {
-            "plan_tier": "free",
-            "effective_plan_tier": "free",
-            "status": "active",
-            "stripe_subscription_id": None,
-            "cancellation_end_date": None,
-            "usage": {
-                "accounts": 0,
-                "rules": 0,
-                "dms_sent_this_month": 0,
-            },
-        }
-    
-    subscription = db.query(Subscription).filter(
-        Subscription.user_id == user_id
-    ).first()
-    
-    # Get usage stats
-    accounts_count = db.query(InstagramAccount).filter(
-        InstagramAccount.user_id == user_id
-    ).count()
-    
-    # Get user's Instagram accounts
-    all_user_accounts = db.query(InstagramAccount).filter(
-        InstagramAccount.user_id == user_id
-    ).all()
-    
-    # Calculate usage stats - use tracker for rules (total created, even if deleted)
-    # For free tier: Show lifetime total rules created (persists even after deletion)
-    from app.utils.plan_enforcement import get_billing_cycle_start
-    from app.services.instagram_usage_tracker import get_or_create_tracker
-    rules_count = 0
-    dms_display_count = 0
-    
-    # Only calculate usage if user has connected accounts
-    if all_user_accounts:
-        user_account_ids = [acc.id for acc in all_user_accounts]
-        
-        # Rules count: Use tracker's rules_created_count (total rules ever created, even if deleted)
-        # This ensures the count persists even after deletion, matching the limit enforcement
-        max_rules_created = 0
-        for account in all_user_accounts:
-            if account.igsid:
-                try:
-                    tracker = get_or_create_tracker(user_id, account.igsid, db)
-                    if tracker.rules_created_count > max_rules_created:
-                        max_rules_created = tracker.rules_created_count
-                except Exception as e:
-                    # If tracker doesn't exist or error, fall back to counting active rules
-                    print(f"⚠️ Error getting tracker for account {account.igsid}: {str(e)}")
-        
-        rules_count = max_rules_created
-        
-        # DMs count: Count DMs sent by this user in current billing cycle (user-based tracking)
-        cycle_start = get_billing_cycle_start(user_id, db)
-        dms_display_count = db.query(DmLog).filter(
-            DmLog.user_id == user_id,
-            DmLog.sent_at >= cycle_start
-        ).count()
-    
-    # Free plan users should show as "active" (they have an active free plan)
-    # Paid users show their subscription status
-    status_value = "active" if user.plan_tier == "free" else (subscription.status if subscription else "inactive")
-    
-    # Determine effective plan tier for display purposes
-    # If Free user is still within paid Pro cycle period, show Pro limits
-    # Also check if cancelled Pro subscription is still within paid period
-    effective_plan_tier = user.plan_tier
-    cancellation_end_date = None
-    
-    if subscription and subscription.billing_cycle_start_date:
-        from datetime import datetime, timedelta
-        cycle_start = subscription.billing_cycle_start_date
-        now = datetime.utcnow()
-        days_since_start = (now - cycle_start).days
-        
-        # Calculate current cycle end (30 days from cycle start)
-        cycles_passed = days_since_start // 30
-        current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
-        current_cycle_end = current_cycle_start + timedelta(days=30)
-        
-        # If still within paid Pro cycle period
-        if now < current_cycle_end:
-            # If Free tier but within Pro cycle, show Pro limits
-            if user.plan_tier == "free":
-                effective_plan_tier = "pro"
-                print(f"✅ User {user_id} is Free tier but still within Pro cycle period - showing Pro limits")
-            
-            # If cancelled Pro subscription, calculate when access ends
-            if subscription.status == "cancelled" and user.plan_tier in ["pro", "enterprise"]:
-                cancellation_end_date = current_cycle_end
-                print(f"✅ User {user_id} has cancelled Pro subscription - access until {cancellation_end_date}")
-        else:
-            # Pro cycle has ended - if subscription was cancelled, downgrade to Free now
-            if subscription.status == "cancelled" and user.plan_tier in ["pro", "enterprise"]:
-                user.plan_tier = "free"
-                subscription.billing_cycle_start_date = None  # Clear since cycle ended
-                db.commit()
-                print(f"✅ User {user_id} Pro cycle ended - downgraded to Free tier")
-    
-    return {
-        "plan_tier": user.plan_tier,
-        "effective_plan_tier": effective_plan_tier,  # Use this for display limits
-        "status": status_value,
-        "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
-        "cancellation_end_date": cancellation_end_date.isoformat() if cancellation_end_date else None,
+    # Default response for new users or error cases
+    default_response = {
+        "plan_tier": "free",
+        "effective_plan_tier": "free",
+        "status": "active",
+        "stripe_subscription_id": None,
+        "cancellation_end_date": None,
         "usage": {
-            "accounts": accounts_count,
-            "rules": rules_count,  # Total rules created (from tracker, persists even after deletion)
-            "dms_sent_this_month": dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
-        }
+            "accounts": 0,
+            "rules": 0,
+            "dms_sent_this_month": 0,
+        },
     }
+    
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            # Be defensive for brand‑new auth users who might not
+            # have a local User row yet. Treat them as Free tier with
+            # zero usage instead of failing the whole subscription page.
+            return default_response
+        
+        # Ensure plan_tier is set (safety check for edge cases)
+        if not user.plan_tier:
+            user.plan_tier = "free"
+            db.commit()
+        
+        subscription = db.query(Subscription).filter(
+            Subscription.user_id == user_id
+        ).first()
+        
+        # Get usage stats
+        accounts_count = db.query(InstagramAccount).filter(
+            InstagramAccount.user_id == user_id
+        ).count()
+        
+        # Get user's Instagram accounts
+        all_user_accounts = db.query(InstagramAccount).filter(
+            InstagramAccount.user_id == user_id
+        ).all()
+        
+        # Calculate usage stats - use tracker for rules (total created, even if deleted)
+        # For free tier: Show lifetime total rules created (persists even after deletion)
+        from app.utils.plan_enforcement import get_billing_cycle_start
+        from app.services.instagram_usage_tracker import get_or_create_tracker
+        rules_count = 0
+        dms_display_count = 0
+        
+        # Only calculate usage if user has connected accounts
+        if all_user_accounts:
+            user_account_ids = [acc.id for acc in all_user_accounts]
+            
+            # Rules count: Use tracker's rules_created_count (total rules ever created, even if deleted)
+            # This ensures the count persists even after deletion, matching the limit enforcement
+            max_rules_created = 0
+            for account in all_user_accounts:
+                if account.igsid:
+                    try:
+                        tracker = get_or_create_tracker(user_id, account.igsid, db)
+                        if tracker.rules_created_count > max_rules_created:
+                            max_rules_created = tracker.rules_created_count
+                    except Exception as e:
+                        # If tracker doesn't exist or error, fall back to counting active rules
+                        print(f"⚠️ Error getting tracker for account {account.igsid}: {str(e)}")
+            
+            rules_count = max_rules_created
+            
+            # DMs count: Count DMs sent by this user in current billing cycle (user-based tracking)
+            try:
+                cycle_start = get_billing_cycle_start(user_id, db)
+                dms_display_count = db.query(DmLog).filter(
+                    DmLog.user_id == user_id,
+                    DmLog.sent_at >= cycle_start
+                ).count()
+            except Exception as e:
+                # If billing cycle calculation fails, use calendar month as fallback
+                print(f"⚠️ Error calculating billing cycle for user {user_id}: {str(e)}")
+                from datetime import datetime
+                cycle_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                dms_display_count = db.query(DmLog).filter(
+                    DmLog.user_id == user_id,
+                    DmLog.sent_at >= cycle_start
+                ).count()
+        
+        # Free plan users should show as "active" (they have an active free plan)
+        # Paid users show their subscription status
+        status_value = "active" if user.plan_tier == "free" else (subscription.status if subscription else "inactive")
+        
+        # Determine effective plan tier for display purposes
+        # If Free user is still within paid Pro cycle period, show Pro limits
+        # Also check if cancelled Pro subscription is still within paid period
+        effective_plan_tier = user.plan_tier or "free"
+        cancellation_end_date = None
+        
+        if subscription and subscription.billing_cycle_start_date:
+            try:
+                from datetime import datetime, timedelta
+                cycle_start = subscription.billing_cycle_start_date
+                now = datetime.utcnow()
+                days_since_start = (now - cycle_start).days
+                
+                # Calculate current cycle end (30 days from cycle start)
+                cycles_passed = days_since_start // 30
+                current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
+                current_cycle_end = current_cycle_start + timedelta(days=30)
+                
+                # If still within paid Pro cycle period
+                if now < current_cycle_end:
+                    # If Free tier but within Pro cycle, show Pro limits
+                    if user.plan_tier == "free":
+                        effective_plan_tier = "pro"
+                        print(f"✅ User {user_id} is Free tier but still within Pro cycle period - showing Pro limits")
+                    
+                    # If cancelled Pro subscription, calculate when access ends
+                    if subscription.status == "cancelled" and user.plan_tier in ["pro", "enterprise"]:
+                        cancellation_end_date = current_cycle_end
+                        print(f"✅ User {user_id} has cancelled Pro subscription - access until {cancellation_end_date}")
+                else:
+                    # Pro cycle has ended - if subscription was cancelled, downgrade to Free now
+                    if subscription.status == "cancelled" and user.plan_tier in ["pro", "enterprise"]:
+                        user.plan_tier = "free"
+                        subscription.billing_cycle_start_date = None  # Clear since cycle ended
+                        db.commit()
+                        print(f"✅ User {user_id} Pro cycle ended - downgraded to Free tier")
+            except Exception as e:
+                print(f"⚠️ Error processing subscription cycle for user {user_id}: {str(e)}")
+                # Continue with default values if cycle calculation fails
+        
+        return {
+            "plan_tier": user.plan_tier or "free",
+            "effective_plan_tier": effective_plan_tier,  # Use this for display limits
+            "status": status_value,
+            "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
+            "cancellation_end_date": cancellation_end_date.isoformat() if cancellation_end_date else None,
+            "usage": {
+                "accounts": accounts_count,
+                "rules": rules_count,  # Total rules created (from tracker, persists even after deletion)
+                "dms_sent_this_month": dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
+            }
+        }
+    except Exception as e:
+        # Log the error for debugging but return a valid response
+        print(f"❌ Error in get_subscription for user {user_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return default response to prevent frontend error
+        return default_response
 
 
 @router.get("/invoices")
