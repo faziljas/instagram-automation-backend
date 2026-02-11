@@ -95,7 +95,21 @@ def sync_user(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="This email is already registered. Please log in instead."
                 )
-            # Same Supabase user - just return success
+            # Same Supabase user - update name fields only if they're not already set
+            # This preserves user's custom names while allowing initial sync from Google metadata
+            # IMPORTANT: Never overwrite existing names - user may have customized them in settings
+            updated = False
+            if user_data.first_name and user_data.first_name.strip() and not existing_user.first_name:
+                existing_user.first_name = user_data.first_name.strip()
+                updated = True
+            if user_data.last_name and user_data.last_name.strip() and not existing_user.last_name:
+                existing_user.last_name = user_data.last_name.strip()
+                updated = True
+            
+            if updated:
+                db.commit()
+                db.refresh(existing_user)
+            
             return {
                 "message": "User synced successfully",
                 "user_id": existing_user.id
@@ -129,6 +143,8 @@ def sync_user(
             email=user_data.email.lower(),
             hashed_password=placeholder_password,
             supabase_id=user_data.id,  # Store Supabase user ID
+            first_name=user_data.first_name,  # Sync from Supabase metadata if available
+            last_name=user_data.last_name,  # Sync from Supabase metadata if available
             is_verified=True,  # Supabase handles email verification
         )
         

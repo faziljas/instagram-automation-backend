@@ -46,6 +46,8 @@ class PasswordChange(BaseModel):
 class UserSyncRequest(BaseModel):
     id: str  # Supabase user ID
     email: str
+    first_name: Optional[str] = None  # From Supabase user metadata
+    last_name: Optional[str] = None  # From Supabase user metadata
 
 
 class ForgotPasswordRequest(BaseModel):
