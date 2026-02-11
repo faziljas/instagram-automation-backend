@@ -291,7 +291,25 @@ def get_current_user_id(
         except Exception as e:
             db.rollback()
             print(f"[AUTH] Failed to auto-create user: {str(e)}")
-            # If auto-create fails, still raise 404 so user can manually sync
+            import traceback
+            traceback.print_exc()
+            
+            # Check if user was created by another request (race condition)
+            # Retry lookup after rollback
+            user = db.query(User).filter(User.email.ilike(email)).first()
+            if user:
+                print(f"[AUTH] User found after retry (race condition resolved): {user.id}")
+                return user.id
+            
+            # Also check by supabase_id in case email lookup failed
+            user_by_supabase = db.query(User).filter(
+                User.supabase_id == supabase_user_id
+            ).first()
+            if user_by_supabase:
+                print(f"[AUTH] User found by supabase_id after retry: {user_by_supabase.id}")
+                return user_by_supabase.id
+            
+            # If auto-create fails and user still doesn't exist, raise 404
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found in database. Please sync your account first."
