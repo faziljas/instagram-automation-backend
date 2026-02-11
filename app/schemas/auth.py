@@ -39,7 +39,7 @@ class UserUpdate(BaseModel):
 
 
 class PasswordChange(BaseModel):
-    old_password: str
+    old_password: Optional[str] = None  # Optional for Google OAuth users
     new_password: str
 
 

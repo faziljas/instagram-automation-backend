@@ -108,7 +108,13 @@ def change_password(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    """Change user password"""
+    """
+    Change user password.
+    
+    For regular users (email/password): Requires old_password verification.
+    For Google OAuth users (supabase_id set): old_password is optional since they
+    don't have a real password - this allows them to set a password for future use.
+    """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -116,26 +122,40 @@ def change_password(
             detail="User not found"
         )
     
-    # Verify old password
-    if not verify_password(password_data.old_password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is incorrect"
-        )
+    # Check if user signed in via Google OAuth (has supabase_id)
+    is_google_oauth_user = user.supabase_id is not None
     
-    # Check if new password is the same as old password (exact match)
-    if password_data.old_password == password_data.new_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password cannot be the same as current password"
-        )
-    
-    # Check if new password is the same as old password (case-insensitive)
-    if password_data.old_password.lower() == password_data.new_password.lower():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password cannot be the same as current password (case-insensitive check)"
-        )
+    # For regular users (not Google OAuth), old_password is required
+    if not is_google_oauth_user:
+        if not password_data.old_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is required"
+            )
+        
+        # Verify old password for regular users
+        if not verify_password(password_data.old_password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect"
+            )
+        
+        # Check if new password is the same as old password (exact match)
+        if password_data.old_password == password_data.new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password cannot be the same as current password"
+            )
+        
+        # Check if new password is the same as old password (case-insensitive)
+        if password_data.old_password.lower() == password_data.new_password.lower():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password cannot be the same as current password (case-insensitive check)"
+            )
+    # For Google OAuth users, old_password is optional
+    # They're already authenticated via JWT, so we allow them to set a password
+    # This enables them to use password-based login in the future
     
     # Validate new password length
     if len(password_data.new_password) < 6:
