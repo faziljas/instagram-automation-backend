@@ -233,12 +233,15 @@ def get_current_user_id(
     
     CRITICAL: We use the payload from verify_supabase_token directly.
     We do NOT call decode() again.
+    
+    Auto-creates user if missing to prevent 404 errors for new users.
     """
     # Verify token and get payload (already verified, contains all claims)
     payload = verify_supabase_token(authorization)
     
-    # Extract email from verified payload (no decode() call here!)
+    # Extract email and user ID from verified payload (no decode() call here!)
     email = payload.get("email")
+    supabase_user_id = payload.get("sub")
     
     if not email:
         raise HTTPException(
@@ -251,9 +254,47 @@ def get_current_user_id(
     user = db.query(User).filter(User.email.ilike(email)).first()
     
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found in database. Please sync your account first."
+        # Auto-create user if missing (lazy sync) to prevent 404 errors for new users
+        # This handles race conditions where user signs up and immediately navigates to a protected page
+        if not supabase_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token missing user ID claim"
+            )
+        
+        # Check if user exists by supabase_id (shouldn't happen, but safety check)
+        existing_supabase_user = db.query(User).filter(
+            User.supabase_id == supabase_user_id
+        ).first()
+        
+        if existing_supabase_user:
+            # User exists with different email case - return it
+            return existing_supabase_user.id
+        
+        # Create new user automatically
+        from app.utils.auth import hash_password
+        placeholder_password = hash_password(f"supabase_user_{supabase_user_id}")
+        
+        new_user = User(
+            email=email.lower(),
+            hashed_password=placeholder_password,
+            supabase_id=supabase_user_id,
+            is_verified=True,  # Supabase handles email verification
         )
+        
+        try:
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            print(f"[AUTH] Auto-created user {new_user.id} for email {email} (lazy sync)")
+            return new_user.id
+        except Exception as e:
+            db.rollback()
+            print(f"[AUTH] Failed to auto-create user: {str(e)}")
+            # If auto-create fails, still raise 404 so user can manually sync
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found in database. Please sync your account first."
+            )
     
     return user.id
