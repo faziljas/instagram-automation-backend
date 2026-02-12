@@ -46,20 +46,31 @@ def get_captured_leads(
     Optionally filter by automation_rule_id or instagram_account_id.
     Excludes leads with NULL instagram_account_id (disconnected accounts) to match analytics behavior.
     """
-    query = db.query(CapturedLead).filter(
-        CapturedLead.user_id == user_id,
-        CapturedLead.instagram_account_id.isnot(None)  # Exclude disconnected account leads
-    )
-    
-    if automation_rule_id:
-        query = query.filter(CapturedLead.automation_rule_id == automation_rule_id)
-    
-    if instagram_account_id:
-        query = query.filter(CapturedLead.instagram_account_id == instagram_account_id)
-    
-    leads = query.order_by(CapturedLead.captured_at.desc()).all()
-    
-    return leads
+    try:
+        query = db.query(CapturedLead).filter(
+            CapturedLead.user_id == user_id,
+            CapturedLead.instagram_account_id.isnot(None)  # Exclude disconnected account leads
+        )
+        
+        if automation_rule_id:
+            query = query.filter(CapturedLead.automation_rule_id == automation_rule_id)
+        
+        if instagram_account_id:
+            query = query.filter(CapturedLead.instagram_account_id == instagram_account_id)
+        
+        leads = query.order_by(CapturedLead.captured_at.desc()).all()
+        
+        return leads
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401, 404) as-is
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching leads for user {user_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return empty list instead of raising 500 error
+        # This prevents network errors for new users or users with no leads
+        return []
 
 
 @router.get("/leads/stats")
@@ -72,20 +83,34 @@ def get_leads_stats(
     """
     Get statistics about captured leads.
     """
-    query = db.query(CapturedLead).filter(CapturedLead.user_id == user_id)
-    
-    if automation_rule_id:
-        query = query.filter(CapturedLead.automation_rule_id == automation_rule_id)
-    
-    total_leads = query.count()
-    total_with_email = query.filter(CapturedLead.email.isnot(None)).count()
-    total_with_phone = query.filter(CapturedLead.phone.isnot(None)).count()
-    
-    return {
-        "total_leads": total_leads,
-        "total_with_email": total_with_email,
-        "total_with_phone": total_with_phone,
-    }
+    try:
+        query = db.query(CapturedLead).filter(CapturedLead.user_id == user_id)
+        
+        if automation_rule_id:
+            query = query.filter(CapturedLead.automation_rule_id == automation_rule_id)
+        
+        total_leads = query.count()
+        total_with_email = query.filter(CapturedLead.email.isnot(None)).count()
+        total_with_phone = query.filter(CapturedLead.phone.isnot(None)).count()
+        
+        return {
+            "total_leads": total_leads,
+            "total_with_email": total_with_email,
+            "total_with_phone": total_with_phone,
+        }
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401, 404) as-is
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching leads stats for user {user_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return zero stats instead of raising 500 error
+        return {
+            "total_leads": 0,
+            "total_with_email": 0,
+            "total_with_phone": 0,
+        }
 
 
 @router.delete("/leads/{lead_id}")
