@@ -319,12 +319,15 @@ def _handle_payment_event(
         )
 
     if invoice:
+        # Update existing invoice
         invoice.amount = int(total_amount)
         invoice.currency = currency
         invoice.status = status
         invoice.invoice_url = invoice_url or invoice.invoice_url
         invoice.paid_at = paid_at or invoice.paid_at
+        print(f"[Dodo webhook] Updated existing invoice {invoice.id} for user {user.id} (amount: {total_amount/100:.2f} {currency})")
     else:
+        # Create new invoice
         invoice = Invoice(
             user_id=user.id,
             provider="dodo",
@@ -337,5 +340,14 @@ def _handle_payment_event(
             paid_at=paid_at,
         )
         db.add(invoice)
+        print(f"[Dodo webhook] Created new invoice for user {user.id} (amount: {total_amount/100:.2f} {currency}, invoice_id: {invoice_id}, payment_id: {payment_id})")
 
-    db.commit()
+    try:
+        db.commit()
+        print(f"[Dodo webhook] Successfully saved invoice for user {user.id}")
+    except Exception as e:
+        db.rollback()
+        print(f"[Dodo webhook] Error committing invoice for user {user.id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
