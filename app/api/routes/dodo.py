@@ -371,28 +371,32 @@ async def cancel_dodo_subscription(
         )
 
 
-@router.post("/sync-invoices")
-async def sync_invoices_from_dodo(
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
+async def _sync_invoices_from_dodo_api(
+    db: Session,
+    user_id: int,
+    raise_on_error: bool = True,
+) -> dict:
     """
-    Fetch invoices from Dodo Payments API and sync them to the database.
-    This ensures we have all invoices even if webhooks were missed.
+    Internal function to sync invoices from Dodo Payments API.
+    Returns dict with sync results or None if sync failed (when raise_on_error=False).
     """
     if not _dodo_configured():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=_dodo_missing_config_message(),
-        )
+        if raise_on_error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=_dodo_missing_config_message(),
+            )
+        return None
 
     # Get user's subscription to find their Dodo customer_id
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     if not subscription or not subscription.dodo_customer_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active subscription found for this user"
-        )
+        if raise_on_error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No active subscription found for this user"
+            )
+        return None
 
     customer_id = subscription.dodo_customer_id
     headers = {
@@ -414,10 +418,12 @@ async def sync_invoices_from_dodo(
 
         if r.status_code != 200:
             print(f"[Dodo] Failed to fetch payments: {r.status_code} - {r.text}")
-            raise HTTPException(
-                status_code=r.status_code,
-                detail=f"Dodo API error: {r.text or r.status_code}"
-            )
+            if raise_on_error:
+                raise HTTPException(
+                    status_code=r.status_code,
+                    detail=f"Dodo API error: {r.text or r.status_code}"
+                )
+            return None
 
         payments_data = r.json()
         # Dodo API might return payments in different formats - handle both list and object with 'data' key
@@ -504,15 +510,31 @@ async def sync_invoices_from_dodo(
         }
 
     except HTTPException:
-        raise
+        if raise_on_error:
+            raise
+        return None
     except Exception as e:
         print(f"[Dodo] Error syncing invoices: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to sync invoices: {str(e)}"
-        )
+        if raise_on_error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to sync invoices: {str(e)}"
+            )
+        return None
+
+
+@router.post("/sync-invoices")
+async def sync_invoices_from_dodo(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """
+    Fetch invoices from Dodo Payments API and sync them to the database.
+    This ensures we have all invoices even if webhooks were missed.
+    """
+    return await _sync_invoices_from_dodo_api(db, user_id, raise_on_error=True)
 
 
 @router.get("/test-auth")

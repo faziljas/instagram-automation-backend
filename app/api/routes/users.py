@@ -433,10 +433,9 @@ def get_subscription(
 
 
 @router.get("/invoices")
-def list_invoices(
+async def list_invoices(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
-    sync: bool = False,  # Optional query param to trigger sync from Dodo API
 ):
     """
     List invoices for the current user (most recent first).
@@ -444,20 +443,27 @@ def list_invoices(
     This is backed by Dodo `payment.succeeded` / `payment.failed` webhooks
     persisted into the `invoices` table.
 
-    If `sync=true` query parameter is provided, will fetch invoices from Dodo API
-    before returning results (useful if webhooks were missed).
+    Automatically syncs invoices from Dodo API if no invoices exist in the database
+    (useful if webhooks were missed or user just upgraded).
     """
-    # Optionally sync invoices from Dodo API if requested
-    if sync:
+    # Check if user has any invoices
+    invoice_count = db.query(Invoice).filter(Invoice.user_id == user_id).count()
+
+    # If no invoices exist, automatically sync from Dodo API
+    if invoice_count == 0:
         try:
-            from app.api.routes.dodo import sync_invoices_from_dodo
-            # Note: We can't directly call the async function here, so we'll just
-            # return a message suggesting the user call the sync endpoint separately
-            # Or we could make this endpoint async and call it properly
-            pass
+            from app.api.routes.dodo import _sync_invoices_from_dodo_api
+            print(f"[Invoices] No invoices found for user {user_id}, syncing from Dodo API...")
+            sync_result = await _sync_invoices_from_dodo_api(db, user_id, raise_on_error=False)
+            if sync_result:
+                print(f"[Invoices] Synced {sync_result.get('synced', 0)} invoices from Dodo API")
+            else:
+                print(f"[Invoices] Failed to sync invoices from Dodo API (non-critical)")
         except Exception as e:
             print(f"[Invoices] Error syncing from Dodo: {str(e)}")
-            # Continue to return existing invoices even if sync fails
+            import traceback
+            traceback.print_exc()
+            # Continue to return empty list even if sync fails
 
     invoices = (
         db.query(Invoice)
