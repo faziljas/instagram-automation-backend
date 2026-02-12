@@ -79,10 +79,16 @@ def sync_user(
             detail="Invalid authorization token"
         )
     
-    # Check if user exists by email (case-insensitive)
+    # Check if user exists by email (case-insensitive) OR by supabase_id
     existing_user = db.query(User).filter(
         User.email.ilike(user_data.email)
     ).first()
+    
+    # Also check by supabase_id in case email lookup fails (shouldn't happen, but safety check)
+    if not existing_user:
+        existing_user = db.query(User).filter(
+            User.supabase_id == user_data.id
+        ).first()
     
     if existing_user:
         # Check if this is a different Supabase user trying to register with an existing email
@@ -91,6 +97,8 @@ def sync_user(
         if existing_user.supabase_id:
             # User already has a Supabase ID - check if it matches
             if existing_user.supabase_id != user_data.id:
+                # Different Supabase user trying to use same email - this is an error
+                print(f"[AUTH] Sync-user: Email {user_data.email} already registered with different Supabase ID")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="This email is already registered. Please log in instead."
@@ -110,17 +118,30 @@ def sync_user(
                 db.commit()
                 db.refresh(existing_user)
             
+            # Return success even if nothing was updated (idempotent sync)
             return {
                 "message": "User synced successfully",
                 "user_id": existing_user.id
             }
         else:
-            # User exists but doesn't have a Supabase ID (created via old /auth/register endpoint)
-            # This means someone is trying to register with Supabase using an email that's already taken
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This email is already registered. Please log in instead."
-            )
+            # User exists but doesn't have a Supabase ID (created via old /auth/register endpoint or auto-created)
+            # Update the user to add the Supabase ID instead of rejecting
+            # This handles the case where user was auto-created by get_current_user_id before sync-user was called
+            print(f"[AUTH] Sync-user: Adding supabase_id to existing user {existing_user.id} (email: {user_data.email})")
+            existing_user.supabase_id = user_data.id
+            updated = True
+            if user_data.first_name and user_data.first_name.strip() and not existing_user.first_name:
+                existing_user.first_name = user_data.first_name.strip()
+            if user_data.last_name and user_data.last_name.strip() and not existing_user.last_name:
+                existing_user.last_name = user_data.last_name.strip()
+            
+            db.commit()
+            db.refresh(existing_user)
+            
+            return {
+                "message": "User synced successfully",
+                "user_id": existing_user.id
+            }
     else:
         # Check if a user with this Supabase ID already exists (shouldn't happen, but safety check)
         existing_supabase_user = db.query(User).filter(
