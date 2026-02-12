@@ -291,29 +291,71 @@ def get_current_user_id(
             return new_user.id
         except Exception as e:
             db.rollback()
+            error_str = str(e).lower()
             print(f"[AUTH] Failed to auto-create user: {str(e)}")
             import traceback
             traceback.print_exc()
             
-            # Check if user was created by another request (race condition)
-            # Retry lookup after rollback
-            user = db.query(User).filter(User.email.ilike(email)).first()
-            if user:
-                print(f"[AUTH] User found after retry (race condition resolved): {user.id}")
-                return user.id
+            # Check if this is a database integrity error (duplicate key, constraint violation)
+            # This usually means the user was created by another concurrent request
+            is_integrity_error = any(keyword in error_str for keyword in [
+                'unique constraint', 'duplicate key', 'integrity', 
+                'already exists', 'violates unique constraint'
+            ])
             
-            # Also check by supabase_id in case email lookup failed
-            user_by_supabase = db.query(User).filter(
-                User.supabase_id == supabase_user_id
-            ).first()
-            if user_by_supabase:
-                print(f"[AUTH] User found by supabase_id after retry: {user_by_supabase.id}")
-                return user_by_supabase.id
+            if is_integrity_error:
+                print(f"[AUTH] Database integrity error detected - user likely created by concurrent request")
+                # Refresh session to see committed changes from other transactions
+                db.expire_all()
             
-            # If auto-create fails and user still doesn't exist, raise 404
+            # Retry lookup multiple times with session refresh to handle race conditions
+            # and database transaction isolation issues
+            for retry_attempt in range(3):
+                # Refresh session before each retry to see latest committed data
+                if retry_attempt > 0:
+                    db.expire_all()
+                
+                # Try finding by email first
+                user = db.query(User).filter(User.email.ilike(email)).first()
+                if user:
+                    print(f"[AUTH] User found after retry {retry_attempt + 1} (race condition resolved): {user.id}")
+                    return user.id
+                
+                # Also check by supabase_id in case email lookup failed
+                user_by_supabase = db.query(User).filter(
+                    User.supabase_id == supabase_user_id
+                ).first()
+                if user_by_supabase:
+                    print(f"[AUTH] User found by supabase_id after retry {retry_attempt + 1}: {user_by_supabase.id}")
+                    return user_by_supabase.id
+                
+                # If integrity error, the user definitely exists - try one more time with fresh session
+                if is_integrity_error and retry_attempt < 2:
+                    # Force a new database connection to see committed changes
+                    db.commit()  # Ensure we're on a fresh transaction
+                    continue
+            
+            # If we still can't find the user after retries, log it but don't fail
+            # Instead, try to create a minimal user record or return a temporary ID
+            # This prevents 404 errors that break the frontend
+            print(f"[AUTH] WARNING: User not found after retries, but token is valid. This should not happen.")
+            print(f"[AUTH] Email: {email}, Supabase ID: {supabase_user_id}")
+            
+            # As a last resort, try one final lookup with a completely fresh query
+            db.expire_all()
+            final_user = db.query(User).filter(User.email.ilike(email)).first()
+            if final_user:
+                return final_user.id
+            
+            final_user_by_supabase = db.query(User).filter(User.supabase_id == supabase_user_id).first()
+            if final_user_by_supabase:
+                return final_user_by_supabase.id
+            
+            # If all retries fail, this is a critical error - log it but still raise 404
+            # The frontend retry logic should handle this
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found in database. Please sync your account first."
+                detail="User not found in database. Please try refreshing the page."
             )
     
     return user.id
