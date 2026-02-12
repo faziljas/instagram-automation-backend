@@ -224,7 +224,8 @@ def _handle_payment_event(
         "currency": "USD",
         "status": "succeeded",
         "created_at": "2025-08-04T05:30:31.152232Z",
-        "subscription_id": null
+        "subscription_id": null,
+        "metadata": {"user_id": "123"}
       }
     }
     """
@@ -233,6 +234,8 @@ def _handle_payment_event(
     customer = data.get("customer") or {}
     customer_id = customer.get("customer_id")
     customer_email = customer.get("email")
+    metadata = data.get("metadata", {}) or {}
+    user_id_from_metadata = metadata.get("user_id")
 
     invoice_id = data.get("invoice_id")
     invoice_url = data.get("invoice_url")
@@ -248,11 +251,27 @@ def _handle_payment_event(
 
     if not total_amount or not currency:
         # Nothing useful to record
+        print(f"[Dodo webhook] payment event {event_type} missing amount/currency, skipping invoice creation")
         return
 
-    # Resolve user via subscription.dodo_customer_id or email fallback
+    # Resolve user via multiple methods (in priority order):
+    # 1. user_id from metadata (most reliable - set during checkout)
+    # 2. subscription.dodo_customer_id lookup
+    # 3. email lookup (fallback)
     user = None
-    if customer_id:
+    
+    # Method 1: Check metadata.user_id first (set during checkout creation)
+    if user_id_from_metadata:
+        try:
+            user_id_int = int(user_id_from_metadata)
+            user = db.query(User).filter(User.id == user_id_int).first()
+            if user:
+                print(f"[Dodo webhook] payment event {event_type} resolved user via metadata.user_id: {user_id_int}")
+        except (TypeError, ValueError):
+            pass
+
+    # Method 2: Lookup via subscription.dodo_customer_id
+    if user is None and customer_id:
         subscription = (
             db.query(Subscription)
             .filter(Subscription.dodo_customer_id == customer_id)
@@ -260,14 +279,19 @@ def _handle_payment_event(
         )
         if subscription:
             user = db.query(User).filter(User.id == subscription.user_id).first()
+            if user:
+                print(f"[Dodo webhook] payment event {event_type} resolved user via subscription.customer_id: {customer_id}")
 
+    # Method 3: Fallback to email lookup
     if user is None and customer_email:
         user = db.query(User).filter(User.email == customer_email).first()
+        if user:
+            print(f"[Dodo webhook] payment event {event_type} resolved user via email: {customer_email}")
 
     if user is None:
         print(
             f"[Dodo webhook] payment event {event_type} could not resolve user "
-            f"(customer_id={customer_id}, email={customer_email})"
+            f"(metadata.user_id={user_id_from_metadata}, customer_id={customer_id}, email={customer_email})"
         )
         return
 
