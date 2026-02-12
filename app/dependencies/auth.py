@@ -351,11 +351,38 @@ def get_current_user_id(
             if final_user_by_supabase:
                 return final_user_by_supabase.id
             
-            # If all retries fail, this is a critical error - log it but still raise 404
-            # The frontend retry logic should handle this
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found in database. Please try refreshing the page."
-            )
+            # If all retries fail, try one more time to create the user with minimal data
+            # This is a last resort to prevent breaking the frontend
+            try:
+                print(f"[AUTH] Last resort: Attempting to create user one more time...")
+                # Create a new user object
+                final_new_user = User(
+                    email=email.lower(),
+                    hashed_password=placeholder_password,
+                    supabase_id=supabase_user_id,
+                    is_verified=True,
+                    plan_tier="free",
+                )
+                db.add(final_new_user)
+                db.commit()
+                db.refresh(final_new_user)
+                print(f"[AUTH] Successfully created user {final_new_user.id} on last resort attempt")
+                return final_new_user.id
+            except Exception as final_e:
+                db.rollback()
+                print(f"[AUTH] CRITICAL: Final user creation attempt also failed: {str(final_e)}")
+                # Even if creation fails, try one more lookup - maybe it was created by another process
+                db.expire_all()
+                last_check = db.query(User).filter(User.email.ilike(email)).first()
+                if last_check:
+                    print(f"[AUTH] User found on absolute final check: {last_check.id}")
+                    return last_check.id
+                
+                # If we absolutely cannot find or create the user, raise 404
+                # This should be extremely rare and indicates a serious database issue
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found in database. Please try refreshing the page or contact support."
+                )
     
     return user.id
