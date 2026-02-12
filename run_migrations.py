@@ -26,6 +26,7 @@ MIGRATIONS = [
     "add_supabase_id_migration",
     "update_high_volume_limits_migration",
     "update_pro_plan_limits_migration",
+    "add_profile_picture",
 ]
 
 
