@@ -291,29 +291,56 @@ def get_current_user_id(
             return new_user.id
         except Exception as e:
             db.rollback()
+            error_str = str(e).lower()
             print(f"[AUTH] Failed to auto-create user: {str(e)}")
             import traceback
             traceback.print_exc()
             
+            # Handle database integrity errors (duplicate key, constraint violations)
+            # These usually mean the user was created by another request (race condition)
+            is_integrity_error = any(keyword in error_str for keyword in [
+                'unique constraint', 'duplicate key', 'integrity', 
+                'already exists', 'violates unique constraint'
+            ])
+            
+            if is_integrity_error:
+                print(f"[AUTH] Database integrity error detected - likely race condition, retrying lookup...")
+            
             # Check if user was created by another request (race condition)
-            # Retry lookup after rollback
-            user = db.query(User).filter(User.email.ilike(email)).first()
-            if user:
-                print(f"[AUTH] User found after retry (race condition resolved): {user.id}")
-                return user.id
+            # Retry lookup after rollback with progressive delays to allow commit to complete
+            import time
             
-            # Also check by supabase_id in case email lookup failed
-            user_by_supabase = db.query(User).filter(
-                User.supabase_id == supabase_user_id
-            ).first()
-            if user_by_supabase:
-                print(f"[AUTH] User found by supabase_id after retry: {user_by_supabase.id}")
-                return user_by_supabase.id
+            # Try multiple times with increasing delays for race conditions
+            for retry_attempt in range(3):
+                delay = 0.1 * (retry_attempt + 1)  # 0.1s, 0.2s, 0.3s
+                time.sleep(delay)
+                
+                # Try finding by email first
+                user = db.query(User).filter(User.email.ilike(email)).first()
+                if user:
+                    print(f"[AUTH] User found after retry {retry_attempt + 1} (race condition resolved): {user.id}")
+                    return user.id
+                
+                # Also check by supabase_id in case email lookup failed
+                user_by_supabase = db.query(User).filter(
+                    User.supabase_id == supabase_user_id
+                ).first()
+                if user_by_supabase:
+                    print(f"[AUTH] User found by supabase_id after retry {retry_attempt + 1}: {user_by_supabase.id}")
+                    return user_by_supabase.id
+                
+                # If it's an integrity error, try refreshing the session to see committed changes
+                if is_integrity_error and retry_attempt < 2:
+                    db.expire_all()  # Expire all objects to force fresh query
+                    print(f"[AUTH] Integrity error detected, refreshing session and retrying...")
             
-            # If auto-create fails and user still doesn't exist, raise 404
+            # If auto-create fails and user still doesn't exist after retries,
+            # log the error but don't raise 404 - instead raise 500 with detailed message
+            # This allows the frontend to handle it better
+            print(f"[AUTH] CRITICAL: Failed to auto-create user and user not found after retries")
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found in database. Please sync your account first."
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create user account. Please try refreshing the page or contact support. Error: {str(e)[:200]}"
             )
     
     return user.id
