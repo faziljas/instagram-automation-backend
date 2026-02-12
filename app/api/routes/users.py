@@ -398,18 +398,18 @@ def get_subscription(
                 print(f"⚠️ Error processing subscription cycle for user {user_id}: {str(e)}")
                 # Continue with default values if cycle calculation fails
         
-        return {
-            "plan_tier": user.plan_tier or "free",
-            "effective_plan_tier": effective_plan_tier,  # Use this for display limits
-            "status": status_value,
-            "stripe_subscription_id": subscription.stripe_subscription_id if subscription else None,
-            "cancellation_end_date": cancellation_end_date.isoformat() if cancellation_end_date else None,
-            "usage": {
-                "accounts": accounts_count,
-                "rules": rules_count,  # Total rules created (from tracker, persists even after deletion)
-                "dms_sent_this_month": dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
-            }
-        }
+        return SubscriptionResponse(
+            plan_tier=user.plan_tier or "free",
+            effective_plan_tier=effective_plan_tier,  # Use this for display limits
+            status=status_value,
+            stripe_subscription_id=subscription.stripe_subscription_id if subscription else None,
+            cancellation_end_date=cancellation_end_date.isoformat() if cancellation_end_date else None,
+            usage=SubscriptionUsage(
+                accounts=accounts_count,
+                rules=rules_count,  # Total rules created (from tracker, persists even after deletion)
+                dms_sent_this_month=dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
+            )
+        )
     except HTTPException:
         # Re-raise HTTP exceptions (like 401, 404) as-is so frontend can handle them properly
         raise
