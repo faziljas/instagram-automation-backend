@@ -20,6 +20,7 @@ from app.schemas.auth import (
     UserResponse,
     DashboardStatsResponse,
     SubscriptionResponse,
+    SubscriptionUsage,
     UserUpdate,
     PasswordChange,
 )
@@ -269,18 +270,19 @@ def get_subscription(
 ):
     """Get user's subscription details"""
     # Default response for new users or error cases
-    default_response = {
-        "plan_tier": "free",
-        "effective_plan_tier": "free",
-        "status": "active",
-        "stripe_subscription_id": None,
-        "cancellation_end_date": None,
-        "usage": {
-            "accounts": 0,
-            "rules": 0,
-            "dms_sent_this_month": 0,
-        },
-    }
+    # Must match SubscriptionResponse model exactly
+    default_response = SubscriptionResponse(
+        plan_tier="free",
+        effective_plan_tier="free",
+        status="active",
+        stripe_subscription_id=None,
+        cancellation_end_date=None,
+        usage=SubscriptionUsage(
+            accounts=0,
+            rules=0,
+            dms_sent_this_month=0,
+        ),
+    )
     
     try:
         user = db.query(User).filter(User.id == user_id).first()
