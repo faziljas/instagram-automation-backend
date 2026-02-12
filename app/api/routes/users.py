@@ -340,19 +340,29 @@ def get_subscription(
             # DMs count: Count DMs sent by this user in current billing cycle (user-based tracking)
             try:
                 cycle_start = get_billing_cycle_start(user_id, db)
-                dms_display_count = db.query(DmLog).filter(
-                    DmLog.user_id == user_id,
-                    DmLog.sent_at >= cycle_start
-                ).count()
+                try:
+                    dms_display_count = db.query(DmLog).filter(
+                        DmLog.user_id == user_id,
+                        DmLog.sent_at >= cycle_start
+                    ).count()
+                except Exception as db_e:
+                    # If database query fails, log and use 0 as fallback
+                    print(f"⚠️ Error querying DMs for user {user_id}: {str(db_e)}")
+                    dms_display_count = 0
             except Exception as e:
                 # If billing cycle calculation fails, use calendar month as fallback
                 print(f"⚠️ Error calculating billing cycle for user {user_id}: {str(e)}")
-                from datetime import datetime
-                cycle_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                dms_display_count = db.query(DmLog).filter(
-                    DmLog.user_id == user_id,
-                    DmLog.sent_at >= cycle_start
-                ).count()
+                try:
+                    from datetime import datetime
+                    cycle_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                    dms_display_count = db.query(DmLog).filter(
+                        DmLog.user_id == user_id,
+                        DmLog.sent_at >= cycle_start
+                    ).count()
+                except Exception as db_e:
+                    # If fallback query also fails, use 0
+                    print(f"⚠️ Error querying DMs (fallback) for user {user_id}: {str(db_e)}")
+                    dms_display_count = 0
         
         # Free plan users should show as "active" (they have an active free plan)
         # Paid users show their subscription status

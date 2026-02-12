@@ -297,8 +297,21 @@ def get_current_user_id(
     
     Auto-creates user if missing to prevent 404 errors for new users.
     """
-    # Verify token and get payload (already verified, contains all claims)
-    payload = verify_supabase_token(authorization)
+    try:
+        # Verify token and get payload (already verified, contains all claims)
+        payload = verify_supabase_token(authorization)
+    except HTTPException:
+        # Re-raise HTTP exceptions (401, 503, etc.) as-is
+        raise
+    except Exception as e:
+        # Catch any unexpected errors in token verification
+        print(f"[AUTH] Unexpected error in token verification: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication error. Please try again."
+        )
     
     # Extract email and user ID from verified payload (no decode() call here!)
     email = payload.get("email")
@@ -310,9 +323,19 @@ def get_current_user_id(
             detail="Token missing email claim"
         )
     
-    # Look up user by email in backend database
-    from app.models.user import User
-    user = db.query(User).filter(User.email.ilike(email)).first()
+    try:
+        # Look up user by email in backend database
+        from app.models.user import User
+        user = db.query(User).filter(User.email.ilike(email)).first()
+    except Exception as e:
+        # Catch database connection errors or other unexpected DB errors
+        print(f"[AUTH] Database error while querying user: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database temporarily unavailable. Please try again in a moment."
+        )
     
     if not user:
         # Auto-create user if missing (lazy sync) to prevent 404 errors for new users
@@ -324,13 +347,22 @@ def get_current_user_id(
             )
         
         # Check if user exists by supabase_id (shouldn't happen, but safety check)
-        existing_supabase_user = db.query(User).filter(
-            User.supabase_id == supabase_user_id
-        ).first()
-        
-        if existing_supabase_user:
-            # User exists with different email case - return it
-            return existing_supabase_user.id
+        try:
+            existing_supabase_user = db.query(User).filter(
+                User.supabase_id == supabase_user_id
+            ).first()
+            
+            if existing_supabase_user:
+                # User exists with different email case - return it
+                return existing_supabase_user.id
+        except Exception as e:
+            print(f"[AUTH] Database error checking supabase_id: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database temporarily unavailable. Please try again in a moment."
+            )
         
         # Create new user automatically
         from app.utils.auth import hash_password
@@ -372,28 +404,37 @@ def get_current_user_id(
             # Retry lookup multiple times with session refresh to handle race conditions
             # and database transaction isolation issues
             for retry_attempt in range(3):
-                # Refresh session before each retry to see latest committed data
-                if retry_attempt > 0:
-                    db.expire_all()
-                
-                # Try finding by email first
-                user = db.query(User).filter(User.email.ilike(email)).first()
-                if user:
-                    print(f"[AUTH] User found after retry {retry_attempt + 1} (race condition resolved): {user.id}")
-                    return user.id
-                
-                # Also check by supabase_id in case email lookup failed
-                user_by_supabase = db.query(User).filter(
-                    User.supabase_id == supabase_user_id
-                ).first()
-                if user_by_supabase:
-                    print(f"[AUTH] User found by supabase_id after retry {retry_attempt + 1}: {user_by_supabase.id}")
-                    return user_by_supabase.id
-                
-                # If integrity error, the user definitely exists - try one more time with fresh session
-                if is_integrity_error and retry_attempt < 2:
-                    # Force a new database connection to see committed changes
-                    db.commit()  # Ensure we're on a fresh transaction
+                try:
+                    # Refresh session before each retry to see latest committed data
+                    if retry_attempt > 0:
+                        db.expire_all()
+                    
+                    # Try finding by email first
+                    user = db.query(User).filter(User.email.ilike(email)).first()
+                    if user:
+                        print(f"[AUTH] User found after retry {retry_attempt + 1} (race condition resolved): {user.id}")
+                        return user.id
+                    
+                    # Also check by supabase_id in case email lookup failed
+                    user_by_supabase = db.query(User).filter(
+                        User.supabase_id == supabase_user_id
+                    ).first()
+                    if user_by_supabase:
+                        print(f"[AUTH] User found by supabase_id after retry {retry_attempt + 1}: {user_by_supabase.id}")
+                        return user_by_supabase.id
+                    
+                    # If integrity error, the user definitely exists - try one more time with fresh session
+                    if is_integrity_error and retry_attempt < 2:
+                        # Force a new database connection to see committed changes
+                        db.commit()  # Ensure we're on a fresh transaction
+                        continue
+                except Exception as retry_e:
+                    print(f"[AUTH] Database error during retry {retry_attempt + 1}: {str(retry_e)}")
+                    if retry_attempt == 2:  # Last retry failed
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Database temporarily unavailable. Please try again in a moment."
+                        )
                     continue
             
             # If we still can't find the user after retries, log it but don't fail
@@ -402,15 +443,22 @@ def get_current_user_id(
             print(f"[AUTH] WARNING: User not found after retries, but token is valid. This should not happen.")
             print(f"[AUTH] Email: {email}, Supabase ID: {supabase_user_id}")
             
-            # As a last resort, try one final lookup with a completely fresh query
-            db.expire_all()
-            final_user = db.query(User).filter(User.email.ilike(email)).first()
-            if final_user:
-                return final_user.id
-            
-            final_user_by_supabase = db.query(User).filter(User.supabase_id == supabase_user_id).first()
-            if final_user_by_supabase:
-                return final_user_by_supabase.id
+            try:
+                # As a last resort, try one final lookup with a completely fresh query
+                db.expire_all()
+                final_user = db.query(User).filter(User.email.ilike(email)).first()
+                if final_user:
+                    return final_user.id
+                
+                final_user_by_supabase = db.query(User).filter(User.supabase_id == supabase_user_id).first()
+                if final_user_by_supabase:
+                    return final_user_by_supabase.id
+            except Exception as lookup_e:
+                print(f"[AUTH] Database error during final lookup: {str(lookup_e)}")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Database temporarily unavailable. Please try again in a moment."
+                )
             
             # If all retries fail, try one more time to create the user with minimal data
             # This is a last resort to prevent breaking the frontend
@@ -433,17 +481,30 @@ def get_current_user_id(
                 db.rollback()
                 print(f"[AUTH] CRITICAL: Final user creation attempt also failed: {str(final_e)}")
                 # Even if creation fails, try one more lookup - maybe it was created by another process
-                db.expire_all()
-                last_check = db.query(User).filter(User.email.ilike(email)).first()
-                if last_check:
-                    print(f"[AUTH] User found on absolute final check: {last_check.id}")
-                    return last_check.id
+                try:
+                    db.expire_all()
+                    last_check = db.query(User).filter(User.email.ilike(email)).first()
+                    if last_check:
+                        print(f"[AUTH] User found on absolute final check: {last_check.id}")
+                        return last_check.id
+                except Exception:
+                    pass
                 
-                # If we absolutely cannot find or create the user, raise 404
-                # This should be extremely rare and indicates a serious database issue
+                # If we absolutely cannot find or create the user, raise 503 instead of 404
+                # This indicates a database issue rather than user not existing
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found in database. Please try refreshing the page or contact support."
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Unable to access user account. Please try again in a moment or contact support."
                 )
     
-    return user.id
+    # Return user ID - wrap in try-except for safety
+    try:
+        return user.id
+    except Exception as e:
+        print(f"[AUTH] Unexpected error returning user ID: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication error. Please try again."
+        )
