@@ -408,6 +408,9 @@ def get_subscription(
                 "dms_sent_this_month": dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
             }
         }
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401, 404) as-is so frontend can handle them properly
+        raise
     except Exception as e:
         # Log the error for debugging but return a valid response
         print(f"❌ Error in get_subscription for user {user_id}: {str(e)}")

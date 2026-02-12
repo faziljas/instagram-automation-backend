@@ -508,13 +508,26 @@ def get_analytics_dashboard(
             daily_breakdown=daily_breakdown
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401, 404) as-is
+        raise
     except Exception as e:
         print(f"❌ Error fetching analytics: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch analytics: {str(e)}"
+        # Return empty analytics data instead of raising 500 error
+        # This prevents network errors for new users or users with no data
+        return AnalyticsSummary(
+            total_triggers=0,
+            total_dms_sent=0,
+            leads_collected=0,
+            link_clicks=0,
+            follow_button_clicks=0,
+            im_following_clicks=0,
+            profile_visits=0,
+            comment_replies=0,
+            top_posts=[],
+            daily_breakdown=[]
         )
 
 

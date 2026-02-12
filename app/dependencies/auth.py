@@ -280,6 +280,7 @@ def get_current_user_id(
             hashed_password=placeholder_password,
             supabase_id=supabase_user_id,
             is_verified=True,  # Supabase handles email verification
+            plan_tier="free",  # Explicitly set plan_tier for new users
         )
         
         try:
