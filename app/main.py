@@ -61,6 +61,7 @@ app = FastAPI(title="Instagram Automation SaaS")
 async def startup_event():
     """Create tables, then run Alembic migrations. All schema changes live in revision files."""
     import sys
+    from sqlalchemy import text
 
     try:
         print("🔄 Creating database tables...", file=sys.stderr)
@@ -76,6 +77,17 @@ async def startup_event():
         print("✅ Alembic migrations completed", file=sys.stderr)
     except Exception as e:
         print(f"⚠️ Alembic migration warning: {str(e)}", file=sys.stderr)
+    
+    # Temporary fix: Ensure profile_picture_url column exists (backup in case migration didn't run)
+    try:
+        print("🔄 Checking profile_picture_url column...", file=sys.stderr)
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_picture_url VARCHAR"))
+            conn.commit()
+            print("✅ profile_picture_url column verified", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ profile_picture_url column check warning: {str(e)}", file=sys.stderr)
+        # Don't fail startup if this doesn't work - migration should handle it
 
 # Add CORS middleware
 app.add_middleware(
