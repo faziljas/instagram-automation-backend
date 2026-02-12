@@ -3,31 +3,66 @@ from sqlalchemy.orm import Session
 import jwt  # PyJWT
 import os
 import requests
+import time
 from typing import Optional
 from app.db.session import get_db
 
 # Cache for JWKS (Public Keys)
 JWKS_CACHE = None
+JWKS_CACHE_TIMESTAMP = None
+JWKS_CACHE_TTL = 3600  # Cache for 1 hour
 
 
-def get_jwks(supabase_url: str):
+def get_jwks(supabase_url: str, force_refresh: bool = False):
     """
-    Fetch JWKS from Supabase with caching.
+    Fetch JWKS from Supabase with caching and retry logic.
+    Only caches successful fetches - failures are not cached to allow retries.
     """
-    global JWKS_CACHE
-    if JWKS_CACHE:
-        return JWKS_CACHE
-    try:
-        jwks_url = f"{supabase_url}/auth/v1/.well-known/jwks.json"
-        print(f"[AUTH] Fetching JWKS from: {jwks_url}")
-        r = requests.get(jwks_url, timeout=5)
-        r.raise_for_status()
-        JWKS_CACHE = r.json()
-        print(f"[AUTH] Successfully fetched JWKS with {len(JWKS_CACHE.get('keys', []))} keys")
-        return JWKS_CACHE
-    except Exception as e:
-        print(f"[AUTH] Failed to fetch JWKS: {e}")
-        return None
+    global JWKS_CACHE, JWKS_CACHE_TIMESTAMP
+    
+    # Return cached value if it exists and is still valid (not forcing refresh)
+    if JWKS_CACHE and not force_refresh:
+        if JWKS_CACHE_TIMESTAMP:
+            age = time.time() - JWKS_CACHE_TIMESTAMP
+            if age < JWKS_CACHE_TTL:
+                return JWKS_CACHE
+    
+    # Try fetching with retries
+    max_retries = 3
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            jwks_url = f"{supabase_url}/auth/v1/.well-known/jwks.json"
+            print(f"[AUTH] Fetching JWKS from: {jwks_url} (attempt {attempt + 1}/{max_retries})")
+            r = requests.get(jwks_url, timeout=10)  # Increased timeout
+            r.raise_for_status()
+            jwks_data = r.json()
+            
+            # Only cache successful fetches
+            JWKS_CACHE = jwks_data
+            JWKS_CACHE_TIMESTAMP = time.time()
+            print(f"[AUTH] Successfully fetched JWKS with {len(JWKS_CACHE.get('keys', []))} keys")
+            return JWKS_CACHE
+        except requests.exceptions.Timeout as e:
+            last_error = f"Timeout: {str(e)}"
+            print(f"[AUTH] JWKS fetch timeout (attempt {attempt + 1}/{max_retries}): {last_error}")
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait 1 second before retry
+        except requests.exceptions.RequestException as e:
+            last_error = f"Request error: {str(e)}"
+            print(f"[AUTH] JWKS fetch request error (attempt {attempt + 1}/{max_retries}): {last_error}")
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait 1 second before retry
+        except Exception as e:
+            last_error = f"Unexpected error: {str(e)}"
+            print(f"[AUTH] JWKS fetch unexpected error (attempt {attempt + 1}/{max_retries}): {last_error}")
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait 1 second before retry
+    
+    # All retries failed - return None but don't cache it
+    print(f"[AUTH] Failed to fetch JWKS after {max_retries} attempts: {last_error}")
+    return None
 
 
 def verify_supabase_token(authorization: Optional[str] = Header(None)):
@@ -109,11 +144,24 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
                 detail="Server misconfiguration: SUPABASE_URL not set"
             )
         
+        # Try to get JWKS (with retries and caching)
         jwks = get_jwks(supabase_url)
+        
+        # If fresh fetch failed, try using stale cache as fallback
+        if not jwks and JWKS_CACHE:
+            cache_age = time.time() - (JWKS_CACHE_TIMESTAMP or 0) if JWKS_CACHE_TIMESTAMP else float('inf')
+            # Use stale cache if it's less than 24 hours old
+            if cache_age < 86400:  # 24 hours
+                print(f"[AUTH] Using stale JWKS cache (age: {cache_age:.0f}s) as fallback")
+                jwks = JWKS_CACHE
+            else:
+                print(f"[AUTH] JWKS cache is too stale (age: {cache_age:.0f}s), cannot use as fallback")
+        
         if not jwks:
+            print("[AUTH] CRITICAL: Could not fetch JWKS and no valid cache available")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not fetch authentication keys from Supabase"
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service temporarily unavailable. Please try again in a moment."
             )
         
         try:
@@ -177,11 +225,24 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
                 detail="Server misconfiguration: SUPABASE_URL not set"
             )
         
+        # Try to get JWKS (with retries and caching)
         jwks = get_jwks(supabase_url)
+        
+        # If fresh fetch failed, try using stale cache as fallback
+        if not jwks and JWKS_CACHE:
+            cache_age = time.time() - (JWKS_CACHE_TIMESTAMP or 0) if JWKS_CACHE_TIMESTAMP else float('inf')
+            # Use stale cache if it's less than 24 hours old
+            if cache_age < 86400:  # 24 hours
+                print(f"[AUTH] Using stale JWKS cache (age: {cache_age:.0f}s) as fallback")
+                jwks = JWKS_CACHE
+            else:
+                print(f"[AUTH] JWKS cache is too stale (age: {cache_age:.0f}s), cannot use as fallback")
+        
         if not jwks:
+            print("[AUTH] CRITICAL: Could not fetch JWKS and no valid cache available")
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not fetch authentication keys from Supabase"
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service temporarily unavailable. Please try again in a moment."
             )
         
         try:
