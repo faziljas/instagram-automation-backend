@@ -23,6 +23,7 @@ class UserResponse(BaseModel):
     email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    profile_picture_url: Optional[str] = None
     plan_tier: str
     is_active: bool
     is_verified: bool
@@ -36,6 +37,7 @@ class UserUpdate(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: Optional[EmailStr] = None
+    profile_picture_url: Optional[str] = None
 
 
 class PasswordChange(BaseModel):

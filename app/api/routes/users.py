@@ -48,6 +48,7 @@ def get_current_user(
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
+        "profile_picture_url": user.profile_picture_url,
         "plan_tier": user.plan_tier,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
@@ -74,6 +75,8 @@ def update_user_profile(
         user.first_name = user_data.first_name
     if user_data.last_name is not None:
         user.last_name = user_data.last_name
+    if user_data.profile_picture_url is not None:
+        user.profile_picture_url = user_data.profile_picture_url
     if user_data.email is not None:
         # Check if email is already taken by another user
         existing_user = db.query(User).filter(
@@ -95,6 +98,7 @@ def update_user_profile(
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
+        "profile_picture_url": user.profile_picture_url,
         "plan_tier": user.plan_tier,
         "is_active": user.is_active,
         "is_verified": user.is_verified,

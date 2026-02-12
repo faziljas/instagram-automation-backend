@@ -11,6 +11,7 @@ class User(Base):
     supabase_id = Column(String, unique=True, index=True, nullable=True)  # Track Supabase user ID
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
+    profile_picture_url = Column(String, nullable=True)  # Profile picture URL (base64 data URL or external URL)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     plan_tier = Column(String, default="free", nullable=False)
