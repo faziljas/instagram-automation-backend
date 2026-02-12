@@ -371,6 +371,150 @@ async def cancel_dodo_subscription(
         )
 
 
+@router.post("/sync-invoices")
+async def sync_invoices_from_dodo(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """
+    Fetch invoices from Dodo Payments API and sync them to the database.
+    This ensures we have all invoices even if webhooks were missed.
+    """
+    if not _dodo_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_dodo_missing_config_message(),
+        )
+
+    # Get user's subscription to find their Dodo customer_id
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if not subscription or not subscription.dodo_customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active subscription found for this user"
+        )
+
+    customer_id = subscription.dodo_customer_id
+    headers = {
+        "Authorization": f"Bearer {DODO_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        from app.models.invoice import Invoice
+        from datetime import datetime
+
+        # Fetch payments from Dodo API for this customer
+        # Dodo API endpoint: GET /payments?customer_id={customer_id}
+        payments_url = f"{DODO_BASE_URL}/payments"
+        params = {"customer_id": customer_id}
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(payments_url, headers=headers, params=params)
+
+        if r.status_code != 200:
+            print(f"[Dodo] Failed to fetch payments: {r.status_code} - {r.text}")
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=f"Dodo API error: {r.text or r.status_code}"
+            )
+
+        payments_data = r.json()
+        # Dodo API might return payments in different formats - handle both list and object with 'data' key
+        payments = payments_data.get("data", []) if isinstance(payments_data, dict) else payments_data
+        if not isinstance(payments, list):
+            payments = []
+
+        synced_count = 0
+        created_count = 0
+        updated_count = 0
+
+        for payment in payments:
+            try:
+                # Extract payment data (adjust field names based on Dodo's actual API response)
+                payment_id = payment.get("payment_id") or payment.get("id")
+                invoice_id = payment.get("invoice_id")
+                invoice_url = payment.get("invoice_url")
+                total_amount = payment.get("total_amount") or payment.get("amount")
+                currency = (payment.get("currency") or "USD").upper()
+                status = (payment.get("status") or "succeeded").lower()
+                created_at_str = payment.get("created_at") or payment.get("created")
+
+                if not total_amount or not payment_id:
+                    continue
+
+                # Parse timestamp
+                paid_at = None
+                if created_at_str:
+                    try:
+                        paid_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                    except Exception:
+                        paid_at = None
+
+                # Check if invoice already exists
+                invoice = None
+                if invoice_id:
+                    invoice = db.query(Invoice).filter(
+                        Invoice.provider_invoice_id == invoice_id
+                    ).first()
+                if not invoice and payment_id:
+                    invoice = db.query(Invoice).filter(
+                        Invoice.provider_payment_id == payment_id
+                    ).first()
+
+                if invoice:
+                    # Update existing invoice
+                    invoice.amount = int(total_amount)
+                    invoice.currency = currency
+                    invoice.status = status
+                    invoice.invoice_url = invoice_url or invoice.invoice_url
+                    invoice.paid_at = paid_at or invoice.paid_at
+                    updated_count += 1
+                else:
+                    # Create new invoice
+                    invoice = Invoice(
+                        user_id=user_id,
+                        provider="dodo",
+                        provider_invoice_id=invoice_id,
+                        provider_payment_id=payment_id,
+                        amount=int(total_amount),
+                        currency=currency,
+                        status=status,
+                        invoice_url=invoice_url,
+                        paid_at=paid_at,
+                    )
+                    db.add(invoice)
+                    created_count += 1
+
+                synced_count += 1
+
+            except Exception as e:
+                print(f"[Dodo] Error syncing payment {payment.get('payment_id', 'unknown')}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+
+        db.commit()
+
+        return {
+            "message": "Invoices synced successfully",
+            "synced": synced_count,
+            "created": created_count,
+            "updated": updated_count,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Dodo] Error syncing invoices: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync invoices: {str(e)}"
+        )
+
+
 @router.get("/test-auth")
 async def test_dodo_auth():
     """Test if Dodo API key is valid against Dodo test API."""

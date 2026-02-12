@@ -365,7 +365,22 @@ def get_current_user_id(
             )
         
         # Create new user automatically
+        # Use a more robust approach: double-check user doesn't exist before creating
+        # This handles race conditions where another request created the user between checks
         from app.utils.auth import hash_password
+        import time
+        
+        # Double-check user doesn't exist (race condition protection)
+        user = db.query(User).filter(User.email.ilike(email)).first()
+        if user:
+            print(f"[AUTH] User found on second check (race condition): {user.id}")
+            return user.id
+        
+        user_by_supabase = db.query(User).filter(User.supabase_id == supabase_user_id).first()
+        if user_by_supabase:
+            print(f"[AUTH] User found by supabase_id on second check: {user_by_supabase.id}")
+            return user_by_supabase.id
+        
         placeholder_password = hash_password(f"supabase_user_{supabase_user_id}")
         
         new_user = User(
@@ -400,42 +415,60 @@ def get_current_user_id(
                 print(f"[AUTH] Database integrity error detected - user likely created by concurrent request")
                 # Refresh session to see committed changes from other transactions
                 db.expire_all()
-            
-            # Retry lookup multiple times with session refresh to handle race conditions
-            # and database transaction isolation issues
-            for retry_attempt in range(3):
-                try:
-                    # Refresh session before each retry to see latest committed data
-                    if retry_attempt > 0:
-                        db.expire_all()
-                    
-                    # Try finding by email first
+                
+                # Wait a tiny bit to allow the other transaction to commit
+                time.sleep(0.1)
+                
+                # Try finding the user - it should exist now
+                user = db.query(User).filter(User.email.ilike(email)).first()
+                if user:
+                    print(f"[AUTH] User found after integrity error (race condition resolved): {user.id}")
+                    return user.id
+                
+                # Also check by supabase_id
+                user_by_supabase = db.query(User).filter(
+                    User.supabase_id == supabase_user_id
+                ).first()
+                if user_by_supabase:
+                    print(f"[AUTH] User found by supabase_id after integrity error: {user_by_supabase.id}")
+                    return user_by_supabase.id
+                
+                # If integrity error but user still not found, retry a few more times with delays
+                for retry_attempt in range(2):
+                    time.sleep(0.2 * (retry_attempt + 1))  # Increasing delay
+                    db.expire_all()
                     user = db.query(User).filter(User.email.ilike(email)).first()
                     if user:
-                        print(f"[AUTH] User found after retry {retry_attempt + 1} (race condition resolved): {user.id}")
+                        print(f"[AUTH] User found after retry {retry_attempt + 1}: {user.id}")
                         return user.id
-                    
-                    # Also check by supabase_id in case email lookup failed
                     user_by_supabase = db.query(User).filter(
                         User.supabase_id == supabase_user_id
                     ).first()
                     if user_by_supabase:
                         print(f"[AUTH] User found by supabase_id after retry {retry_attempt + 1}: {user_by_supabase.id}")
                         return user_by_supabase.id
-                    
-                    # If integrity error, the user definitely exists - try one more time with fresh session
-                    if is_integrity_error and retry_attempt < 2:
-                        # Force a new database connection to see committed changes
-                        db.commit()  # Ensure we're on a fresh transaction
-                        continue
-                except Exception as retry_e:
-                    print(f"[AUTH] Database error during retry {retry_attempt + 1}: {str(retry_e)}")
-                    if retry_attempt == 2:  # Last retry failed
-                        raise HTTPException(
-                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="Database temporarily unavailable. Please try again in a moment."
-                        )
-                    continue
+                
+                # If we still can't find the user after integrity error, something is wrong
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="User account exists but could not be retrieved. Please try refreshing the page."
+                )
+            
+            # For non-integrity errors, retry lookup a few times
+            for retry_attempt in range(2):
+                db.expire_all()
+                user = db.query(User).filter(User.email.ilike(email)).first()
+                if user:
+                    print(f"[AUTH] User found after retry {retry_attempt + 1}: {user.id}")
+                    return user.id
+                user_by_supabase = db.query(User).filter(
+                    User.supabase_id == supabase_user_id
+                ).first()
+                if user_by_supabase:
+                    print(f"[AUTH] User found by supabase_id after retry {retry_attempt + 1}: {user_by_supabase.id}")
+                    return user_by_supabase.id
+                if retry_attempt < 1:
+                    time.sleep(0.1)
             
             # If we still can't find the user after retries, log it but don't fail
             # Instead, try to create a minimal user record or return a temporary ID

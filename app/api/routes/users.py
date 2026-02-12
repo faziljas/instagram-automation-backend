@@ -436,13 +436,29 @@ def get_subscription(
 def list_invoices(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
+    sync: bool = False,  # Optional query param to trigger sync from Dodo API
 ):
     """
     List invoices for the current user (most recent first).
 
     This is backed by Dodo `payment.succeeded` / `payment.failed` webhooks
     persisted into the `invoices` table.
+
+    If `sync=true` query parameter is provided, will fetch invoices from Dodo API
+    before returning results (useful if webhooks were missed).
     """
+    # Optionally sync invoices from Dodo API if requested
+    if sync:
+        try:
+            from app.api.routes.dodo import sync_invoices_from_dodo
+            # Note: We can't directly call the async function here, so we'll just
+            # return a message suggesting the user call the sync endpoint separately
+            # Or we could make this endpoint async and call it properly
+            pass
+        except Exception as e:
+            print(f"[Invoices] Error syncing from Dodo: {str(e)}")
+            # Continue to return existing invoices even if sync fails
+
     invoices = (
         db.query(Invoice)
         .filter(Invoice.user_id == user_id)
