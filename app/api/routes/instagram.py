@@ -6868,6 +6868,7 @@ async def get_conversation_stats(
         unread = 0
         
         # Get messages sent (by our bot)
+        # Counts all messages where is_from_bot = True (messages sent by the account)
         messages_sent = db.query(Message).filter(
             Message.instagram_account_id == account_id,
             Message.user_id == user_id,
@@ -6875,11 +6876,23 @@ async def get_conversation_stats(
         ).count()
         
         # Get messages received (from users)
-        messages_received = db.query(Message).filter(
+        # Counts all messages where is_from_bot = False (incoming messages from other users)
+        # This includes all messages received from Instagram users, excluding self-messages
+        # Note: Self-messages are already filtered out at the conversation level, so messages
+        # from self-conversations shouldn't exist, but we add an extra safety check here
+        messages_received_query = db.query(Message).filter(
             Message.instagram_account_id == account_id,
             Message.user_id == user_id,
             Message.is_from_bot == False
-        ).count()
+        )
+        
+        # Additional safety: Filter out self-messages if account_igsid is available
+        if account_igsid:
+            messages_received_query = messages_received_query.filter(
+                Message.sender_id != account_igsid
+            )
+        
+        messages_received = messages_received_query.count()
         
         return {
             "success": True,
