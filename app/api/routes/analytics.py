@@ -409,9 +409,9 @@ def get_analytics_dashboard(
                 media_url_val = f"https://picsum.photos/400/400?seed={seed}"
                 permalink_val = "https://www.instagram.com/"
             
-            # SKIP Instagram API calls for now - return data without media URLs
-            # This can be done async later if needed
-            elif False:  # Disabled for performance
+            # Fetch media URLs from Instagram API (enabled for top posts)
+            # Limited to top 5 posts to maintain performance
+            else:
                 try:
                     acc = db.query(InstagramAccount).filter(
                         InstagramAccount.id == instagram_account_id,
@@ -424,10 +424,11 @@ def get_analytics_dashboard(
                         elif acc.encrypted_credentials:
                             tok = decrypt_credentials(acc.encrypted_credentials)
                         if tok:
+                            # Use shorter timeout (5s) to prevent blocking
                             r = requests.get(
                                 f"https://graph.instagram.com/v21.0/{media_id}",
                                 params={"fields": "media_type,media_url,thumbnail_url,permalink,media_product_type", "access_token": tok},
-                                timeout=10
+                                timeout=5
                             )
                             if r.status_code == 200:
                                 d = r.json()
@@ -467,9 +468,14 @@ def get_analytics_dashboard(
                                     else:
                                         print(f"⚠️ Media {media_id} deleted from Instagram; excluding from Top Performing, auto-disabling rules.")
                                 else:
-                                    print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_message}")
+                                    # Log but don't fail - continue without media URL
+                                    print(f"⚠️ Failed to fetch media info for {media_id}: {r.status_code} - {error_message[:100]}")
+                except requests.Timeout:
+                    # Timeout - continue without media URL (non-blocking)
+                    print(f"⚠️ Timeout fetching media info for {media_id} - continuing without preview")
                 except Exception as e:
-                    print(f"⚠️ Exception fetching media info for {media_id}: {str(e)}")
+                    # Any other error - continue without media URL (non-blocking)
+                    print(f"⚠️ Exception fetching media info for {media_id}: {str(e)[:100]}")
             
             # If media was deleted/expired: disable rules and exclude from Top Performing.
             # Note: Analytics counts (totals) still include events from deleted/expired media.
