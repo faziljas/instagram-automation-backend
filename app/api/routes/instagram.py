@@ -358,6 +358,17 @@ async def process_instagram_message(event: dict, db: Session):
                 ).first()
             
             if not existing_message:
+                # PREVENT SELF-CONVERSATIONS: Skip if sender matches account's own IGSID or username
+                account_igsid = account.igsid
+                account_username = account.username
+                
+                if account_igsid and sender_id == account_igsid:
+                    log_print(f"🚫 Ignoring self-message (sender_id={sender_id} matches account IGSID)")
+                    return
+                if account_username and sender_username == account_username:
+                    log_print(f"🚫 Ignoring self-message (sender_username={sender_username} matches account username)")
+                    return
+                
                 # Get or create conversation for this participant
                 conversation = get_or_create_conversation(
                     db=db,
@@ -5232,50 +5243,59 @@ async def execute_automation_action(
                     # Get recipient username if available (sender_id might be username or ID)
                     recipient_username = str(sender_id)  # Default to sender_id
                     
-                    # Try to get username from previous messages
-                    previous_msg = db.query(Message).filter(
-                        Message.instagram_account_id == account_id,
-                        Message.user_id == user_id,
-                        Message.sender_id == str(sender_id)
-                    ).first()
-                    if previous_msg and previous_msg.sender_username:
-                        recipient_username = previous_msg.sender_username
+                    # PREVENT SELF-CONVERSATIONS: Skip if sender_id matches account's own IGSID
+                    account_igsid = account.igsid or str(account_id)
+                    conversation = None
                     
-                    # Get or create conversation for this participant
-                    conversation = get_or_create_conversation(
-                        db=db,
-                        user_id=user_id,
-                        account_id=account_id,
-                        participant_id=str(sender_id),
-                        participant_name=recipient_username
-                    )
-                    
-                    # Update conversation's last_message and updated_at
-                    message_preview = message_template or "[Media]"
-                    if len(message_preview) > 100:
-                        message_preview = message_preview[:100] + "..."
-                    conversation.last_message = message_preview
-                    conversation.updated_at = datetime.utcnow()
-                    
-                    # Use timestamp captured before API call (matches Instagram's timing exactly)
-                    sent_message = Message(
-                        user_id=user_id,
-                        instagram_account_id=account_id,
-                        conversation_id=conversation.id,
-                        sender_id=str(account.igsid or account_id),  # Our account ID
-                        sender_username=username,  # Our account username
-                        recipient_id=str(sender_id),  # Recipient ID
-                        recipient_username=recipient_username,  # Will be updated when we have it
-                        message_text=message_template,
-                        content=message_template,  # Also set content field
-                        message_id=None,  # Instagram doesn't return message ID immediately
-                        platform_message_id=None,  # Will be updated if we get it later
-                        is_from_bot=True,  # This is an outgoing message
-                        has_attachments=False,
-                        attachments=None,
-                        created_at=message_timestamp  # Explicit timestamp for precise timing
-                    )
-                    db.add(sent_message)
+                    if str(sender_id) == account_igsid:
+                        print(f"🚫 Skipping self-conversation creation (sender_id={sender_id} matches account IGSID)")
+                        # Skip conversation creation and message storage for self-messages
+                        # Don't store messages sent to self
+                    else:
+                        # Try to get username from previous messages
+                        previous_msg = db.query(Message).filter(
+                            Message.instagram_account_id == account_id,
+                            Message.user_id == user_id,
+                            Message.sender_id == str(sender_id)
+                        ).first()
+                        if previous_msg and previous_msg.sender_username:
+                            recipient_username = previous_msg.sender_username
+                        
+                        # Get or create conversation for this participant
+                        conversation = get_or_create_conversation(
+                            db=db,
+                            user_id=user_id,
+                            account_id=account_id,
+                            participant_id=str(sender_id),
+                            participant_name=recipient_username
+                        )
+                        
+                        # Update conversation's last_message and updated_at
+                        message_preview = message_template or "[Media]"
+                        if len(message_preview) > 100:
+                            message_preview = message_preview[:100] + "..."
+                        conversation.last_message = message_preview
+                        conversation.updated_at = datetime.utcnow()
+                        
+                        # Use timestamp captured before API call (matches Instagram's timing exactly)
+                        sent_message = Message(
+                            user_id=user_id,
+                            instagram_account_id=account_id,
+                            conversation_id=conversation.id,
+                            sender_id=str(account.igsid or account_id),  # Our account ID
+                            sender_username=username,  # Our account username
+                            recipient_id=str(sender_id),  # Recipient ID
+                            recipient_username=recipient_username,  # Will be updated when we have it
+                            message_text=message_template,
+                            content=message_template,  # Also set content field
+                            message_id=None,  # Instagram doesn't return message ID immediately
+                            platform_message_id=None,  # Will be updated if we get it later
+                            is_from_bot=True,  # This is an outgoing message
+                            has_attachments=False,
+                            attachments=None,
+                            created_at=message_timestamp  # Explicit timestamp for precise timing
+                        )
+                        db.add(sent_message)
                 except Exception as msg_err:
                     print(f"⚠️ Failed to store message in Message table: {str(msg_err)}")
                     # Don't fail if Message storage fails
@@ -5872,7 +5892,19 @@ async def get_instagram_conversations(
         # Format conversations from Conversation model
         if len(conversations_list) > 0:
             formatted_conversations = []
+            # Get account's IGSID and username for self-conversation filtering
+            account_igsid = account.igsid
+            account_username = account.username
+            
             for conv in conversations_list:
+                # FILTER OUT SELF-CONVERSATIONS: Skip if participant matches account's own IGSID or username
+                if account_igsid and conv.participant_id == account_igsid:
+                    print(f"🚫 Filtering out self-conversation (participant_id={conv.participant_id} matches account IGSID)")
+                    continue
+                if account_username and conv.participant_name == account_username:
+                    print(f"🚫 Filtering out self-conversation (participant_name={conv.participant_name} matches account username)")
+                    continue
+                
                 # Get message count for this conversation
                 message_count = db.query(func.count(Message.id)).filter(
                     Message.conversation_id == conv.id
@@ -5987,8 +6019,13 @@ async def get_instagram_conversations(
                     dm_conv.message_count
                 ))
         
-        # Merge conversations (use username as key)
+        # Merge conversations (use participant_id as key to prevent duplicates)
+        # This fixes Issue 2: Duplicate recipients displaying same Instagram user twice
         conversations_map = {}
+        
+        # Get account's IGSID and username for self-conversation filtering
+        account_igsid = account.igsid
+        account_username = account.username
         
         # Process incoming conversations
         for conv in incoming_convs:
@@ -5996,15 +6033,29 @@ async def get_instagram_conversations(
             # If sender_id is None, skip this conversation
             if not conv.sender_id:
                 continue
+            
+            # FILTER OUT SELF-CONVERSATIONS: Skip if sender_id matches account's IGSID
+            sender_id_str = str(conv.sender_id)
+            if account_igsid and sender_id_str == account_igsid:
+                print(f"🚫 Filtering out self-conversation (sender_id={sender_id_str} matches account IGSID)")
+                continue
+            if account_username and conv.sender_username == account_username:
+                print(f"🚫 Filtering out self-conversation (sender_username={conv.sender_username} matches account username)")
+                continue
+            
             username = conv.sender_username or str(conv.sender_id)
             # Use "Unknown" if we only have a numeric ID (not a real username)
             display_username = username if (username and not username.isdigit()) else "Unknown"
-                
+            
+            # Use participant_id (sender_id) as the key to prevent duplicates
+            # This ensures each unique participant appears only once
+            participant_key = sender_id_str
+            
             # Check if we should add/update this conversation
-            should_add = username not in conversations_map
+            should_add = participant_key not in conversations_map
             if not should_add and conv.last_message_at:
                 # Compare dates properly
-                existing_time_str = conversations_map[username].get('last_message_at')
+                existing_time_str = conversations_map[participant_key].get('last_message_at')
                 if existing_time_str:
                     try:
                         from dateutil import parser
@@ -6022,7 +6073,7 @@ async def get_instagram_conversations(
                     Message.instagram_account_id == account_id,
                     Message.user_id == user_id,
                     Message.is_from_bot == False,
-                    Message.sender_id == str(conv.sender_id)
+                    Message.sender_id == sender_id_str
                 ).order_by(Message.created_at.desc()).first()
                 
                 # Get message content (handle both message_text and content fields)
@@ -6030,10 +6081,10 @@ async def get_instagram_conversations(
                 if latest_msg:
                     message_content = latest_msg.get_content() if hasattr(latest_msg, 'get_content') else (latest_msg.message_text or latest_msg.content or "")
                 
-                conversations_map[username] = {
-                    "id": username,
+                conversations_map[participant_key] = {
+                    "id": participant_key,  # Use participant_id as id
                     "username": display_username,
-                    "user_id": str(conv.sender_id),
+                    "user_id": sender_id_str,
                     "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
                     "last_message": message_content,
                     "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else False,
@@ -6046,18 +6097,33 @@ async def get_instagram_conversations(
             # If recipient_id is None, skip this conversation
             if not conv.recipient_id:
                 continue
+            
+            recipient_id_str = str(conv.recipient_id)
+            
+            # FILTER OUT SELF-CONVERSATIONS: Skip if recipient_id matches account's IGSID
+            if account_igsid and recipient_id_str == account_igsid:
+                print(f"🚫 Filtering out self-conversation (recipient_id={recipient_id_str} matches account IGSID)")
+                continue
+            if account_username and conv.recipient_username == account_username:
+                print(f"🚫 Filtering out self-conversation (recipient_username={conv.recipient_username} matches account username)")
+                continue
+            
             username = conv.recipient_username or str(conv.recipient_id)
             # Use "Unknown" if we only have a numeric ID (not a real username)
             display_username = username if (username and not username.isdigit()) else "Unknown"
+            
+            # Use participant_id (recipient_id) as the key to prevent duplicates
+            # This ensures each unique participant appears only once
+            participant_key = recipient_id_str
                 
-            if username not in conversations_map:
+            if participant_key not in conversations_map:
                 # Get latest message for this conversation (try Message table first, then DmLog)
                 # Use recipient_id for matching (more reliable than username which may be None)
                 latest_msg = db.query(Message).filter(
                     Message.instagram_account_id == account_id,
                     Message.user_id == user_id,
                     Message.is_from_bot == True,
-                    Message.recipient_id == str(conv.recipient_id)
+                    Message.recipient_id == recipient_id_str
                 ).order_by(Message.created_at.desc()).first()
                 
                 # If not in Message table, check DmLog
@@ -6080,10 +6146,10 @@ async def get_instagram_conversations(
                 if latest_msg:
                     message_content = latest_msg.get_content() if hasattr(latest_msg, 'get_content') else (latest_msg.message_text or latest_msg.content or "")
                 
-                conversations_map[username] = {
-                    "id": username,
+                conversations_map[participant_key] = {
+                    "id": participant_key,  # Use participant_id as id
                     "username": display_username,
-                    "user_id": str(conv.recipient_id),
+                    "user_id": recipient_id_str,
                     "last_message_at": conv.last_message_at.isoformat() if conv.last_message_at else None,
                     "last_message": message_content,
                     "last_message_is_from_bot": latest_msg.is_from_bot if latest_msg else True,
@@ -6092,10 +6158,19 @@ async def get_instagram_conversations(
         
         # Convert to list and get latest message for each
         conversations = []
-        for username, conv_data in conversations_map.items():
+        for participant_key, conv_data in conversations_map.items():
             # Get the absolute latest message for this conversation (sent or received)
             # Use user_id for matching (more reliable than username which may be None or numeric)
             user_id_str = conv_data.get('user_id', '')
+            
+            # FILTER OUT SELF-CONVERSATIONS: Double-check participant doesn't match account
+            if account_igsid and user_id_str == account_igsid:
+                print(f"🚫 Filtering out self-conversation in final check (user_id={user_id_str} matches account IGSID)")
+                continue
+            if account_username and conv_data.get('username') == account_username:
+                print(f"🚫 Filtering out self-conversation in final check (username={conv_data.get('username')} matches account username)")
+                continue
+            
             latest_msg = db.query(Message).filter(
                 Message.instagram_account_id == account_id,
                 Message.user_id == user_id,
@@ -6107,6 +6182,7 @@ async def get_instagram_conversations(
             
             # If not in Message table, check DmLog as fallback
             if not latest_msg:
+                username = conv_data.get('username', '')
                 latest_dm = db.query(DmLog).filter(
                 DmLog.instagram_account_id == account_id,
                     DmLog.recipient_username == username
@@ -6423,6 +6499,21 @@ async def send_conversation_message(
             )
         
         recipient_id = conversation.participant_id
+        
+        # PREVENT SENDING MESSAGES TO SELF: Check if recipient matches account's own IGSID or username
+        account_igsid = account.igsid
+        account_username = account.username
+        
+        if account_igsid and recipient_id == account_igsid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot send messages to yourself"
+            )
+        if account_username and conversation.participant_name == account_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot send messages to yourself"
+            )
         
         # Get access token and page_id
         access_token = None
