@@ -332,6 +332,16 @@ def get_current_user_id(
             user = db.query(User).filter(User.supabase_id == supabase_user_id).first()
         if not user:
             user = db.query(User).filter(User.email.ilike(email)).first()
+            # Heal: if we found by email but this row has no supabase_id, set it so future requests find by sub (fixes "two behaviours").
+            if user and supabase_user_id and not user.supabase_id:
+                try:
+                    user.supabase_id = supabase_user_id
+                    db.commit()
+                    db.refresh(user)
+                    print(f"[AUTH] Set supabase_id on user {user.id} (email lookup) so token resolves consistently")
+                except Exception as heal_e:
+                    db.rollback()
+                    print(f"[AUTH] Could not set supabase_id on user: {heal_e}")
     except Exception as e:
         # Catch database connection errors or other unexpected DB errors
         print(f"[AUTH] Database error while querying user: {str(e)}")
