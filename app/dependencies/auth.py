@@ -1,5 +1,6 @@
 from fastapi import Header, HTTPException, status, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 import jwt  # PyJWT
 import os
 import requests
@@ -284,6 +285,41 @@ def verify_supabase_token(authorization: Optional[str] = Header(None)):
     )
 
 
+def _resolve_user_after_integrity_error(db: Session, email: Optional[str], supabase_user_id: Optional[str], exc: Exception) -> int:
+    """
+    After a duplicate-key error on user create, find the existing user (created by another request)
+    and return their id. Heals supabase_id if missing. Raises HTTPException if user still not found.
+    """
+    from app.models.user import User
+    # Allow other worker's commit to be visible
+    db.expire_all()
+    time.sleep(0.25)
+    for attempt in range(3):
+        db.expire_all()
+        if attempt > 0:
+            time.sleep(0.2 * (attempt + 1))
+        user = db.query(User).filter(User.email.ilike(email)).first() if email else None
+        if not user and supabase_user_id:
+            user = db.query(User).filter(User.supabase_id == supabase_user_id).first()
+        if user:
+            if supabase_user_id and not user.supabase_id:
+                try:
+                    user.supabase_id = supabase_user_id
+                    db.commit()
+                    db.refresh(user)
+                    print(f"[AUTH] Set supabase_id on user {user.id} after integrity error (heal)")
+                except Exception as heal_e:
+                    db.rollback()
+                    print(f"[AUTH] Heal supabase_id failed: {heal_e}")
+            print(f"[AUTH] User found after integrity error (race resolved): {user.id}")
+            return user.id
+    print(f"[AUTH] User not found after integrity error (email={email}, sub={supabase_user_id})")
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="User account exists but could not be retrieved. Please try refreshing the page."
+    )
+
+
 def get_current_user_id(
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
@@ -412,6 +448,11 @@ def get_current_user_id(
             db.refresh(new_user)
             print(f"[AUTH] Auto-created user {new_user.id} for email {email} (lazy sync)")
             return new_user.id
+        except IntegrityError as e:
+            # Duplicate key (email or supabase_id): another request created the user - find and return them
+            db.rollback()
+            print(f"[AUTH] IntegrityError on user create (duplicate key) - resolving existing user: {e.orig}")
+            return _resolve_user_after_integrity_error(db, email, supabase_user_id, e)
         except Exception as e:
             db.rollback()
             error_str = str(e).lower()
@@ -419,55 +460,14 @@ def get_current_user_id(
             import traceback
             traceback.print_exc()
             
-            # Check if this is a database integrity error (duplicate key, constraint violation)
-            # This usually means the user was created by another concurrent request
+            # Check if this is a database integrity error (duplicate key) not caught as IntegrityError
             is_integrity_error = any(keyword in error_str for keyword in [
-                'unique constraint', 'duplicate key', 'integrity', 
+                'unique constraint', 'duplicate key', 'integrity',
                 'already exists', 'violates unique constraint'
             ])
             
             if is_integrity_error:
-                print(f"[AUTH] Database integrity error detected - user likely created by concurrent request")
-                # Refresh session to see committed changes from other transactions
-                db.expire_all()
-                
-                # Wait a tiny bit to allow the other transaction to commit
-                time.sleep(0.1)
-                
-                # Try finding the user - it should exist now
-                user = db.query(User).filter(User.email.ilike(email)).first()
-                if user:
-                    print(f"[AUTH] User found after integrity error (race condition resolved): {user.id}")
-                    return user.id
-                
-                # Also check by supabase_id
-                user_by_supabase = db.query(User).filter(
-                    User.supabase_id == supabase_user_id
-                ).first()
-                if user_by_supabase:
-                    print(f"[AUTH] User found by supabase_id after integrity error: {user_by_supabase.id}")
-                    return user_by_supabase.id
-                
-                # If integrity error but user still not found, retry a few more times with delays
-                for retry_attempt in range(2):
-                    time.sleep(0.2 * (retry_attempt + 1))  # Increasing delay
-                    db.expire_all()
-                    user = db.query(User).filter(User.email.ilike(email)).first()
-                    if user:
-                        print(f"[AUTH] User found after retry {retry_attempt + 1}: {user.id}")
-                        return user.id
-                    user_by_supabase = db.query(User).filter(
-                        User.supabase_id == supabase_user_id
-                    ).first()
-                    if user_by_supabase:
-                        print(f"[AUTH] User found by supabase_id after retry {retry_attempt + 1}: {user_by_supabase.id}")
-                        return user_by_supabase.id
-                
-                # If we still can't find the user after integrity error, something is wrong
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="User account exists but could not be retrieved. Please try refreshing the page."
-                )
+                return _resolve_user_after_integrity_error(db, email, supabase_user_id, e)
             
             # For non-integrity errors, retry lookup a few times
             for retry_attempt in range(2):
