@@ -5825,13 +5825,25 @@ async def get_instagram_conversations(
         # Query conversations - use subquery to get distinct conversations
         # After migration, unique constraint prevents duplicates, but this handles existing duplicates
         # Get the most recent conversation for each participant
+        # FILTER OUT SELF-CONVERSATIONS at database level
         from sqlalchemy import func
-        subquery = db.query(
-            func.max(Conversation.id).label('max_id')
-        ).filter(
+        account_igsid = account.igsid
+        account_username = account.username
+        
+        subquery_filter = [
             Conversation.instagram_account_id == account_id,
             Conversation.user_id == user_id
-        ).group_by(
+        ]
+        
+        # Filter out self-conversations at subquery level
+        if account_igsid:
+            subquery_filter.append(Conversation.participant_id != account_igsid)
+        if account_username:
+            subquery_filter.append(Conversation.participant_name != account_username)
+        
+        subquery = db.query(
+            func.max(Conversation.id).label('max_id')
+        ).filter(*subquery_filter).group_by(
             Conversation.user_id,
             Conversation.instagram_account_id,
             Conversation.participant_id
@@ -5843,7 +5855,15 @@ async def get_instagram_conversations(
         ).filter(
             Conversation.instagram_account_id == account_id,
             Conversation.user_id == user_id
-        ).order_by(Conversation.updated_at.desc()).offset(offset).limit(limit + 1)
+        )
+        
+        # Additional filtering at main query level for safety
+        if account_igsid:
+            conversations_query = conversations_query.filter(Conversation.participant_id != account_igsid)
+        if account_username:
+            conversations_query = conversations_query.filter(Conversation.participant_name != account_username)
+        
+        conversations_query = conversations_query.order_by(Conversation.updated_at.desc()).offset(offset).limit(limit + 1)
         
         raw_list = conversations_query.all()
         has_more = len(raw_list) > limit
@@ -5898,11 +5918,21 @@ async def get_instagram_conversations(
             
             for conv in conversations_list:
                 # FILTER OUT SELF-CONVERSATIONS: Skip if participant matches account's own IGSID or username
-                if account_igsid and conv.participant_id == account_igsid:
-                    print(f"🚫 Filtering out self-conversation (participant_id={conv.participant_id} matches account IGSID)")
+                # Convert to strings for comparison to handle type mismatches
+                participant_id_str = str(conv.participant_id) if conv.participant_id else None
+                account_igsid_str = str(account_igsid) if account_igsid else None
+                
+                if account_igsid_str and participant_id_str and participant_id_str == account_igsid_str:
+                    print(f"🚫 Filtering out self-conversation (participant_id={participant_id_str} matches account IGSID={account_igsid_str})")
                     continue
                 if account_username and conv.participant_name == account_username:
                     print(f"🚫 Filtering out self-conversation (participant_name={conv.participant_name} matches account username)")
+                    continue
+                
+                # Additional check: If participant_name is "Unknown" or None, verify participant_id doesn't match account
+                # This catches self-conversations that might be labeled as "Unknown"
+                if (not conv.participant_name or conv.participant_name == "Unknown") and account_igsid_str and participant_id_str == account_igsid_str:
+                    print(f"🚫 Filtering out self-conversation labeled as 'Unknown' (participant_id={participant_id_str} matches account IGSID)")
                     continue
                 
                 # Get message count for this conversation
@@ -6164,11 +6194,20 @@ async def get_instagram_conversations(
             user_id_str = conv_data.get('user_id', '')
             
             # FILTER OUT SELF-CONVERSATIONS: Double-check participant doesn't match account
-            if account_igsid and user_id_str == account_igsid:
-                print(f"🚫 Filtering out self-conversation in final check (user_id={user_id_str} matches account IGSID)")
+            # Convert to strings for comparison to handle type mismatches
+            account_igsid_str = str(account_igsid) if account_igsid else None
+            
+            if account_igsid_str and user_id_str == account_igsid_str:
+                print(f"🚫 Filtering out self-conversation in final check (user_id={user_id_str} matches account IGSID={account_igsid_str})")
                 continue
             if account_username and conv_data.get('username') == account_username:
                 print(f"🚫 Filtering out self-conversation in final check (username={conv_data.get('username')} matches account username)")
+                continue
+            
+            # Additional check: If username is "Unknown", verify user_id doesn't match account
+            # This catches self-conversations that might be labeled as "Unknown"
+            if conv_data.get('username') == "Unknown" and account_igsid_str and user_id_str == account_igsid_str:
+                print(f"🚫 Filtering out self-conversation labeled as 'Unknown' in final check (user_id={user_id_str} matches account IGSID)")
                 continue
             
             latest_msg = db.query(Message).filter(
@@ -6752,12 +6791,21 @@ async def get_conversation_stats(
         # Get total conversations from Conversation table using same deduplication logic as list endpoint
         # Use subquery to get distinct conversations by participant_id (same as list endpoint)
         # This ensures count matches what's displayed in the list
-        subquery = db.query(
-            func.max(Conversation.id).label('max_id')
-        ).filter(
+        # FILTER OUT SELF-CONVERSATIONS at database level (including "Unknown" self-conversations)
+        subquery_filter = [
             Conversation.instagram_account_id == account_id,
             Conversation.user_id == user_id
-        ).group_by(
+        ]
+        
+        # Filter out self-conversations at subquery level
+        if account_igsid:
+            subquery_filter.append(Conversation.participant_id != account_igsid)
+        if account_username:
+            subquery_filter.append(Conversation.participant_name != account_username)
+        
+        subquery = db.query(
+            func.max(Conversation.id).label('max_id')
+        ).filter(*subquery_filter).group_by(
             Conversation.user_id,
             Conversation.instagram_account_id,
             Conversation.participant_id
@@ -6772,7 +6820,7 @@ async def get_conversation_stats(
             Conversation.user_id == user_id
         )
         
-        # Filter out self-conversations
+        # Additional filtering at main query level for safety
         if account_igsid:
             conversations_query = conversations_query.filter(
                 Conversation.participant_id != account_igsid
