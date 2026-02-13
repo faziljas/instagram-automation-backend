@@ -324,9 +324,14 @@ def get_current_user_id(
         )
     
     try:
-        # Look up user by email in backend database
+        # Look up user: prefer supabase_id (sub) so same token always maps to same user.
+        # Email-first lookup can return different users if duplicates exist or casing differs.
         from app.models.user import User
-        user = db.query(User).filter(User.email.ilike(email)).first()
+        user = None
+        if supabase_user_id:
+            user = db.query(User).filter(User.supabase_id == supabase_user_id).first()
+        if not user:
+            user = db.query(User).filter(User.email.ilike(email)).first()
     except Exception as e:
         # Catch database connection errors or other unexpected DB errors
         print(f"[AUTH] Database error while querying user: {str(e)}")
