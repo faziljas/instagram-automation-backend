@@ -1049,6 +1049,28 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"⭐ [VIP USER] User {sender_id} is already converted (email + following). Skipping growth steps for all automations.")
             log_print(f"   Email: {conversion_status['has_email']}, Following: {conversion_status['is_following']}")
         
+        # CRITICAL FIX: Check if sender is the bot itself BEFORE processing pre-DM actions
+        # This prevents bot's own messages from breaking the flow when waiting for user responses
+        # Bot messages should be ignored and flow should continue waiting for actual user responses
+        sender_matches_bot = False
+        sender_id_str = None
+        if account and sender_id:
+            sender_id_str = str(sender_id) if sender_id else None
+            account_igsid_str = str(account.igsid) if account.igsid else None
+            account_page_id_str = str(account.page_id) if account.page_id else None
+            
+            if sender_id_str and account_igsid_str and sender_id_str == account_igsid_str:
+                sender_matches_bot = True
+            elif sender_id_str and account_page_id_str and sender_id_str == account_page_id_str:
+                sender_matches_bot = True
+        
+        if sender_matches_bot:
+            log_print(f"🚫 [PRE-DM FIX] Ignoring bot's own message - sender_id={sender_id_str} matches bot account")
+            log_print(f"   Bot IGSID: {account.igsid}, Bot Page ID: {account.page_id}")
+            log_print(f"   This prevents bot messages from breaking pre-DM flow when waiting for user responses")
+            log_print(f"   Flow will continue waiting for actual user messages (follow confirmation or email)")
+            return
+        
         # Check if this might be a response to a pre-DM follow/email request (now that account is found)
         # Do NOT skip for story_id. Instead we filter inside the loop so Stories use the same
         # state machine (done, email, retry) as Post/Reels, without Post/Reel rules blocking.

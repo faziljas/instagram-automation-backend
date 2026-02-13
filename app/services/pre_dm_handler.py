@@ -235,13 +235,15 @@ async def process_pre_dm_actions(
     db: Session,
     incoming_message: str = None,
     trigger_type: str = None,
-    skip_growth_steps: bool = False  # If True, skip follow/email steps and go directly to primary DM
+    skip_growth_steps: bool = False,  # If True, skip follow/email steps and go directly to primary DM
+    is_bot_message: bool = False  # If True, ignore this message (bot's own message)
 ) -> Dict[str, Any]:
     """
     Process pre-DM actions (Ask to Follow, Ask for Email) before sending primary DM.
     
     Args:
         skip_growth_steps: If True, skip follow/email steps and go directly to primary DM (VIP users)
+        is_bot_message: If True, ignore this message and continue waiting for user response
     
     Returns:
         {
@@ -251,6 +253,29 @@ async def process_pre_dm_actions(
             "email": str | None
         }
     """
+    # CRITICAL FIX: Ignore bot's own messages when waiting for user responses
+    # This prevents bot messages from breaking the flow
+    if is_bot_message and incoming_message:
+        state = get_pre_dm_state(sender_id, rule.id)
+        # If we're waiting for follow confirmation, continue waiting
+        if state.get("follow_request_sent") and not state.get("follow_confirmed"):
+            print(f"🚫 [PRE-DM FIX] Ignoring bot message while waiting for follow confirmation: '{incoming_message}'")
+            return {
+                "action": "wait_for_follow",
+                "message": None,
+                "should_save_email": False,
+                "email": None
+            }
+        # If we're waiting for email, continue waiting
+        if state.get("email_request_sent") and not state.get("email_received"):
+            print(f"🚫 [PRE-DM FIX] Ignoring bot message while waiting for email: '{incoming_message}'")
+            return {
+                "action": "wait_for_email",
+                "message": None,
+                "should_save_email": False,
+                "email": None
+            }
+    
     # VIP USER CHECK: If skip_growth_steps is True, skip directly to primary DM
     # This MUST be checked FIRST before any other processing
     if skip_growth_steps:
