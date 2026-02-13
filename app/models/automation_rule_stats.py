@@ -11,7 +11,7 @@ class AutomationRuleStats(Base):
     __tablename__ = "automation_rule_stats"
     
     id = Column(Integer, primary_key=True, index=True)
-    automation_rule_id = Column(Integer, ForeignKey("automation_rules.id"), unique=True, nullable=False, index=True)
+    automation_rule_id = Column(Integer, ForeignKey("automation_rules.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
     
     # Counters
     total_triggers = Column(Integer, default=0)

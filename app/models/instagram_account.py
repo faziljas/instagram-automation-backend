@@ -7,7 +7,7 @@ class InstagramAccount(Base):
     __tablename__ = "instagram_accounts"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     username = Column(String, nullable=False)
     encrypted_credentials = Column(String, nullable=False)  # Legacy field, kept for backward compatibility
     encrypted_page_token = Column(String, nullable=True)  # Encrypted Facebook Page Access Token

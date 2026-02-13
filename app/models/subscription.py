@@ -7,7 +7,7 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
     stripe_subscription_id = Column(String, unique=True, nullable=True)
     # Dodo Payments identifiers (Merchant of Record)
     # Kept separate from Stripe to avoid confusion and ease migration.

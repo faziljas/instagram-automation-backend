@@ -23,9 +23,9 @@ class AnalyticsEvent(Base):
     __tablename__ = "analytics_events"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)  # Business owner
-    rule_id = Column(Integer, ForeignKey("automation_rules.id"), nullable=True, index=True)  # Automation rule
-    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)  # Business owner
+    rule_id = Column(Integer, ForeignKey("automation_rules.id", ondelete="CASCADE"), nullable=True, index=True)  # Automation rule
+    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id", ondelete="CASCADE"), nullable=True, index=True)
     media_id = Column(String, nullable=True, index=True)  # Instagram Post/Reel ID
     media_preview_url = Column(String, nullable=True)  # Cached media preview URL (thumbnail_url or media_url) - preserved even if media is deleted
     

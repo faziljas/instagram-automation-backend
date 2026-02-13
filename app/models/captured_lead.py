@@ -10,9 +10,9 @@ class CapturedLead(Base):
     __tablename__ = "captured_leads"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id"), nullable=True, index=True)  # Made nullable to preserve leads on disconnect/reconnect
-    automation_rule_id = Column(Integer, ForeignKey("automation_rules.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id", ondelete="CASCADE"), nullable=True, index=True)  # Made nullable to preserve leads on disconnect/reconnect
+    automation_rule_id = Column(Integer, ForeignKey("automation_rules.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # Lead data fields
     email = Column(String, nullable=True)

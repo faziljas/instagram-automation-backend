@@ -10,7 +10,7 @@ from app.db.base import Base
 class InstagramGlobalTracker(Base):
     __tablename__ = "instagram_global_trackers"
     
-    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True, nullable=False, index=True)  # User ID
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, nullable=False, index=True)  # User ID
     instagram_id = Column(String, primary_key=True, nullable=False, index=True)  # IGSID (Instagram Business Account ID)
     dms_sent_count = Column(Integer, default=0, nullable=False)
     rules_created_count = Column(Integer, default=0, nullable=False)

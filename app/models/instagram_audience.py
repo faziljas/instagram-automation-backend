@@ -14,8 +14,8 @@ class InstagramAudience(Base):
     
     # User identification
     sender_id = Column(String, nullable=False, index=True, unique=True)  # Instagram user ID
-    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)  # Our app's user ID
+    instagram_account_id = Column(Integer, ForeignKey("instagram_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)  # Our app's user ID
     
     # Global conversion state
     email = Column(String, nullable=True, index=True)  # Email if provided
