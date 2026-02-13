@@ -54,6 +54,16 @@ def _set_cached_response(cache_key: str, data: dict):
     _analytics_cache[cache_key] = (data, datetime.utcnow())
 
 
+def invalidate_analytics_cache_for_user(user_id: int):
+    """Remove cached analytics for a user so dashboard shows fresh data after new events."""
+    common_days = (7, 14, 30, 90)
+    for days in common_days:
+        for rule_id in (None,):
+            for ig_id in (None,):
+                cache_key = _get_cache_key(user_id, days, rule_id, ig_id)
+                _analytics_cache.pop(cache_key, None)
+
+
 def _is_instagram_profile_url(url: str) -> bool:
     u = (url or "").lower()
     if "instagram.com" not in u:
@@ -523,23 +533,33 @@ def get_analytics_dashboard(
         ).group_by(func.date(AnalyticsEvent.created_at))
         
         # Create a map of date -> stats
+        # Use ISO date string (YYYY-MM-DD) as key for reliable lookup across DB drivers
+        # (PostgreSQL returns date, SQLite may return string; normalizing avoids mismatch)
+        def _date_key(d):
+            if d is None:
+                return None
+            if hasattr(d, "isoformat"):
+                return d.isoformat()
+            return str(d)[:10]  # "YYYY-MM-DD"
+
         daily_stats_map = {}
         for row in daily_breakdown_query.all():
-            date_key = row.date
-            daily_stats_map[date_key] = {
-                "triggers": int(row.triggers or 0),
-                "dms_sent": int(row.dms_sent or 0),
-                "leads": int(row.leads or 0)
-            }
-        
+            key = _date_key(row.date)
+            if key:
+                daily_stats_map[key] = {
+                    "triggers": int(row.triggers or 0),
+                    "dms_sent": int(row.dms_sent or 0),
+                    "leads": int(row.leads or 0)
+                }
+
         # Build daily breakdown array (fill in missing days with zeros)
         daily_breakdown = []
         for i in range(days):
             day_start = start_date + timedelta(days=i)
-            day_end = day_start + timedelta(days=1)
             day_date = day_start.date()
-            
-            stats = daily_stats_map.get(day_date, {"triggers": 0, "dms_sent": 0, "leads": 0})
+            lookup_key = _date_key(day_date)
+
+            stats = daily_stats_map.get(lookup_key, {"triggers": 0, "dms_sent": 0, "leads": 0})
             day_triggers = stats["triggers"]
             day_dms = stats["dms_sent"]
             day_leads = stats["leads"]

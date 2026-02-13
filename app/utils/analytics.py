@@ -160,6 +160,13 @@ def log_analytics_event_sync(
         db.commit()
         db.refresh(event)
         
+        # Invalidate analytics cache so dashboard/analytics pages show fresh data
+        try:
+            from app.api.routes.analytics import invalidate_analytics_cache_for_user
+            invalidate_analytics_cache_for_user(user_id)
+        except ImportError:
+            pass
+        
         return event.id
     except Exception as e:
         db.rollback()
