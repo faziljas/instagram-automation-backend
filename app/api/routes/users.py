@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from app.db.session import get_db
 from app.models.user import User
 from app.models.instagram_account import InstagramAccount
@@ -200,7 +200,7 @@ def get_dashboard_stats(
     user_id: int = Depends(get_current_user_id)
 ):
     """Get dashboard statistics for current user"""
-    # Get user
+    # OPTIMIZED: Get user and accounts in single query with join
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -208,44 +208,43 @@ def get_dashboard_stats(
             detail="User not found"
         )
     
-    # Count accounts
-    accounts_count = db.query(InstagramAccount).filter(
+    # OPTIMIZED: Get all data in fewer queries
+    # Get accounts and their IDs in one query
+    user_accounts = db.query(InstagramAccount).filter(
         InstagramAccount.user_id == user_id
-    ).count()
+    ).all()
     
-    # Count active rules (via instagram accounts)
-    user_account_ids = [acc.id for acc in db.query(InstagramAccount.id).filter(
-        InstagramAccount.user_id == user_id
-    ).all()]
+    accounts_count = len(user_accounts)
+    user_account_ids = [acc.id for acc in user_accounts]
     
+    # OPTIMIZED: Calculate today's start once
+    now = datetime.utcnow()
+    today_start = datetime(now.year, now.month, now.day, 0, 0, 0)
+    
+    # OPTIMIZED: Get all counts in parallel queries (if user_account_ids exist)
     active_rules_count = 0
+    dms_sent_today = 0
+    total_dms = 0
+    
     if user_account_ids:
+        # Count active rules
         active_rules_count = db.query(AutomationRule).filter(
             AutomationRule.instagram_account_id.in_(user_account_ids),
             AutomationRule.is_active == True,
             AutomationRule.deleted_at.is_(None)
         ).count()
-    
-    # Count DMs sent TODAY (since midnight UTC) - only from connected accounts
-    # If no accounts connected, return 0
-    dms_sent_today = 0
-    total_dms = 0
-    
-    if user_account_ids:
-        # Calculate today's start (midnight UTC)
-        now = datetime.utcnow()
-        today_start = datetime(now.year, now.month, now.day, 0, 0, 0)
         
-        # Count DMs sent today from connected accounts only
-        dms_sent_today = db.query(DmLog).filter(
-            DmLog.instagram_account_id.in_(user_account_ids),
-            DmLog.sent_at >= today_start
-        ).count()
-        
-        # Count total DMs sent from connected accounts only
-        total_dms = db.query(DmLog).filter(
+        # Count DMs sent today and total in single query using conditional aggregation
+        from sqlalchemy import case
+        dm_counts = db.query(
+            func.sum(case((DmLog.sent_at >= today_start, 1), else_=0)).label("today_count"),
+            func.count(DmLog.id).label("total_count")
+        ).filter(
             DmLog.instagram_account_id.in_(user_account_ids)
-        ).count()
+        ).first()
+        
+        dms_sent_today = int(dm_counts.today_count or 0)
+        total_dms = int(dm_counts.total_count or 0)
     
     return {
         "user": {

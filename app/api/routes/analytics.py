@@ -16,8 +16,42 @@ from app.dependencies.auth import get_current_user_id
 from app.utils.encryption import decrypt_credentials
 from pydantic import BaseModel
 import requests
+import hashlib
+import json
 
 router = APIRouter()
+
+# In-memory cache for analytics responses (5 minute TTL)
+_analytics_cache = {}
+_cache_ttl_seconds = 300  # 5 minutes
+
+def _get_cache_key(user_id: int, days: int, rule_id: Optional[int], instagram_account_id: Optional[int]) -> str:
+    """Generate cache key for analytics query"""
+    key_data = f"{user_id}_{days}_{rule_id}_{instagram_account_id}"
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+def _get_cached_response(cache_key: str):
+    """Get cached response if not expired"""
+    if cache_key in _analytics_cache:
+        cached_data, timestamp = _analytics_cache[cache_key]
+        age = (datetime.utcnow() - timestamp).total_seconds()
+        if age < _cache_ttl_seconds:
+            return cached_data
+        else:
+            # Remove expired cache
+            del _analytics_cache[cache_key]
+    return None
+
+def _set_cached_response(cache_key: str, data: dict):
+    """Cache response with timestamp"""
+    # Limit cache size to prevent memory issues
+    if len(_analytics_cache) > 1000:
+        # Remove oldest 100 entries
+        sorted_items = sorted(_analytics_cache.items(), key=lambda x: x[1][1])
+        for key, _ in sorted_items[:100]:
+            del _analytics_cache[key]
+    
+    _analytics_cache[cache_key] = (data, datetime.utcnow())
 
 
 def _is_instagram_profile_url(url: str) -> bool:
@@ -263,6 +297,12 @@ def get_analytics_dashboard(
     - Top performing posts/media
     """
     try:
+        # Check cache first
+        cache_key = _get_cache_key(user_id, days, rule_id, instagram_account_id)
+        cached_response = _get_cached_response(cache_key)
+        if cached_response:
+            return cached_response
+        
         # Calculate date range
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days)
@@ -321,7 +361,7 @@ def get_analytics_dashboard(
             AnalyticsEvent.media_id
         ).order_by(
             desc("trigger_count")
-        ).limit(10)
+        ).limit(5)  # Reduced from 10 to 5 for faster response
         
         # OPTIMIZED: Get top posts with aggregated stats in single query
         top_posts_data = top_posts_query.all()
@@ -511,7 +551,7 @@ def get_analytics_dashboard(
                 "total": day_triggers + day_dms + day_leads  # Total activity for the day
             })
         
-        return AnalyticsSummary(
+        response = AnalyticsSummary(
             total_triggers=total_triggers,
             total_dms_sent=total_dms_sent,
             leads_collected=leads_collected,
@@ -523,6 +563,11 @@ def get_analytics_dashboard(
             top_posts=top_posts,
             daily_breakdown=daily_breakdown
         )
+        
+        # Cache response
+        _set_cached_response(cache_key, response)
+        
+        return response
         
     except HTTPException:
         # Re-raise HTTP exceptions (like 401, 404) as-is
@@ -577,32 +622,50 @@ def get_media_analytics(
     """
     Get analytics for each media item (post/reel/story/live).
     Returns analytics grouped by media_id with rule information.
+    OPTIMIZED: Uses aggregated queries and caching for performance.
     """
     try:
+        # Check cache first
+        cache_key = f"media_analytics_{user_id}_{days}_{instagram_account_id}"
+        cached_response = _get_cached_response(cache_key)
+        if cached_response:
+            return cached_response
+        
         from app.models.automation_rule import AutomationRule
         
         # Calculate date range
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days)
         
-        # Get all rules for this user (and optionally filtered by account)
-        # Join with InstagramAccount to filter by user_id
-        rules_query = db.query(AutomationRule).join(
-            InstagramAccount,
-            AutomationRule.instagram_account_id == InstagramAccount.id
-        ).filter(
-            InstagramAccount.user_id == user_id
-        )
-        
+        # OPTIMIZED: Get account IDs first, then filter rules
         if instagram_account_id:
-            rules_query = rules_query.filter(
-                AutomationRule.instagram_account_id == instagram_account_id
-            )
+            account_ids = [instagram_account_id]
+            # Verify account belongs to user
+            account = db.query(InstagramAccount).filter(
+                InstagramAccount.id == instagram_account_id,
+                InstagramAccount.user_id == user_id
+            ).first()
+            if not account:
+                return []
+        else:
+            # Get all account IDs for user
+            account_ids = [acc.id for acc in db.query(InstagramAccount.id).filter(
+                InstagramAccount.user_id == user_id
+            ).all()]
+            if not account_ids:
+                return []
+        
+        # OPTIMIZED: Get rules filtered by account IDs (more efficient than join)
+        rules_query = db.query(AutomationRule).filter(
+            AutomationRule.instagram_account_id.in_(account_ids),
+            AutomationRule.deleted_at.is_(None)
+        )
         
         rules = rules_query.all()
         
-        # Group rules by media_id
+        # OPTIMIZED: Group rules by media_id (only process rules with media_id)
         media_rules_map: dict[str, list[AutomationRule]] = {}
+        media_ids_set = set()
         for rule in rules:
             # Get media_id from rule.media_id or from config
             media_id = rule.media_id
@@ -614,8 +677,56 @@ def get_media_analytics(
                 if media_id_str not in media_rules_map:
                     media_rules_map[media_id_str] = []
                 media_rules_map[media_id_str].append(rule)
+                media_ids_set.add(media_id_str)
         
-        # Get analytics for each media_id
+        if not media_ids_set:
+            return []
+        
+        # OPTIMIZED: Get all rule IDs upfront
+        all_rule_ids = []
+        for rules_list in media_rules_map.values():
+            all_rule_ids.extend([r.id for r in rules_list])
+        
+        # OPTIMIZED: Get all analytics for all media_ids in a single aggregated query
+        # This reduces queries from N*8 (N media items × 8 event types) to 1 query
+        analytics_base = db.query(AnalyticsEvent).filter(
+            and_(
+                AnalyticsEvent.user_id == user_id,
+                AnalyticsEvent.created_at >= start_date,
+                AnalyticsEvent.created_at <= end_date,
+                AnalyticsEvent.media_id.in_(list(media_ids_set)),
+                AnalyticsEvent.rule_id.in_(all_rule_ids),
+                AnalyticsEvent.instagram_account_id.in_(account_ids),
+                AnalyticsEvent.instagram_account_id.isnot(None)
+            )
+        )
+        
+        # Aggregate stats per media_id in single query
+        aggregated_stats = analytics_base.with_entities(
+            AnalyticsEvent.media_id,
+            func.sum(case((AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED, 1), else_=0)).label("triggers"),
+            func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
+            func.sum(case((AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1), else_=0)).label("leads_collected"),
+            func.sum(case((AnalyticsEvent.event_type == EventType.LINK_CLICKED, 1), else_=0)).label("link_clicks"),
+            func.sum(case((AnalyticsEvent.event_type == EventType.FOLLOW_BUTTON_CLICKED, 1), else_=0)).label("follow_button_clicks"),
+            func.sum(case((AnalyticsEvent.event_type == EventType.PROFILE_VISIT, 1), else_=0)).label("profile_visits"),
+            func.sum(case((AnalyticsEvent.event_type == EventType.IM_FOLLOWING_CLICKED, 1), else_=0)).label("im_following_clicks"),
+            func.sum(case((AnalyticsEvent.event_type == EventType.COMMENT_REPLIED, 1), else_=0)).label("comment_replies"),
+        ).group_by(AnalyticsEvent.media_id).all()
+        
+        # Create stats map for O(1) lookup
+        stats_map = {row[0]: {
+            "triggers": int(row[1] or 0),
+            "dms_sent": int(row[2] or 0),
+            "leads_collected": int(row[3] or 0),
+            "link_clicks": int(row[4] or 0),
+            "follow_button_clicks": int(row[5] or 0),
+            "profile_visits": int(row[6] or 0),
+            "im_following_clicks": int(row[7] or 0),
+            "comment_replies": int(row[8] or 0),
+        } for row in aggregated_stats}
+        
+        # Build results using pre-aggregated stats
         results = []
         for media_id, rules_list in media_rules_map.items():
             # Get the active rule (or first rule if none active)
@@ -623,54 +734,26 @@ def get_media_analytics(
             if not active_rule:
                 continue
             
-            # Get all rule_ids for this media
-            rule_ids = [r.id for r in rules_list]
+            # OPTIMIZED: Get stats from pre-aggregated map instead of individual queries
+            stats = stats_map.get(media_id, {
+                "triggers": 0,
+                "dms_sent": 0,
+                "leads_collected": 0,
+                "link_clicks": 0,
+                "follow_button_clicks": 0,
+                "profile_visits": 0,
+                "im_following_clicks": 0,
+                "comment_replies": 0,
+            })
             
-            # Query analytics events for these rules and this media
-            # Exclude events with NULL instagram_account_id (disconnected accounts) to reset analytics to zero
-            base_query = db.query(AnalyticsEvent).filter(
-                and_(
-                    AnalyticsEvent.user_id == user_id,
-                    AnalyticsEvent.media_id == media_id,
-                    AnalyticsEvent.created_at >= start_date,
-                    AnalyticsEvent.created_at <= end_date,
-                    AnalyticsEvent.rule_id.in_(rule_ids),
-                    AnalyticsEvent.instagram_account_id.isnot(None)  # Exclude disconnected account events
-                )
-            )
-            
-            # Count events
-            triggers = base_query.filter(
-                AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED
-            ).count()
-            
-            dms_sent = base_query.filter(
-                AnalyticsEvent.event_type == EventType.DM_SENT
-            ).count()
-            
-            leads_collected = base_query.filter(
-                AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED
-            ).count()
-            
-            follow_button_clicks = base_query.filter(
-                AnalyticsEvent.event_type == EventType.FOLLOW_BUTTON_CLICKED
-            ).count()
-            
-            profile_visits = base_query.filter(
-                AnalyticsEvent.event_type == EventType.PROFILE_VISIT
-            ).count()
-            
-            im_following_clicks = base_query.filter(
-                AnalyticsEvent.event_type == EventType.IM_FOLLOWING_CLICKED
-            ).count()
-            
-            link_clicks = base_query.filter(
-                AnalyticsEvent.event_type == EventType.LINK_CLICKED
-            ).count()
-            
-            comment_replies = base_query.filter(
-                AnalyticsEvent.event_type == EventType.COMMENT_REPLIED
-            ).count()
+            triggers = stats["triggers"]
+            dms_sent = stats["dms_sent"]
+            leads_collected = stats["leads_collected"]
+            follow_button_clicks = stats["follow_button_clicks"]
+            profile_visits = stats["profile_visits"]
+            im_following_clicks = stats["im_following_clicks"]
+            link_clicks = stats["link_clicks"]
+            comment_replies = stats["comment_replies"]
             
             total_clicks = follow_button_clicks + profile_visits + im_following_clicks + link_clicks
             
@@ -695,6 +778,9 @@ def get_media_analytics(
         
         # Sort by triggers (runs) descending
         results.sort(key=lambda x: x.triggers, reverse=True)
+        
+        # Cache response
+        _set_cached_response(cache_key, results)
         
         return results
         
