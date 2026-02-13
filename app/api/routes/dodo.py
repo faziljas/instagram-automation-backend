@@ -410,26 +410,39 @@ async def _sync_invoices_from_dodo_api(
 
         # Fetch payments from Dodo API for this customer
         # Dodo API endpoint: GET /payments?customer_id={customer_id}
+        # Supports pagination: page_size (max 100), page_number (0-based)
         payments_url = f"{DODO_BASE_URL}/payments"
-        params = {"customer_id": customer_id}
+        payments: list = []
+        page_number = 0
+        page_size = 100  # Dodo max
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(payments_url, headers=headers, params=params)
+            while True:
+                params = {"customer_id": customer_id, "page_size": page_size, "page_number": page_number}
+                r = await client.get(payments_url, headers=headers, params=params)
 
-        if r.status_code != 200:
-            print(f"[Dodo] Failed to fetch payments: {r.status_code} - {r.text}")
-            if raise_on_error:
-                raise HTTPException(
-                    status_code=r.status_code,
-                    detail=f"Dodo API error: {r.text or r.status_code}"
-                )
-            return None
+                if r.status_code != 200:
+                    print(f"[Dodo] Failed to fetch payments: {r.status_code} - {r.text}")
+                    if raise_on_error:
+                        raise HTTPException(
+                            status_code=r.status_code,
+                            detail=f"Dodo API error: {r.text or r.status_code}"
+                        )
+                    return None
 
-        payments_data = r.json()
-        # Dodo API might return payments in different formats - handle both list and object with 'data' key
-        payments = payments_data.get("data", []) if isinstance(payments_data, dict) else payments_data
-        if not isinstance(payments, list):
-            payments = []
+                payments_data = r.json()
+                # Dodo API returns payments under 'items' (current format); fall back to 'data' for legacy
+                if isinstance(payments_data, dict):
+                    page_items = payments_data.get("items") or payments_data.get("data") or []
+                else:
+                    page_items = payments_data if isinstance(payments_data, list) else []
+                if not isinstance(page_items, list):
+                    page_items = []
+
+                payments.extend(page_items)
+                if len(page_items) < page_size:
+                    break
+                page_number += 1
 
         synced_count = 0
         created_count = 0
