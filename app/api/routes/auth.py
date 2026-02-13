@@ -91,18 +91,28 @@ def sync_user(
         ).first()
     
     if existing_user:
-        # Check if this is a different Supabase user trying to register with an existing email
-        # This prevents duplicate registrations when a user signs up with Google OAuth
-        # and then tries to register with email/password (or vice versa)
+        # Check if this is a different Supabase user with the same email
         if existing_user.supabase_id:
             # User already has a Supabase ID - check if it matches
             if existing_user.supabase_id != user_data.id:
-                # Different Supabase user trying to use same email - this is an error
-                print(f"[AUTH] Sync-user: Email {user_data.email} already registered with different Supabase ID")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="This email is already registered. Please log in instead."
-                )
+                # Same email, different Supabase ID - link the new identity to existing account
+                # This handles: Google then email/password, or Supabase account recreation.
+                # JWT is verified, so we trust this Supabase identity owns the email.
+                print(f"[AUTH] Sync-user: Linking existing user {existing_user.id} to new Supabase ID (email: {user_data.email})")
+                existing_user.supabase_id = user_data.id
+                updated = False
+                if user_data.first_name and user_data.first_name.strip() and not existing_user.first_name:
+                    existing_user.first_name = user_data.first_name.strip()
+                    updated = True
+                if user_data.last_name and user_data.last_name.strip() and not existing_user.last_name:
+                    existing_user.last_name = user_data.last_name.strip()
+                    updated = True
+                db.commit()
+                db.refresh(existing_user)
+                return {
+                    "message": "User synced successfully",
+                    "user_id": existing_user.id
+                }
             # Same Supabase user - update name fields only if they're not already set
             # This preserves user's custom names while allowing initial sync from Google metadata
             # IMPORTANT: Never overwrite existing names - user may have customized them in settings

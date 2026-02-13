@@ -440,30 +440,21 @@ async def list_invoices(
     """
     List invoices for the current user (most recent first).
 
-    This is backed by Dodo `payment.succeeded` / `payment.failed` webhooks
-    persisted into the `invoices` table.
-
-    Automatically syncs invoices from Dodo API if no invoices exist in the database
-    (useful if webhooks were missed or user just upgraded).
+    Invoices come from:
+    1. Dodo `payment.succeeded` / `payment.failed` webhooks (when user pays).
+    2. Automatic fetch from Dodo API on every request (ensures latest invoices
+       appear without manual sync, including if webhooks were missed).
     """
-    # Check if user has any invoices
-    invoice_count = db.query(Invoice).filter(Invoice.user_id == user_id).count()
-
-    # If no invoices exist, automatically sync from Dodo API
-    if invoice_count == 0:
-        try:
-            from app.api.routes.dodo import _sync_invoices_from_dodo_api
-            print(f"[Invoices] No invoices found for user {user_id}, syncing from Dodo API...")
-            sync_result = await _sync_invoices_from_dodo_api(db, user_id, raise_on_error=False)
-            if sync_result:
-                print(f"[Invoices] Synced {sync_result.get('synced', 0)} invoices from Dodo API")
-            else:
-                print(f"[Invoices] Failed to sync invoices from Dodo API (non-critical)")
-        except Exception as e:
-            print(f"[Invoices] Error syncing from Dodo: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            # Continue to return empty list even if sync fails
+    # Always sync invoices from Dodo API so they appear automatically after payment
+    try:
+        from app.api.routes.dodo import _sync_invoices_from_dodo_api
+        sync_result = await _sync_invoices_from_dodo_api(db, user_id, raise_on_error=False)
+        if sync_result:
+            print(f"[Invoices] Synced {sync_result.get('synced', 0)} invoices for user {user_id}")
+    except Exception as e:
+        print(f"[Invoices] Error syncing from Dodo (non-critical): {str(e)}")
+        import traceback
+        traceback.print_exc()
 
     invoices = (
         db.query(Invoice)

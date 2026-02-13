@@ -538,18 +538,6 @@ async def _sync_invoices_from_dodo_api(
         return None
 
 
-@router.post("/sync-invoices")
-async def sync_invoices_from_dodo(
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    """
-    Fetch invoices from Dodo Payments API and sync them to the database.
-    This ensures we have all invoices even if webhooks were missed.
-    """
-    return await _sync_invoices_from_dodo_api(db, user_id, raise_on_error=True)
-
-
 @router.get("/test-auth")
 async def test_dodo_auth():
     """Test if Dodo API key is valid against Dodo test API."""
