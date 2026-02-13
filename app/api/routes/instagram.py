@@ -72,34 +72,62 @@ def get_or_create_conversation(
     from app.models.conversation import Conversation
     from datetime import datetime
     
-    # Find existing conversation
-    conversation = db.query(Conversation).filter(
-        Conversation.instagram_account_id == account_id,
-        Conversation.user_id == user_id,
-        Conversation.participant_id == participant_id
-    ).first()
+    # Find existing conversation (handle race conditions)
+    # Use a loop with retry to handle potential race conditions
+    max_retries = 3
+    for attempt in range(max_retries):
+        conversation = db.query(Conversation).filter(
+            Conversation.instagram_account_id == account_id,
+            Conversation.user_id == user_id,
+            Conversation.participant_id == participant_id
+        ).first()
+        
+        if conversation:
+            # Update participant name if provided and different
+            if participant_name and conversation.participant_name != participant_name:
+                conversation.participant_name = participant_name
+            # Update platform_conversation_id if provided
+            if platform_conversation_id and not conversation.platform_conversation_id:
+                conversation.platform_conversation_id = platform_conversation_id
+            return conversation
+        else:
+            # Create new conversation
+            try:
+                conversation = Conversation(
+                    user_id=user_id,
+                    instagram_account_id=account_id,
+                    participant_id=participant_id,
+                    participant_name=participant_name,
+                    platform_conversation_id=platform_conversation_id,
+                    updated_at=datetime.utcnow()
+                )
+                db.add(conversation)
+                db.flush()  # Flush to get the ID
+                return conversation
+            except Exception as e:
+                # Handle unique constraint violation (race condition)
+                if "unique" in str(e).lower() or "duplicate" in str(e).lower() or "23505" in str(e):
+                    # Another process created the conversation, retry query
+                    db.rollback()
+                    if attempt < max_retries - 1:
+                        continue
+                    else:
+                        # Final attempt: query again
+                        conversation = db.query(Conversation).filter(
+                            Conversation.instagram_account_id == account_id,
+                            Conversation.user_id == user_id,
+                            Conversation.participant_id == participant_id
+                        ).first()
+                        if conversation:
+                            return conversation
+                        raise
+                else:
+                    # Different error, re-raise
+                    db.rollback()
+                    raise
     
-    if conversation:
-        # Update participant name if provided and different
-        if participant_name and conversation.participant_name != participant_name:
-            conversation.participant_name = participant_name
-        # Update platform_conversation_id if provided
-        if platform_conversation_id and not conversation.platform_conversation_id:
-            conversation.platform_conversation_id = platform_conversation_id
-        return conversation
-    else:
-        # Create new conversation
-        conversation = Conversation(
-            user_id=user_id,
-            instagram_account_id=account_id,
-            participant_id=participant_id,
-            participant_name=participant_name,
-            platform_conversation_id=platform_conversation_id,
-            updated_at=datetime.utcnow()
-        )
-        db.add(conversation)
-        db.flush()  # Flush to get the ID
-        return conversation
+    # Should not reach here, but just in case
+    raise Exception("Failed to get or create conversation after retries")
 
 
 @router.get("/webhook")
@@ -5774,7 +5802,25 @@ async def get_instagram_conversations(
                 traceback.print_exc()
                 # Continue even if sync fails
         
-        conversations_query = db.query(Conversation).filter(
+        # Query conversations - use subquery to get distinct conversations
+        # After migration, unique constraint prevents duplicates, but this handles existing duplicates
+        # Get the most recent conversation for each participant
+        from sqlalchemy import func
+        subquery = db.query(
+            func.max(Conversation.id).label('max_id')
+        ).filter(
+            Conversation.instagram_account_id == account_id,
+            Conversation.user_id == user_id
+        ).group_by(
+            Conversation.user_id,
+            Conversation.instagram_account_id,
+            Conversation.participant_id
+        ).subquery()
+        
+        conversations_query = db.query(Conversation).join(
+            subquery,
+            Conversation.id == subquery.c.max_id
+        ).filter(
             Conversation.instagram_account_id == account_id,
             Conversation.user_id == user_id
         ).order_by(Conversation.updated_at.desc()).offset(offset).limit(limit + 1)
