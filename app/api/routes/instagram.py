@@ -6475,22 +6475,35 @@ async def send_conversation_message(
         
         # Get recipient user_id from conversation
         from app.models.conversation import Conversation
+        from sqlalchemy import or_
         conversation = None
         
         if participant_user_id:
-            # Use provided participant_user_id
+            # Use provided participant_user_id (most reliable)
             conversation = db.query(Conversation).filter(
                 Conversation.instagram_account_id == account_id,
                 Conversation.user_id == user_id,
                 Conversation.participant_id == str(participant_user_id)
             ).first()
-        else:
+        
+        if not conversation:
             # Try to find by username
-            conversation = db.query(Conversation).filter(
-                Conversation.instagram_account_id == account_id,
-                Conversation.user_id == user_id,
-                Conversation.participant_name == username
-            ).first()
+            # For "Unknown" users, also check if participant_name is None
+            if username == "Unknown" or not username:
+                conversation = db.query(Conversation).filter(
+                    Conversation.instagram_account_id == account_id,
+                    Conversation.user_id == user_id,
+                    or_(
+                        Conversation.participant_name == "Unknown",
+                        Conversation.participant_name.is_(None)
+                    )
+                ).first()
+            else:
+                conversation = db.query(Conversation).filter(
+                    Conversation.instagram_account_id == account_id,
+                    Conversation.user_id == user_id,
+                    Conversation.participant_name == username
+                ).first()
         
         if not conversation:
             raise HTTPException(
@@ -6732,38 +6745,76 @@ async def get_conversation_stats(
         from app.models.conversation import Conversation
         from sqlalchemy import func, distinct
         
-        # Get total conversations from Conversation table (more accurate)
-        # This counts all conversations regardless of message direction
-        total_conversations = db.query(Conversation).filter(
+        # Get account's IGSID and username for self-conversation filtering
+        account_igsid = account.igsid
+        account_username = account.username
+        
+        # Get total conversations from Conversation table using same deduplication logic as list endpoint
+        # Use subquery to get distinct conversations by participant_id (same as list endpoint)
+        # This ensures count matches what's displayed in the list
+        subquery = db.query(
+            func.max(Conversation.id).label('max_id')
+        ).filter(
             Conversation.instagram_account_id == account_id,
             Conversation.user_id == user_id
-        ).count()
+        ).group_by(
+            Conversation.user_id,
+            Conversation.instagram_account_id,
+            Conversation.participant_id
+        ).subquery()
+        
+        # Count distinct conversations, filtering out self-conversations
+        conversations_query = db.query(Conversation).join(
+            subquery,
+            Conversation.id == subquery.c.max_id
+        ).filter(
+            Conversation.instagram_account_id == account_id,
+            Conversation.user_id == user_id
+        )
+        
+        # Filter out self-conversations
+        if account_igsid:
+            conversations_query = conversations_query.filter(
+                Conversation.participant_id != account_igsid
+            )
+        if account_username:
+            conversations_query = conversations_query.filter(
+                Conversation.participant_name != account_username
+            )
+        
+        total_conversations = conversations_query.count()
         
         # Fallback: If no conversations in Conversation table, count from Message table
+        # Use same deduplication logic as conversations list endpoint
         if total_conversations == 0:
-            # Count both incoming and outgoing conversations
-            incoming = db.query(
-                func.count(func.distinct(
-                    func.coalesce(Message.sender_username, Message.sender_id)
-                ))
-            ).filter(
+            # Get account's IGSID for filtering
+            account_igsid = account.igsid or str(account_id)
+            
+            # Get all unique participant IDs from incoming messages (excluding self)
+            incoming_ids_query = db.query(Message.sender_id).filter(
                 Message.instagram_account_id == account_id,
                 Message.user_id == user_id,
-                Message.is_from_bot == False
-            ).scalar() or 0
+                Message.is_from_bot == False,
+                Message.sender_id.isnot(None)
+            )
+            if account_igsid:
+                incoming_ids_query = incoming_ids_query.filter(Message.sender_id != account_igsid)
+            incoming_ids = {row[0] for row in incoming_ids_query.distinct().all()}
             
-            outgoing = db.query(
-                func.count(func.distinct(
-                    func.coalesce(Message.recipient_username, Message.recipient_id)
-                ))
-            ).filter(
+            # Get all unique participant IDs from outgoing messages (excluding self)
+            outgoing_ids_query = db.query(Message.recipient_id).filter(
                 Message.instagram_account_id == account_id,
                 Message.user_id == user_id,
-                Message.is_from_bot == True
-            ).scalar() or 0
+                Message.is_from_bot == True,
+                Message.recipient_id.isnot(None)
+            )
+            if account_igsid:
+                outgoing_ids_query = outgoing_ids_query.filter(Message.recipient_id != account_igsid)
+            outgoing_ids = {row[0] for row in outgoing_ids_query.distinct().all()}
             
-            # Use max to avoid double counting (conversations can have both incoming and outgoing)
-            total_conversations = max(incoming, outgoing)
+            # Union to get unique participants (conversations can have both incoming and outgoing)
+            unique_participants = incoming_ids.union(outgoing_ids)
+            total_conversations = len(unique_participants)
         
         # For now, unread is 0 (we don't track read status yet)
         unread = 0
