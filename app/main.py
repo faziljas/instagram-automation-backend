@@ -104,6 +104,27 @@ async def startup_event():
         print(f"⚠️ profile_picture_url column check warning: {str(e)}", file=sys.stderr)
         # Don't fail startup if this doesn't work - migration should handle it
 
+    # Ensure invoices.amount is NUMERIC so 11.81 is stored correctly (not rounded to 12)
+    try:
+        print("🔄 Checking invoices.amount column type...", file=sys.stderr)
+        with engine.connect() as conn:
+            r = conn.execute(text("""
+                SELECT data_type FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'invoices' AND column_name = 'amount'
+            """)).fetchone()
+            if r and r[0] in ("integer", "smallint", "bigint"):
+                conn.execute(text("""
+                    ALTER TABLE public.invoices
+                    ALTER COLUMN amount TYPE NUMERIC(12, 2) USING
+                    (CASE WHEN amount >= 100 THEN amount / 100.0 ELSE amount::numeric END)
+                """))
+                conn.commit()
+                print("✅ invoices.amount converted to NUMERIC(12,2)", file=sys.stderr)
+            else:
+                print("✅ invoices.amount already numeric", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ invoices.amount check warning: {str(e)}", file=sys.stderr)
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
