@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Response
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.user import User
@@ -8,8 +8,35 @@ from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
 from app.schemas.auth import ForgotPasswordRequest, UserSyncRequest
 from app.dependencies.auth import verify_supabase_token
+from app.utils.disposable_email import is_disposable_email
 
 router = APIRouter()
+
+DISPOSABLE_EMAIL_MESSAGE = (
+    "Temporary or disposable email addresses are not allowed. "
+    "Please use a permanent email address to sign up."
+)
+
+
+@router.get("/validate-email")
+def validate_email(email: str = ""):
+    """
+    Check if an email is allowed for sign-up (not a disposable/temp domain).
+    Returns 204 if valid, 400 with detail if disposable.
+    No auth required; used by frontend before calling Supabase signUp.
+    """
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email format.",
+        )
+    if is_disposable_email(email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DISPOSABLE_EMAIL_MESSAGE,
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/check-email/{email}")
@@ -21,7 +48,11 @@ def check_email(email: str, db: Session = Depends(get_db)):
     """
     # Normalize email to lowercase for comparison
     normalized_email = email.lower().strip()
-    
+    if is_disposable_email(normalized_email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=DISPOSABLE_EMAIL_MESSAGE,
+        )
     existing_user = db.query(User).filter(
         User.email.ilike(normalized_email)
     ).first()
@@ -89,6 +120,13 @@ def sync_user(
         existing_user = db.query(User).filter(
             User.supabase_id == user_data.id
         ).first()
+    
+    # Reject disposable/temporary email only for NEW signups (don't block existing users)
+    if not existing_user and is_disposable_email(user_data.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=DISPOSABLE_EMAIL_MESSAGE,
+        )
     
     if existing_user:
         # Check if this is a different Supabase user with the same email
