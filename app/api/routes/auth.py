@@ -95,24 +95,12 @@ def sync_user(
         if existing_user.supabase_id:
             # User already has a Supabase ID - check if it matches
             if existing_user.supabase_id != user_data.id:
-                # Same email, different Supabase ID - link the new identity to existing account
-                # This handles: Google then email/password, or Supabase account recreation.
-                # JWT is verified, so we trust this Supabase identity owns the email.
-                print(f"[AUTH] Sync-user: Linking existing user {existing_user.id} to new Supabase ID (email: {user_data.email})")
-                existing_user.supabase_id = user_data.id
-                updated = False
-                if user_data.first_name and user_data.first_name.strip() and not existing_user.first_name:
-                    existing_user.first_name = user_data.first_name.strip()
-                    updated = True
-                if user_data.last_name and user_data.last_name.strip() and not existing_user.last_name:
-                    existing_user.last_name = user_data.last_name.strip()
-                    updated = True
-                db.commit()
-                db.refresh(existing_user)
-                return {
-                    "message": "User synced successfully",
-                    "user_id": existing_user.id
-                }
+                # Same email, different Supabase ID - user already has an account (e.g. email signup).
+                # Block duplicate signup (e.g. Google signup with same email); they must log in instead.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This email is already registered. Please log in instead."
+                )
             # Same Supabase user - update name fields only if they're not already set
             # This preserves user's custom names while allowing initial sync from Google metadata
             # IMPORTANT: Never overwrite existing names - user may have customized them in settings
