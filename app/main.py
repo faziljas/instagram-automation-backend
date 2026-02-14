@@ -61,6 +61,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, dodo as dodo_router, leads, analytics, support
 from app.db.session import engine
+from app.utils.disposable_email import ensure_blocklist_loaded
 from app.db.base import Base
 # Import all models to ensure they're registered with Base
 from app.models import User, Subscription, InstagramAccount, AutomationRule, DmLog, Follower, CapturedLead, AutomationRuleStats, AnalyticsEvent, Message, Conversation, InstagramAudience, InstagramGlobalTracker
@@ -124,6 +125,13 @@ async def startup_event():
                 print("✅ invoices.amount already numeric", file=sys.stderr)
     except Exception as e:
         print(f"⚠️ invoices.amount check warning: {str(e)}", file=sys.stderr)
+
+    # Load disposable email blocklist at startup so production logs show it and we catch missing file early
+    try:
+        n = ensure_blocklist_loaded()
+        print(f"✅ Disposable email blocklist loaded: {n} domains", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Disposable email blocklist load warning: {str(e)}", file=sys.stderr)
 
 # Add CORS middleware
 app.add_middleware(

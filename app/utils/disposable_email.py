@@ -2,7 +2,10 @@
 Disposable/temporary email domain blocklist.
 Used to reject sign-ups and sync from known temp-email providers.
 """
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 # Load once at module import
 _BLOCKLIST: set[str] = set()
@@ -22,8 +25,23 @@ def _load_blocklist() -> set[str]:
                 line = line.strip().lower()
                 if line and not line.startswith("#"):
                     domains.add(line)
+        logger.info(
+            "Disposable email blocklist loaded: %s domains from %s",
+            len(domains),
+            _BLOCKLIST_PATH,
+        )
+    else:
+        logger.warning(
+            "Disposable email blocklist file not found at %s; no domains will be blocked.",
+            _BLOCKLIST_PATH,
+        )
     _BLOCKLIST = domains
     return _BLOCKLIST
+
+
+def ensure_blocklist_loaded() -> int:
+    """Load blocklist at startup so we fail fast if file is missing. Returns count."""
+    return len(_load_blocklist())
 
 
 def is_disposable_email(email: str) -> bool:
