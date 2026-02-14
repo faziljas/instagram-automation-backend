@@ -22,24 +22,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Convert amount to NUMERIC(12,2) storing exact decimal (e.g. 11.81).
-    # Existing data: values >= 100 were stored in minor units (cents) -> divide by 100;
-    # values < 100 may have been wrongly stored as rounded dollars (e.g. 12 for 11.81) -> keep as-is.
+    # Change amount from INTEGER to NUMERIC(12,2) so exact values (e.g. 11.81) are stored.
+    # Safe when column is already numeric: USING keeps current value. When integer: >=100 -> cents to dollars, <100 -> keep.
     op.execute(
-        """
-        ALTER TABLE invoices
-        ALTER COLUMN amount TYPE NUMERIC(12, 2) USING (
-            CASE WHEN amount >= 100 THEN amount / 100.0 ELSE amount::numeric END
-        )
-        """
+        "ALTER TABLE public.invoices "
+        "ALTER COLUMN amount TYPE NUMERIC(12, 2) USING "
+        "(CASE WHEN amount >= 100 THEN amount / 100.0 ELSE amount::numeric END)"
     )
 
 
 def downgrade() -> None:
     # Convert back to integer minor units (rounds to nearest cent)
     op.execute(
-        """
-        ALTER TABLE invoices
-        ALTER COLUMN amount TYPE INTEGER USING ROUND(amount * 100)::INTEGER
-        """
+        "ALTER TABLE public.invoices "
+        "ALTER COLUMN amount TYPE INTEGER USING ROUND(amount * 100)::INTEGER"
     )

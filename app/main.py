@@ -30,21 +30,31 @@ logger = logging.getLogger(__name__)
 
 
 def run_migrations() -> None:
-    """Run Alembic migrations programmatically. Uses alembic.ini and DATABASE_URL."""
+    """Run Alembic migrations on startup. Uses alembic.ini and DATABASE_URL.
+    Fails startup if migrations fail, so the DB is never left out of sync."""
+    project_root = Path(__file__).resolve().parent.parent
+    alembic_ini = project_root / "alembic.ini"
+    if not alembic_ini.exists():
+        logger.warning("alembic.ini not found, skipping Alembic migrations")
+        return
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.error(
+            "DATABASE_URL is not set. Alembic migrations will not run. "
+            "Set DATABASE_URL in your deployment (e.g. Render env) to your Supabase connection string."
+        )
+        return
+    # Normalize postgres:// -> postgresql:// for SQLAlchemy
+    if db_url.startswith("postgres://"):
+        db_url = "postgresql://" + db_url[10:]
     try:
-        project_root = Path(__file__).resolve().parent.parent
-        alembic_ini = project_root / "alembic.ini"
-        if not alembic_ini.exists():
-            logger.info("alembic.ini not found, skipping Alembic migrations")
-            return
         alembic_cfg = Config(str(alembic_ini))
-        db_url = os.getenv("DATABASE_URL")
-        if db_url:
-            alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
         command.upgrade(alembic_cfg, "head")
         logger.info("Alembic migrations completed successfully")
     except Exception as e:
-        logger.exception("Alembic migration error: %s", e)
+        logger.exception("Alembic migration failed: %s", e)
+        raise  # Fail startup so DB is not left out of sync; fix migration or env and redeploy
 
 
 from fastapi import FastAPI
@@ -59,7 +69,11 @@ app = FastAPI(title="Instagram Automation SaaS")
 
 @app.on_event("startup")
 async def startup_event():
-    """Create tables, then run Alembic migrations on every server restart. All schema changes live in revision files."""
+    """Create tables, then run Alembic migrations on every server restart.
+    If a migration didn't change your DB (e.g. Supabase still shows old column type):
+    1. Check deploy logs for 'Alembic migration failed' or 'DATABASE_URL is not set'.
+    2. Ensure DATABASE_URL in production (e.g. Render env) is your Supabase connection string.
+    3. If migrations fail, the server will now refuse to start until you fix the cause."""
     import sys
     from sqlalchemy import text
 
@@ -76,7 +90,8 @@ async def startup_event():
         run_migrations()
         print("✅ Alembic migrations completed", file=sys.stderr)
     except Exception as e:
-        print(f"⚠️ Alembic migration warning: {str(e)}", file=sys.stderr)
+        print(f"❌ Alembic migration failed (server will not start): {str(e)}", file=sys.stderr)
+        raise  # Fail startup so you see the error in deploy logs and fix DATABASE_URL / migration
     
     # Temporary fix: Ensure profile_picture_url column exists (backup in case migration didn't run)
     try:
