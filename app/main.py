@@ -59,7 +59,7 @@ app = FastAPI(title="Instagram Automation SaaS")
 
 @app.on_event("startup")
 async def startup_event():
-    """Create tables, then run Alembic migrations. All schema changes live in revision files."""
+    """Create tables, then run Alembic migrations on every server restart. All schema changes live in revision files."""
     import sys
     from sqlalchemy import text
 

@@ -5,6 +5,7 @@ Replace Stripe with Dodo credentials in .env (see DODO_INTEGRATION.md).
 """
 import os
 import traceback
+from decimal import Decimal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Request
 from sqlalchemy.orm import Session
@@ -481,9 +482,12 @@ async def _sync_invoices_from_dodo_api(
                         Invoice.provider_payment_id == payment_id
                     ).first()
 
+                # Dodo API sends amount in minor units (e.g. cents); store as major units (decimal)
+                amount_major = Decimal(total_amount) / 100
+
                 if invoice:
                     # Update existing invoice
-                    invoice.amount = int(total_amount)
+                    invoice.amount = amount_major
                     invoice.currency = currency
                     invoice.status = status
                     invoice.invoice_url = invoice_url or invoice.invoice_url
@@ -496,7 +500,7 @@ async def _sync_invoices_from_dodo_api(
                         provider="dodo",
                         provider_invoice_id=invoice_id,
                         provider_payment_id=payment_id,
-                        amount=int(total_amount),
+                        amount=amount_major,
                         currency=currency,
                         status=status,
                         invoice_url=invoice_url,

@@ -465,7 +465,7 @@ async def list_invoices(
     return [
         {
             "id": inv.id,
-            "amount": inv.amount,
+            "amount": float(inv.amount),  # major units (e.g. 11.81); stored as decimal in DB
             "currency": inv.currency,
             "status": inv.status,
             "invoice_url": inv.invoice_url,

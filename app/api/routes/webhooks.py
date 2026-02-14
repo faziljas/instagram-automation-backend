@@ -8,6 +8,7 @@ import hmac
 import hashlib
 import base64
 from datetime import datetime
+from decimal import Decimal
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -318,14 +319,17 @@ def _handle_payment_event(
             .first()
         )
 
+    # Dodo sends amount in minor units (e.g. cents); store as major units (decimal)
+    amount_major = Decimal(str(total_amount)) / 100
+
     if invoice:
         # Update existing invoice
-        invoice.amount = int(total_amount)
+        invoice.amount = amount_major
         invoice.currency = currency
         invoice.status = status
         invoice.invoice_url = invoice_url or invoice.invoice_url
         invoice.paid_at = paid_at or invoice.paid_at
-        print(f"[Dodo webhook] Updated existing invoice {invoice.id} for user {user.id} (amount: {total_amount/100:.2f} {currency})")
+        print(f"[Dodo webhook] Updated existing invoice {invoice.id} for user {user.id} (amount: {amount_major} {currency})")
     else:
         # Create new invoice
         invoice = Invoice(
@@ -333,14 +337,14 @@ def _handle_payment_event(
             provider="dodo",
             provider_invoice_id=invoice_id,
             provider_payment_id=payment_id,
-            amount=int(total_amount),
+            amount=amount_major,
             currency=currency,
             status=status,
             invoice_url=invoice_url,
             paid_at=paid_at,
         )
         db.add(invoice)
-        print(f"[Dodo webhook] Created new invoice for user {user.id} (amount: {total_amount/100:.2f} {currency}, invoice_id: {invoice_id}, payment_id: {payment_id})")
+        print(f"[Dodo webhook] Created new invoice for user {user.id} (amount: {amount_major} {currency}, invoice_id: {invoice_id}, payment_id: {payment_id})")
 
     try:
         db.commit()
