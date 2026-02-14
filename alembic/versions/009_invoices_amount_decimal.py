@@ -22,11 +22,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Convert amount from integer (minor units, e.g. 1181) to numeric (major units, e.g. 11.81)
+    # Convert amount to NUMERIC(12,2) storing exact decimal (e.g. 11.81).
+    # Existing data: values >= 100 were stored in minor units (cents) -> divide by 100;
+    # values < 100 may have been wrongly stored as rounded dollars (e.g. 12 for 11.81) -> keep as-is.
     op.execute(
         """
         ALTER TABLE invoices
-        ALTER COLUMN amount TYPE NUMERIC(12, 2) USING (amount / 100.0)
+        ALTER COLUMN amount TYPE NUMERIC(12, 2) USING (
+            CASE WHEN amount >= 100 THEN amount / 100.0 ELSE amount::numeric END
+        )
         """
     )
 

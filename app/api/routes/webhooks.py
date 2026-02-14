@@ -319,8 +319,8 @@ def _handle_payment_event(
             .first()
         )
 
-    # Dodo sends amount in minor units (e.g. cents); store as major units (decimal)
-    amount_major = Decimal(str(total_amount)) / 100
+    # Dodo sends amount in minor units (e.g. cents). Store exact decimal (e.g. 11.81) — never round.
+    amount_major = (Decimal(str(total_amount)) / 100).quantize(Decimal("0.01"))
 
     if invoice:
         # Update existing invoice
