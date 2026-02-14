@@ -3,7 +3,7 @@
 This trigger automatically deletes the corresponding row from the public.users table
 when a user is deleted from Supabase Auth (auth.users table).
 
-Revision ID: 006_add_auth_users_cascade_trigger
+Revision ID: 006_auth_users_cascade
 Revises: 005_add_profile_picture_url
 Create Date: 2026-02-13
 """
@@ -14,7 +14,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "006_add_auth_users_cascade_trigger"
+revision: str = "006_auth_users_cascade"
 down_revision: Union[str, None] = "005_add_profile_picture_url"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

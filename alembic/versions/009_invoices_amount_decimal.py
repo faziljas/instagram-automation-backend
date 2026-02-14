@@ -1,7 +1,7 @@
 """Store invoice amount as decimal (major units) instead of integer (minor units).
 
 Revision ID: 009_invoices_amount_decimal
-Revises: 008_add_unique_constraint_conversations
+Revises: 008_unique_constraint_conversations
 Create Date: 2026-02-14
 
 Converts invoices.amount from INTEGER (cents/minor units) to NUMERIC(12,2)
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 
 revision: str = "009_invoices_amount_decimal"
-down_revision: Union[str, None] = "008_add_unique_constraint_conversations"
+down_revision: Union[str, None] = "008_unique_constraint_conversations"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

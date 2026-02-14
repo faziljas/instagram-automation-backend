@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'add_analytics_composite_index'
-down_revision = '008_add_unique_constraint_conversations'  # Latest migration
+down_revision = '008_unique_constraint_conversations'  # Latest migration
 branch_labels = None
 depends_on = None
 

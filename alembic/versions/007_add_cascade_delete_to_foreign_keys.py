@@ -11,8 +11,8 @@ Cascade chain:
 - automation_rules → automation_rule_stats, captured_leads, analytics_events
 - conversations → messages
 
-Revision ID: 007_add_cascade_delete_to_foreign_keys
-Revises: 006_add_auth_users_cascade_trigger
+Revision ID: 007_cascade_delete_foreign_keys
+Revises: 006_auth_users_cascade
 Create Date: 2026-02-13
 """
 
@@ -22,8 +22,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "007_add_cascade_delete_to_foreign_keys"
-down_revision: Union[str, None] = "006_add_auth_users_cascade_trigger"
+revision: str = "007_cascade_delete_foreign_keys"
+down_revision: Union[str, None] = "006_auth_users_cascade"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

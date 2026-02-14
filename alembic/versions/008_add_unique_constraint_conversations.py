@@ -3,8 +3,8 @@
 This migration adds a unique constraint on (user_id, instagram_account_id, participant_id)
 to prevent duplicate conversations from being created for the same participant.
 
-Revision ID: 008_add_unique_constraint_conversations
-Revises: 007_add_cascade_delete_to_foreign_keys
+Revision ID: 008_unique_constraint_conversations
+Revises: 007_cascade_delete_foreign_keys
 Create Date: 2026-02-13
 """
 
@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "008_add_unique_constraint_conversations"
-down_revision: Union[str, None] = "007_add_cascade_delete_to_foreign_keys"
+revision: str = "008_unique_constraint_conversations"
+down_revision: Union[str, None] = "007_cascade_delete_foreign_keys"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
