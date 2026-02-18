@@ -8,6 +8,8 @@
 -- to create triggers on auth.users.
 
 -- Step 1: Create the trigger function
+-- Uses EXCEPTION so that if anything fails (e.g. app user already deleted),
+-- the Auth delete still succeeds and is not rolled back.
 CREATE OR REPLACE FUNCTION public.handle_auth_user_deleted()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -15,10 +17,13 @@ BEGIN
     -- where supabase_id matches the deleted auth.users id
     DELETE FROM public.users 
     WHERE supabase_id = OLD.id;
-    
     RETURN OLD;
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Don't block the Auth delete: app user may already be gone or another error
+        RETURN OLD;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 -- Step 2: Create the trigger on auth.users table
 DROP TRIGGER IF EXISTS on_auth_user_deleted ON auth.users;
