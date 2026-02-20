@@ -35,6 +35,9 @@ wheels/
 *.swo
 *~
 
+# Uploaded media (automation video/image)
+uploads/
+
 # Database
 *.db
 *.sqlite3

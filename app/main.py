@@ -59,7 +59,8 @@ def run_migrations() -> None:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, dodo as dodo_router, leads, analytics, support
+from fastapi.staticfiles import StaticFiles
+from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, dodo as dodo_router, leads, analytics, support, upload as upload_router
 from app.db.session import engine
 from app.utils.disposable_email import ensure_blocklist_loaded
 from app.db.base import Base
@@ -192,3 +193,13 @@ app.include_router(dodo_router.router, prefix="/api/dodo", tags=["Dodo Payments"
 app.include_router(leads.router, prefix="/api", tags=["Leads"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(support.router, prefix="/support", tags=["Support"])
+app.include_router(upload_router.router, prefix="/api", tags=["Upload"])
+
+# Serve uploaded media (automation video/image) at /uploads/...
+try:
+    from app.api.routes.upload import get_uploads_dir
+    uploads_dir = get_uploads_dir()
+    app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+except Exception as e:
+    import sys
+    print(f"⚠️ Uploads mount skipped: {e}", file=sys.stderr)
