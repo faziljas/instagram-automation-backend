@@ -1723,17 +1723,16 @@ async def process_instagram_message(event: dict, db: Session):
                     stored_comment_id = r_state.get("comment_id")
                     
                     from app.services.pre_dm_handler import update_pre_dm_state
+                    # Do NOT set primary_dm_sent here — execute_automation_action would see it and skip sending. Set it after we actually send.
                     if processed_email:
                         update_pre_dm_state(sender_id, r.id, {
                             "email_received": True,
                             "email": processed_email,
-                            "primary_dm_sent": True
                         })
                     if processed_phone:
                         update_pre_dm_state(sender_id, r.id, {
                             "phone_received": True,
                             "phone": processed_phone,
-                            "primary_dm_sent": True
                         })
                     
                     log_print(f"📤 Sending primary DM for rule {r.id} (lead: {lead_info})")
@@ -1745,7 +1744,7 @@ async def process_instagram_message(event: dict, db: Session):
                     if processed_phone:
                         override["phone"] = processed_phone
                     
-                    # Await so the primary DM is actually sent before we return (fix: create_task was fire-and-forget, user got no reply)
+                    # Pass incoming_message so execute_automation_action doesn't treat as "no message" and return early.
                     try:
                         await execute_automation_action(
                             r,
@@ -1755,8 +1754,11 @@ async def process_instagram_message(event: dict, db: Session):
                             trigger_type="story_reply" if story_id else "new_message",
                             message_id=message_id,
                             comment_id=stored_comment_id,
-                            pre_dm_result_override=override
+                            pre_dm_result_override=override,
+                            incoming_message=message_text,
                         )
+                        # Only mark primary_dm_sent after we actually sent (so future messages don't re-trigger)
+                        update_pre_dm_state(sender_id, r.id, {"primary_dm_sent": True})
                     except Exception as e:
                         log_print(f"❌ Failed to send primary DM for rule {r.id}: {e}", "ERROR")
                 
