@@ -3903,7 +3903,8 @@ async def execute_automation_action(
             # NEW SIMPLIFIED MVP APPROACH: Single toggle "Pre-DM Engagement Message"
             # If enable_pre_dm_engagement is set, use it to control both follow and email
             # Otherwise, fall back to old behavior (backward compatibility)
-            enable_pre_dm_engagement = rule.config.get("enable_pre_dm_engagement")
+            _cfg = rule.config or {}
+            enable_pre_dm_engagement = _cfg.get("enable_pre_dm_engagement")
             
             if enable_pre_dm_engagement is not None:
                 # New simplified mode; ask_for_email can be false for Followers-only (use rule value or default to toggle)
@@ -3911,14 +3912,13 @@ async def execute_automation_action(
                 ask_for_email = _cfg.get("ask_for_email", enable_pre_dm_engagement)
             else:
                 # Backward compatibility: use old individual checkboxes
-                ask_to_follow = rule.config.get("ask_to_follow", False)
-                ask_for_email = rule.config.get("ask_for_email", False)
+                ask_to_follow = _cfg.get("ask_to_follow", False)
+                ask_for_email = _cfg.get("ask_for_email", False)
             
             pre_dm_result = pre_dm_result_override  # Use override if provided
             
             # CRITICAL: Run pre-DM when Email/Phone/Followers flow is configured (simple_dm_flow / simple_dm_flow_phone)
             # so the "First message (follow + ask for email)" is sent first, not primary DM + media directly
-            _cfg = rule.config or {}
             _run_pre_dm = (
                 ask_to_follow or ask_for_email or
                 _cfg.get("simple_dm_flow") or _cfg.get("simpleDmFlow") or
