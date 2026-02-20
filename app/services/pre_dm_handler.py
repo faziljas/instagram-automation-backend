@@ -196,7 +196,7 @@ def check_if_follow_confirmation(message_text: str) -> bool:
             return True
     
     # Check if message is exactly these short confirmations (case-insensitive)
-    exact_matches = ["follow", "done", "ok", "yes", "followed", "y", "k", "sure", "yep", "yup", "yeah", "got it", "finished", "complete", "followp", "follow p", "follow up", "followup"]  # Lead capture flow confirmations
+    exact_matches = ["follow", "following", "done", "ok", "okay", "yes", "followed", "y", "k", "sure", "yep", "yup", "yeah", "got it", "finished", "complete", "followp", "follow p", "follow up", "followup"]  # Lead capture + simple flow
     if message_lower in exact_matches:
         return True
     
@@ -373,10 +373,20 @@ async def process_pre_dm_actions(
                         "email": email_address,
                         "send_email_success": True,
                     }
-                # Not a valid email → ask again (same question, loop until email)
+                # Not a valid email: if they said ok/done/okay/following etc. → re-ask email question; else → invalid-email message
+                if check_if_follow_confirmation(incoming_message):
+                    return {
+                        "action": "send_email_request",
+                        "message": simple_flow_email_question,
+                        "should_save_email": False,
+                        "email": None,
+                    }
+                invalid_msg = config.get("email_invalid_retry_message") or config.get("emailInvalidRetryMessage") or config.get("email_retry_message") or config.get("emailRetryMessage") or (
+                    "That doesn't look like a valid email. 🤔 Please share your correct email so I can send you the guide! 📧"
+                )
                 return {
-                    "action": "send_email_request",
-                    "message": simple_flow_email_question,
+                    "action": "send_email_retry",
+                    "message": invalid_msg,
                     "should_save_email": False,
                     "email": None,
                 }

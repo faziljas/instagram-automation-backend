@@ -249,7 +249,8 @@ When **`simple_dm_flow`** (or **`simpleDmFlow`**) is **true** for a rule, the fl
 2. **Loop until valid email**  
    On **every** later message (comment or DM) from that user:
    - If the message is a **valid email** → save lead, send primary/final DM, flow complete.
-   - If not (random text, “yes”, “no”, invalid string) → send the **same** email question again (e.g. “What's your email? Reply here and I'll send you the guide! 📧”). No “invalid email” message in-thread; the bot just re-asks on the next message.
+   - If they type an **acknowledgment** (e.g. “ok”, “done”, “okay”, “following”, “yes”, “followed”) → send the **email question** again: “What's your email? Reply here and I'll send you the guide! 📧” (no invalid-email message).
+   - If they type **random / invalid text** (e.g. “Hhdhdh”, gibberish) → send the **invalid-email message** (e.g. “That doesn't look like a valid email. Please share your correct email…”) so they know to send a proper email. Config: `email_invalid_retry_message` or `email_retry_message`.
 
 3. **No follow confirmation**  
    There is no separate “Are you following me?” or “done”/“followed” step. The first message is the only follow ask; then the bot only cares about getting a valid email.
@@ -260,12 +261,13 @@ When **`simple_dm_flow`** (or **`simpleDmFlow`**) is **true** for a rule, the fl
 |-----|--------|-------------|
 | `simple_dm_flow` | `simpleDmFlow` | Set to **true** to use simple flow for this rule. |
 | `simple_flow_message` | `simpleFlowMessage` | First message (follow + “reply with your email”). Default: “Follow me to get the guide 👇 Reply with your email and I'll send it! 📧” |
-| `simple_flow_email_question` | `simpleFlowEmailQuestion` | Message sent every time the user replies without a valid email (loop). Default: “What's your email? Reply here and I'll send you the guide! 📧” |
+| `simple_flow_email_question` | `simpleFlowEmailQuestion` | Email question (first ask or when re-asking after they already got the invalid-email message). Default: “What's your email? Reply here and I'll send you the guide! 📧” |
+| `email_invalid_retry_message` / `email_retry_message` | (same in API) | When they type random/invalid text, send this so they know to share a valid email. Default: “That doesn't look like a valid email. Please share your correct email so I can send you the guide! 📧” |
 
 ### Summary
 
 - **First trigger:** Send `simple_flow_message` (text only).  
-- **Every later message until email:** If valid email → save + send primary DM; else → send `simple_flow_email_question` again.
+- **Every later message until email:** Valid email → save + primary DM. Ack words (ok, done, okay, following, yes) → re-send email question. Random/invalid text → send invalid-email message (`email_invalid_retry_message` / `email_retry_message`).
 
 ---
 
