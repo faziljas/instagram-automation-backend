@@ -311,7 +311,7 @@ def _resolve_user_after_integrity_error(db: Session, email: Optional[str], supab
                 except Exception as heal_e:
                     db.rollback()
                     print(f"[AUTH] Heal supabase_id failed: {heal_e}")
-            print(f"[AUTH] User found after integrity error (race resolved): {user.id}")
+            print(f"[AUTH] Found existing user {user.id} after race condition (email: {email})")
             return user.id
     print(f"[AUTH] User not found after integrity error (email={email}, sub={supabase_user_id})")
     raise HTTPException(
@@ -451,7 +451,8 @@ def get_current_user_id(
         except IntegrityError as e:
             # Duplicate key (email or supabase_id): another request created the user - find and return them
             db.rollback()
-            print(f"[AUTH] IntegrityError on user create (duplicate key) - resolving existing user: {e.orig}")
+            # This is expected in race conditions (multiple requests creating same user) - not an error
+            print(f"[AUTH] User already exists (race condition resolved) - finding existing user for email: {email}")
             return _resolve_user_after_integrity_error(db, email, supabase_user_id, e)
         except Exception as e:
             db.rollback()
@@ -467,6 +468,8 @@ def get_current_user_id(
             ])
             
             if is_integrity_error:
+                # User already exists (race condition) - find and return them
+                print(f"[AUTH] User already exists (race condition resolved) - finding existing user for email: {email}")
                 return _resolve_user_after_integrity_error(db, email, supabase_user_id, e)
             
             # For non-integrity errors, retry lookup a few times
