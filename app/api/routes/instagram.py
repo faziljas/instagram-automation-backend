@@ -3913,7 +3913,15 @@ async def execute_automation_action(
             
             pre_dm_result = pre_dm_result_override  # Use override if provided
             
-            print(f"🔍 [DEBUG] Pre-DM check: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, pre_dm_result={pre_dm_result}")
+            # CRITICAL: Run pre-DM when Email/Phone/Followers flow is configured (simple_dm_flow / simple_dm_flow_phone)
+            # so the "First message (follow + ask for email)" is sent first, not primary DM + media directly
+            _cfg = rule.config or {}
+            _run_pre_dm = (
+                ask_to_follow or ask_for_email or
+                _cfg.get("simple_dm_flow") or _cfg.get("simpleDmFlow") or
+                _cfg.get("simple_dm_flow_phone") or _cfg.get("simpleDmFlowPhone")
+            ) and pre_dm_result is None
+            print(f"🔍 [DEBUG] Pre-DM check: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, simple_dm_flow={_cfg.get('simple_dm_flow') or _cfg.get('simpleDmFlow')}, simple_dm_flow_phone={_cfg.get('simple_dm_flow_phone') or _cfg.get('simpleDmFlowPhone')}, run_pre_dm={_run_pre_dm}, pre_dm_result={pre_dm_result}")
             
             # If override says "send_primary", skip all pre-DM processing
             # BUT: If skip_growth_steps is False, we might still need to check for email success message
@@ -3935,7 +3943,7 @@ async def execute_automation_action(
                             pre_dm_result["send_email_success"] = True
                             print(f"✅ [FIX] Set send_email_success=True for non-VIP user with email")
                 # pre_dm_result already set to override, continue to primary DM logic below
-            elif (ask_to_follow or ask_for_email) and pre_dm_result is None:
+            elif _run_pre_dm:
                 print(f"🔍 [DEBUG] Processing pre-DM actions: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, skip_growth_steps={skip_growth_steps}")
                 # Process pre-DM actions (unless override is provided)
                 # CRITICAL: If skip_growth_steps=True (VIP user), process_pre_dm_actions will return send_primary immediately
