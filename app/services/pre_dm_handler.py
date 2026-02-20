@@ -314,14 +314,19 @@ async def process_pre_dm_actions(
     # Otherwise, fall back to old behavior (backward compatibility)
     enable_pre_dm_engagement = config.get("enable_pre_dm_engagement")
     
+    # CRITICAL: Check if phone flow is enabled - if so, don't ask for email
+    simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
+    
     if enable_pre_dm_engagement is not None:
         # New simplified mode: single toggle controls both
         ask_to_follow = enable_pre_dm_engagement
-        ask_for_email = enable_pre_dm_engagement
+        # CRITICAL FIX: If phone flow is enabled, don't ask for email (phone flow replaces email)
+        ask_for_email = enable_pre_dm_engagement and not simple_dm_flow_phone
     else:
         # Backward compatibility: use old individual checkboxes
         ask_to_follow = config.get("ask_to_follow", False)
-        ask_for_email = config.get("ask_for_email", False)
+        # CRITICAL FIX: If phone flow is enabled, don't ask for email (phone flow replaces email)
+        ask_for_email = config.get("ask_for_email", False) and not simple_dm_flow_phone
     
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
@@ -910,17 +915,117 @@ async def process_pre_dm_actions(
                     "email": None
                 }
         else:
-            # User replied with "no", random text, or something that isn't a follow confirmation — send a friendly reminder
-            print(f"💬 Non-confirmation reply while waiting for follow: '{incoming_message}' — sending follow reminder")
-            follow_reminder = config.get("reengagement_follow_reminder_message") or config.get("reengagementFollowReminderMessage") or (
-                "Please click 'I'm following' or type 'done' / 'yes' to continue! 😊"
-            )
-            return {
-                "action": "send_follow_reminder",
-                "message": follow_reminder,
-                "should_save_email": False,
-                "email": None
-            }
+            # User replied with random text that isn't a follow confirmation
+            # Check if they're responding to "Are you followed?" question
+            if state.get("follow_recheck_sent", False):
+                # User is responding to "Are you followed?" question
+                message_lower = incoming_message.strip().lower()
+                is_yes = message_lower in ["yes", "yep", "yup", "yeah", "y", "ok", "okay", "sure", "done", "followed", "following", "i'm following", "im following", "i am following"]
+                is_no = message_lower in ["no", "nope", "nah", "not yet", "not", "n"]
+                
+                if is_yes:
+                    # User confirmed they're following - mark as confirmed and proceed
+                    print(f"✅ User confirmed following via 'Are you followed?' question")
+                    update_pre_dm_state(sender_id, rule.id, {
+                        "follow_confirmed": True,
+                        "follow_recheck_sent": False
+                    })
+                    
+                    # Track follower gain count
+                    try:
+                        update_automation_stats(rule.id, "follower_gained", db)
+                        print(f"✅ Follower gain count updated for rule {rule.id}")
+                    except Exception as stats_err:
+                        print(f"⚠️ Failed to update follower gain count: {str(stats_err)}")
+                    
+                    # Log analytics
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        media_id = (rule.config or {}).get("media_id")
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=account.user_id,
+                            event_type=EventType.IM_FOLLOWING_CLICKED,
+                            rule_id=rule.id,
+                            media_id=media_id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "sender_id": str(sender_id),
+                                "confirmed_via": "are_you_followed_yes",
+                                "message": incoming_message[:200] if incoming_message else None,
+                            },
+                        )
+                    except Exception as analytics_err:
+                        print(f"⚠️ Failed to log analytics: {str(analytics_err)}")
+                    
+                    # Update global audience
+                    try:
+                        from app.services.global_conversion_check import update_audience_following
+                        update_audience_following(db, sender_id, account.id, account.user_id, is_following=True)
+                    except Exception:
+                        pass
+                    
+                    # If email request is enabled, proceed to email request
+                    if ask_for_email and not state.get("email_request_sent"):
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "email_request_sent": True,
+                            "step": "email"
+                        })
+                        return {
+                            "action": "send_email_request",
+                            "message": ask_for_email_message,
+                            "should_save_email": False,
+                            "email": None
+                        }
+                    else:
+                        # No email request, proceed to primary DM
+                        return {
+                            "action": "send_primary",
+                            "message": None,
+                            "should_save_email": False,
+                            "email": None
+                        }
+                elif is_no:
+                    # User said no - ask them to follow again
+                    print(f"❌ User said they're not following yet - resending follow request")
+                    update_pre_dm_state(sender_id, rule.id, {
+                        "follow_recheck_sent": False,
+                        "follow_request_sent": False  # Reset to ask again
+                    })
+                    return {
+                        "action": "send_follow_request",
+                        "message": ask_to_follow_message,
+                        "should_save_email": False,
+                        "email": None
+                    }
+                else:
+                    # Unclear response - ask "Are you followed?" again
+                    print(f"💬 Unclear response to 'Are you followed?' - asking again")
+                    follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
+                        "Are you followed? Please reply with Yes or No."
+                    )
+                    return {
+                        "action": "send_follow_recheck",
+                        "message": follow_recheck_msg,
+                        "should_save_email": False,
+                        "email": None
+                    }
+            else:
+                # First time random text - ask "Are you followed?" with Yes/No buttons
+                print(f"💬 Non-confirmation reply while waiting for follow: '{incoming_message}' — asking 'Are you followed?'")
+                follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
+                    "Are you followed?"
+                )
+                update_pre_dm_state(sender_id, rule.id, {
+                    "follow_recheck_sent": True
+                })
+                return {
+                    "action": "send_follow_recheck",
+                    "message": follow_recheck_msg,
+                    "should_save_email": False,
+                    "email": None
+                }
     
     # Check if this is a response to an email request
     # IMPORTANT: Only process emails from DMs, NOT from comments

@@ -641,6 +641,158 @@ async def process_instagram_message(event: dict, db: Session):
 
                 return  # Exit early, don't process as regular message
             
+            # 1.5) Handle "Are you followed?" Yes/No quick reply buttons
+            if quick_reply_payload.startswith("follow_recheck_yes_") or quick_reply_payload.startswith("follow_recheck_no_"):
+                is_yes = quick_reply_payload.startswith("follow_recheck_yes_")
+                rule_id_from_payload = None
+                try:
+                    if is_yes:
+                        rule_id_from_payload = int(quick_reply_payload.split("follow_recheck_yes_")[1])
+                    else:
+                        rule_id_from_payload = int(quick_reply_payload.split("follow_recheck_no_")[1])
+                except (ValueError, IndexError):
+                    log_print(f"⚠️ Could not parse rule_id from payload: {quick_reply_payload}", "WARNING")
+                
+                from app.models.automation_rule import AutomationRule
+                from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state
+                from app.services.lead_capture import update_automation_stats
+                
+                # Find the specific rule
+                if rule_id_from_payload:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.id == rule_id_from_payload,
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                else:
+                    rules = db.query(AutomationRule).filter(
+                        AutomationRule.instagram_account_id == account.id,
+                        AutomationRule.is_active == True
+                    ).all()
+                
+                for rule in rules:
+                    ask_to_follow = rule.config.get("ask_to_follow", False) if rule.config else False
+                    ask_for_email = rule.config.get("ask_for_email", False) if rule.config else False
+                    
+                    if not ask_to_follow:
+                        continue
+                    
+                    state = get_pre_dm_state(str(sender_id), rule.id)
+                    
+                    if is_yes:
+                        # User confirmed they're following
+                        log_print(f"✅ User clicked 'Yes' on 'Are you followed?' for rule {rule.id}")
+                        update_pre_dm_state(str(sender_id), rule.id, {
+                            "follow_confirmed": True,
+                            "follow_recheck_sent": False
+                        })
+                        
+                        # Track follower gain count
+                        try:
+                            update_automation_stats(rule.id, "follower_gained", db)
+                        except Exception:
+                            pass
+                        
+                        # Log analytics
+                        try:
+                            from app.utils.analytics import log_analytics_event_sync
+                            from app.models.analytics_event import EventType
+                            media_id = rule.config.get("media_id") if hasattr(rule, 'config') else None
+                            log_analytics_event_sync(
+                                db=db,
+                                user_id=account.user_id,
+                                event_type=EventType.IM_FOLLOWING_CLICKED,
+                                rule_id=rule.id,
+                                media_id=media_id,
+                                instagram_account_id=account.id,
+                                metadata={
+                                    "sender_id": sender_id,
+                                    "source": "follow_recheck_yes_button",
+                                    "clicked_at": datetime.utcnow().isoformat()
+                                }
+                            )
+                        except Exception:
+                            pass
+                        
+                        # Update global audience
+                        try:
+                            from app.services.global_conversion_check import update_audience_following
+                            update_audience_following(db, str(sender_id), account.id, account.user_id, is_following=True)
+                        except Exception:
+                            pass
+                        
+                        # If email request is enabled, send email question
+                        if ask_for_email:
+                            ask_for_email_message = rule.config.get(
+                                "ask_for_email_message",
+                                "Quick question - what's your email? I'd love to send you something special! 📧"
+                            )
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_dm
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                else:
+                                    raise Exception("No access token found")
+                                
+                                page_id_for_dm = account.page_id
+                                send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                                update_pre_dm_state(str(sender_id), rule.id, {
+                                    "email_request_sent": True,
+                                    "step": "email"
+                                })
+                                log_print(f"✅ Email request sent after 'Are you followed?' Yes confirmation")
+                            except Exception as e:
+                                log_print(f"❌ Failed to send email request: {str(e)}", "ERROR")
+                        else:
+                            # No email request, proceed directly to primary DM
+                            log_print(f"✅ Follow confirmed via 'Are you followed?' Yes, proceeding to primary DM")
+                            asyncio.create_task(execute_automation_action(
+                                rule, sender_id, account, db,
+                                trigger_type="postback",
+                                message_id=message_id,
+                                pre_dm_result_override={"action": "send_primary"}
+                            ))
+                    else:
+                        # User said No - resend follow request
+                        log_print(f"❌ User clicked 'No' on 'Are you followed?' for rule {rule.id} - resending follow request")
+                        ask_to_follow_message = rule.config.get(
+                            "ask_to_follow_message",
+                            "Hey! Would you mind following me? I share great content! 🙌"
+                        ) if rule.config else "Hey! Would you mind following me? I share great content! 🙌"
+                        
+                        update_pre_dm_state(str(sender_id), rule.id, {
+                            "follow_recheck_sent": False,
+                            "follow_request_sent": False  # Reset to ask again
+                        })
+                        
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id_for_dm = account.page_id
+                            
+                            # Send follow request with buttons
+                            follow_quick_reply = [
+                                {"content_type": "text", "title": "I'm following", "payload": f"im_following_{rule.id}"},
+                                {"content_type": "text", "title": "Follow Me 👆", "payload": f"follow_me_{rule.id}"}
+                            ]
+                            send_dm(sender_id, ask_to_follow_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                            log_print(f"✅ Follow request resent after 'Are you followed?' No")
+                        except Exception as e:
+                            log_print(f"❌ Failed to resend follow request: {str(e)}", "ERROR")
+                    
+                    # Only process the first matching rule
+                    return
+            
             # 2) Handle "I'm following" quick reply button (payload: im_following_{rule_id})
             if quick_reply_payload.startswith("im_following_"):
                 log_print(f"✅ [STRICT MODE] User clicked 'I'm following' button! Payload={quick_reply_payload}")
@@ -1589,6 +1741,61 @@ async def process_instagram_message(event: dict, db: Session):
                                 log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
                         except Exception as send_err:
                             log_print(f"⚠️ Failed to send follow reminder: {str(send_err)}", "ERROR")
+                        
+                        # Continue to check other rules
+                        continue
+                    
+                    # Handle "Are you followed?" recheck with Yes/No buttons
+                    if pre_dm_result["action"] == "send_follow_recheck":
+                        follow_recheck_msg = pre_dm_result.get("message", "Are you followed?")
+                        log_print(f"💬 Sending 'Are you followed?' question to {sender_id}")
+                        
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            
+                            page_id = account.page_id
+                            
+                            # Create Yes/No quick reply buttons
+                            yes_no_quick_replies = [
+                                {
+                                    "content_type": "text",
+                                    "title": "Yes",
+                                    "payload": f"follow_recheck_yes_{rule.id}"
+                                },
+                                {
+                                    "content_type": "text",
+                                    "title": "No",
+                                    "payload": f"follow_recheck_no_{rule.id}"
+                                }
+                            ]
+                            
+                            send_dm(sender_id, follow_recheck_msg, access_token, page_id, buttons=None, quick_replies=yes_no_quick_replies)
+                            log_print(f"✅ 'Are you followed?' question sent with Yes/No buttons")
+                            
+                            # Log DM sent
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=follow_recheck_msg,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None)
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                        except Exception as send_err:
+                            log_print(f"⚠️ Failed to send follow recheck: {str(send_err)}", "ERROR")
                         
                         # Continue to check other rules
                         continue
@@ -5544,8 +5751,17 @@ async def execute_automation_action(
                             print(f"📤 Sending DM with buttons/quick replies...")
                             from app.utils.instagram_api import send_dm
                             from app.utils.plan_enforcement import log_dm_sent
-                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
-                            print(f"✅ DM with buttons/quick replies sent to {sender_id}")
+                            
+                            # Get media attachment from rule config (backward compatible - only if configured)
+                            media_type = rule.config.get("media_type") or rule.config.get("mediaType")
+                            media_url = rule.config.get("media_url") or rule.config.get("mediaUrl")
+                            # Only use media if both type and URL are provided and type is not 'none'
+                            if media_type and media_type != 'none' and media_url:
+                                send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_type=media_type, media_url=media_url)
+                                print(f"✅ DM with buttons/quick replies and media ({media_type}) sent to {sender_id}")
+                            else:
+                                send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
+                                print(f"✅ DM with buttons/quick replies sent to {sender_id}")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             try:
@@ -5564,9 +5780,19 @@ async def execute_automation_action(
                             # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
                             # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
                             message_timestamp = datetime.utcnow() + timedelta(hours=8)
-                            # No buttons/quick replies, send full message via private reply
-                            send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
-                            print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
+                            # No buttons/quick replies - check if we have media
+                            media_type = rule.config.get("media_type") or rule.config.get("mediaType")
+                            media_url = rule.config.get("media_url") or rule.config.get("mediaUrl")
+                            
+                            # Private replies don't support media attachments, so include media URL in message text if provided
+                            if media_type and media_type != 'none' and media_url:
+                                media_text = f"\n\n📎 {media_url}"
+                                message_with_media = f"{message_template}{media_text}"
+                                send_private_reply(comment_id, message_with_media, access_token, page_id_for_dm)
+                                print(f"✅ Private reply with media URL sent to comment {comment_id} from user {sender_id}")
+                            else:
+                                send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
+                                print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             # Note: Private replies are counted as DMs for tracking purposes
@@ -5595,8 +5821,17 @@ async def execute_automation_action(
                         # Import send_dm and call it with quick_replies
                         from app.utils.instagram_api import send_dm
                         from app.utils.plan_enforcement import log_dm_sent
-                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
-                        print(f"✅ DM sent to {sender_id}")
+                        
+                        # Get media attachment from rule config (backward compatible - only if configured)
+                        media_type = rule.config.get("media_type") or rule.config.get("mediaType")
+                        media_url = rule.config.get("media_url") or rule.config.get("mediaUrl")
+                        # Only use media if both type and URL are provided and type is not 'none'
+                        if media_type and media_type != 'none' and media_url:
+                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_type=media_type, media_url=media_url)
+                            print(f"✅ DM with media ({media_type}) sent to {sender_id}")
+                        else:
+                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
+                            print(f"✅ DM sent to {sender_id}")
                         
                         # Log DM sent (tracks in DmLog and increments global tracker)
                         try:
