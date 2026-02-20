@@ -298,6 +298,13 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                             # Cards - include URL in subtitle
                             element["subtitle"] = f"{subtitle_text}\n\n🎴 Card: {media_url}".strip() if subtitle_text else f"🎴 Card: {media_url}"
                             print(f"   Adding card URL to subtitle: {media_url[:50]}...")
+                        # Add clickable button for media URL (Instagram does not auto-link URLs in subtitles)
+                        if media_type in ['pdf', 'doc', 'link', 'card', 'video'] and len(template_buttons) < 3:
+                            media_btn_title = "Open document" if media_type in ['pdf', 'doc'] else "Open link" if media_type == 'link' else "View card" if media_type == 'card' else "Play video"
+                            template_buttons = list(template_buttons)
+                            template_buttons.append({"type": "web_url", "url": media_url, "title": media_btn_title[:20]})
+                            element["buttons"] = template_buttons
+                            print(f"   Adding clickable media button: {media_btn_title}")
                     
                     message_payload = {
                         "attachment": {
@@ -342,6 +349,12 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
             elif media_type == 'card':
                 element["subtitle"] = f"{element.get('subtitle', '')}\n\n🎴 Card: {media_url}".strip()
                 print(f"   Adding card URL: {media_url[:50]}...")
+            
+            # Add a URL button so the link is clickable (Instagram does not auto-link URLs in template subtitles)
+            if media_type in ['pdf', 'doc', 'link', 'card', 'video']:
+                button_title = "Open document" if media_type in ['pdf', 'doc'] else "Open link" if media_type == 'link' else "View card" if media_type == 'card' else "Play video"
+                element["buttons"] = [{"type": "web_url", "url": media_url, "title": button_title[:20]}]
+                print(f"   Adding clickable button: {button_title}")
             
             message_payload = {
                 "attachment": {
