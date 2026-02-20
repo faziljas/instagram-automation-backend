@@ -321,6 +321,23 @@ async def process_pre_dm_actions(
     simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
     # When we're already in phone flow, don't run email logic (would wrongly treat e.g. "97920453" as invalid email)
     in_phone_flow = state.get("step") == "phone" or state.get("phone_request_sent")
+    
+    # CRITICAL FIX: If config changed from phone to email, clear old phone state to allow email collection
+    # This handles scenario where Reel A was configured for phone (collected phone), then changed to email
+    simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
+    if simple_dm_flow and not simple_dm_flow_phone:
+        # Config is now email-only, but state might have old phone data - clear it
+        if state.get("phone_received") or state.get("phone_request_sent") or state.get("step") == "phone":
+            print(f"🔄 [CONFIG CHANGE] Rule {rule.id} changed from phone to email. Clearing old phone state to allow email collection.")
+            update_pre_dm_state(sender_id, rule.id, {
+                "phone_received": False,
+                "phone_request_sent": False,
+                "phone": None,
+                "step": "email" if state.get("email_request_sent") else "initial"
+            })
+            # Update in_phone_flow check after clearing state
+            in_phone_flow = False
+    
     if simple_dm_flow and not in_phone_flow:
         simple_flow_message = config.get("simple_flow_message") or config.get("simpleFlowMessage") or (
             "Follow me to get the guide 👇 Reply with your email and I'll send it! 📧"
@@ -458,6 +475,20 @@ async def process_pre_dm_actions(
     # This prevents asking for phone number when user only configured email collection
     # ---------------------------------------------------------
     simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
+    
+    # CRITICAL FIX: If config changed from email to phone, clear old email state to allow phone collection
+    # This handles scenario where Reel A was configured for email (collected email), then changed to phone
+    if simple_dm_flow_phone and not simple_dm_flow:
+        # Config is now phone-only, but state might have old email data - clear it
+        if state.get("email_received") or state.get("email_request_sent") or state.get("step") == "email":
+            print(f"🔄 [CONFIG CHANGE] Rule {rule.id} changed from email to phone. Clearing old email state to allow phone collection.")
+            update_pre_dm_state(sender_id, rule.id, {
+                "email_received": False,
+                "email_request_sent": False,
+                "email": None,
+                "step": "phone" if state.get("phone_request_sent") else "initial"
+            })
+    
     # CRITICAL FIX: Don't run phone flow if email flow is active (even if email not received yet)
     # This prevents the bug where system asks for phone after email is collected or when email flow is configured
     # Phone flow should only run if email flow is explicitly disabled
