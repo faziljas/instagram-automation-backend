@@ -1,6 +1,6 @@
 # Alembic migrations
 
-Migrations run **automatically on app startup** (see `app/main.py` → `run_migrations()`). On Render they run on every deploy when you push.
+Migrations run **automatically on deploy**: Render’s start command runs `alembic upgrade head` then `run_migrations.py` before starting the app, so every push applies new Alembic revisions.
 
 **Revision files:** `001_initial`, `002_legacy_schema`, etc. Each push → Render deploys → startup runs `alembic upgrade head` → any new revision files are applied.
 
