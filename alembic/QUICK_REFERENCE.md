@@ -1,0 +1,68 @@
+# Migration Quick Reference
+
+## ⚡ Quick Start
+
+### Adding Enum Value
+```python
+from alembic.utils.safe_enum_addition import safe_add_enum_value
+
+def upgrade() -> None:
+    safe_add_enum_value('eventtype', 'new_value')
+```
+
+### Adding Multiple Enum Values
+```python
+from alembic.utils.safe_enum_addition import safe_add_multiple_enum_values
+
+def upgrade() -> None:
+    safe_add_multiple_enum_values('eventtype', ['value1', 'value2'])
+```
+
+### Checking Schema Exists
+```python
+def upgrade() -> None:
+    conn = op.get_bind()
+    result = conn.execute(sa.text("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.schemata 
+            WHERE schema_name = 'schema_name'
+        );
+    """)).scalar()
+    
+    if not result:
+        return  # Skip if schema doesn't exist
+```
+
+## 🚫 Never Do This
+
+```python
+# ❌ DON'T: This aborts transaction
+try:
+    op.execute(sa.text("ALTER TYPE eventtype ADD VALUE 'value'"))
+except Exception:
+    pass  # Transaction already aborted!
+
+# ❌ DON'T: Assume schema exists
+op.execute(sa.text("CREATE TRIGGER ... ON auth.users ..."))
+```
+
+## ✅ Always Do This
+
+```python
+# ✅ DO: Use safe helper
+safe_add_enum_value('eventtype', 'value')
+
+# ✅ DO: Check schema first
+if schema_exists:
+    create_trigger()
+```
+
+## 📋 Pre-Commit Checklist
+
+- [ ] Uses `safe_add_enum_value` for enum additions
+- [ ] Checks schema existence before using schemas  
+- [ ] Uses `IF NOT EXISTS` / `IF EXISTS` where possible
+- [ ] Tested on fresh database
+- [ ] Tested idempotency (run twice)
+
+See `MIGRATION_GUIDELINES.md` for full details.
