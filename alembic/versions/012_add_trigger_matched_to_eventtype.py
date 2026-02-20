@@ -23,14 +23,25 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # Add new eventtype enum value 'trigger_matched' for TRIGGER_MATCHED events.
     # SQLAlchemy now uses enum VALUES (trigger_matched) not enum NAMES (TRIGGER_MATCHED) via values_callable.
+    # FIXED: Use DO block to handle "already exists" errors without aborting transaction
     import sqlalchemy as sa
     # Only add lowercase value since SQLAlchemy stores enum values, not names
-    try:
-        op.execute(sa.text("ALTER TYPE eventtype ADD VALUE 'trigger_matched'"))
-    except Exception as e:
-        # Re-running migration: value already exists (e.g. duplicate_object / already exists)
-        if "already exists" not in str(e).lower() and "duplicate" not in str(e).lower():
-            raise
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'trigger_matched';
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Check if error is about duplicate/existing value
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    -- Value already exists, that's fine - do nothing
+                    NULL;
+                ELSE
+                    -- Re-raise unexpected errors
+                    RAISE;
+                END IF;
+        END $$;
+    """))
 
 
 def downgrade() -> None:
