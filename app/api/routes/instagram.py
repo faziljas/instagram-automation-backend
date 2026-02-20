@@ -1364,6 +1364,7 @@ async def process_instagram_message(event: dict, db: Session):
                         incoming_message=message_text,
                         trigger_type="story_reply" if story_id else "new_message"
                     )
+                    log_print(f"🔍 [DEBUG] pre_dm_result action={pre_dm_result.get('action')} for rule {rule.id}")
                     
                     # Handle follow reminder action (random text while waiting for follow confirmation)
                     if pre_dm_result["action"] == "send_follow_reminder":
@@ -1509,7 +1510,8 @@ async def process_instagram_message(event: dict, db: Session):
                         continue
                     
                     # Handle invalid email - send retry message (only once, not per rule)
-                    elif pre_dm_result["action"] == "send_email_retry":
+                    # Use standalone 'if' so this is always evaluated (not tied to send_primary branch)
+                    if pre_dm_result["action"] == "send_email_retry":
                         # STRICT MODE: Email was invalid! Send retry message and WAIT
                         # Only send retry message once, even if multiple rules are waiting
                         if not sent_retry_message:
@@ -1562,27 +1564,27 @@ async def process_instagram_message(event: dict, db: Session):
                         log_print(f"⏳ Waiting for valid email, skipping primary DM")
                         return  # Exit early - don't send primary DM when email is invalid
                     
-                    # If we're waiting for something and got random text, ignore it
-                        from app.services.pre_dm_handler import get_pre_dm_state
-                        state = get_pre_dm_state(sender_id, rule.id)
-                        
-                        if state.get("follow_request_sent") and not state.get("follow_confirmed"):
-                            log_print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id} for rule {rule.id}")
-                            if attachments:
-                                log_print(f"   🚫 Image/attachment ignored - only text confirmations accepted")
-                            else:
-                                log_print(f"   Message '{message_text}' ignored - not a valid confirmation")
-                            # Continue to check other rules
-                            continue
-                        
-                        if state.get("email_request_sent") and not state.get("email_received"):
-                            log_print(f"⏳ [STRICT MODE] Waiting for email from {sender_id} for rule {rule.id}")
-                            if attachments:
-                                log_print(f"   🚫 Image/attachment ignored - only email text accepted")
-                            else:
-                                log_print(f"   Message '{message_text}' ignored - not a valid email")
-                            # Continue to check other rules
-                            continue
+                    # If we're waiting for something and got random text (no action matched), ignore and continue
+                    from app.services.pre_dm_handler import get_pre_dm_state
+                    state = get_pre_dm_state(sender_id, rule.id)
+                    
+                    if state.get("follow_request_sent") and not state.get("follow_confirmed"):
+                        log_print(f"⏳ [STRICT MODE] Waiting for follow confirmation from {sender_id} for rule {rule.id}")
+                        if attachments:
+                            log_print(f"   🚫 Image/attachment ignored - only text confirmations accepted")
+                        else:
+                            log_print(f"   Message '{message_text}' ignored - not a valid confirmation")
+                        # Continue to check other rules
+                        continue
+                    
+                    if state.get("email_request_sent") and not state.get("email_received"):
+                        log_print(f"⏳ [STRICT MODE] Waiting for email from {sender_id} for rule {rule.id}")
+                        if attachments:
+                            log_print(f"   🚫 Image/attachment ignored - only email text accepted")
+                        else:
+                            log_print(f"   Message '{message_text}' ignored - not a valid email")
+                        # Continue to check other rules
+                        continue
             
             # RACE CONDITION FIX: If we processed an email, send primary DM for ALL rules waiting for email
             if processed_email and rules_waiting_for_email:
