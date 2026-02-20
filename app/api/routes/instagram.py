@@ -1156,6 +1156,33 @@ async def process_instagram_message(event: dict, db: Session):
                 AutomationRule.action_type == "send_dm"
             ).all()
             
+            # CRITICAL FIX: Filter rules to prevent conflicting lead-capture types (email vs phone)
+            # If multiple rules match, prioritize email flow over phone flow to avoid asking for both
+            email_rules = []
+            phone_rules = []
+            other_rules = []
+            
+            for rule in pre_dm_rules:
+                config = rule.config or {}
+                simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
+                simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
+                
+                if simple_dm_flow:
+                    email_rules.append(rule)
+                elif simple_dm_flow_phone:
+                    phone_rules.append(rule)
+                else:
+                    other_rules.append(rule)
+            
+            # If both email and phone rules exist, prioritize email and exclude phone rules
+            # This prevents asking for both email and phone in the same interaction
+            if email_rules and phone_rules:
+                log_print(f"⚠️ [FIX] Found conflicting lead-capture types: {len(email_rules)} email rule(s) and {len(phone_rules)} phone rule(s). Prioritizing email flow and excluding phone rules.")
+                pre_dm_rules = email_rules + other_rules
+            else:
+                # No conflict, use all rules
+                pre_dm_rules = email_rules + phone_rules + other_rules
+            
             # FIX: After primary DM is complete (simple reply or lead capture), do NOT process pre_dm_rules.
             # Send one short "already complete" reply so the user isn't left with silence, then stop.
             from app.services.pre_dm_handler import get_pre_dm_state, sender_primary_dm_complete
