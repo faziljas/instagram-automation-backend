@@ -3906,9 +3906,9 @@ async def execute_automation_action(
             enable_pre_dm_engagement = rule.config.get("enable_pre_dm_engagement")
             
             if enable_pre_dm_engagement is not None:
-                # New simplified mode: single toggle controls both
+                # New simplified mode; ask_for_email can be false for Followers-only (use rule value or default to toggle)
                 ask_to_follow = enable_pre_dm_engagement
-                ask_for_email = enable_pre_dm_engagement
+                ask_for_email = _cfg.get("ask_for_email", enable_pre_dm_engagement)
             else:
                 # Backward compatibility: use old individual checkboxes
                 ask_to_follow = rule.config.get("ask_to_follow", False)
@@ -4357,82 +4357,51 @@ async def execute_automation_action(
                         
                         return  # Done - wait for postback event
                     else:
-                        # Only follow request, no email
-                        message_template = follow_message
-                        # Mark follow as sent in state
+                        # Followers-only: send first question DM (follow request with "I'm following" / "Follow Me" buttons)
                         from app.services.pre_dm_handler import update_pre_dm_state
-                        update_pre_dm_state(str(sender_id), rule_id, {
-                            "follow_request_sent": True,
-                            "step": "follow"
-                        })
-                        print(f"📩 Sending follow request DM to {sender_id} with Follow button")
-                        
-                        # Update pre_dm_result with final message and buttons
-                        pre_dm_result["buttons"] = buttons
-                        pre_dm_result["message"] = message_template
-                        
-                        # Schedule primary DM after 15 seconds for follow-only case
-                        sender_id_for_dm = str(sender_id)
-                        rule_id_for_dm = int(rule_id)
-                        user_id_for_dm = int(user_id)
-                        account_id_for_dm = int(account_id)
-                        
-                        async def delayed_primary_dm_simple():
-                            """Simplified background task to send primary DM after 15 seconds."""
-                            from app.db.session import SessionLocal
-                            from app.models.automation_rule import AutomationRule
-                            from app.models.instagram_account import InstagramAccount
-                            
-                            db_session = SessionLocal()
+                        from app.utils.instagram_api import send_dm as send_dm_api
+                        from app.utils.encryption import decrypt_credentials
+                        state_updates = {"follow_request_sent": True, "step": "follow"}
+                        if comment_id:
+                            state_updates["comment_id"] = comment_id
+                        update_pre_dm_state(str(sender_id), rule_id, state_updates)
+                        follow_quick_reply = [
+                            {"content_type": "text", "title": "I'm following", "payload": f"im_following_{rule_id}"},
+                            {"content_type": "text", "title": "Follow Me 👆", "payload": f"follow_me_{rule_id}"},
+                        ]
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                                page_id_for_dm = account.page_id
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                                page_id_for_dm = account.page_id
+                            else:
+                                raise Exception("No access token found")
+                        except Exception as e:
+                            print(f"❌ Failed to get access token for Followers flow: {str(e)}")
+                            return
+                        is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                        if is_comment_trigger:
+                            from app.utils.instagram_api import send_private_reply
                             try:
-                                print(f"⏰ [PRIMARY DM] Starting 15-second delay for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
-                                await asyncio.sleep(15)  # Wait 15 seconds
-                                print(f"⏰ [PRIMARY DM] 15 seconds elapsed, checking if primary DM already sent")
-                                
-                                # Re-fetch rule and account
-                                rule_refresh = db_session.query(AutomationRule).filter(AutomationRule.id == rule_id_for_dm).first()
-                                account_refresh = db_session.query(InstagramAccount).filter(
-                                    InstagramAccount.user_id == user_id_for_dm,
-                                    InstagramAccount.id == account_id_for_dm
-                                ).first()
-                                
-                                if not rule_refresh or not account_refresh:
-                                    print(f"⚠️ [PRIMARY DM] Rule or account not found")
-                                    return
-                                
-                                # Simple check: if primary DM already sent, skip
-                                from app.services.pre_dm_handler import get_pre_dm_state
-                                current_state = get_pre_dm_state(sender_id_for_dm, rule_id_for_dm)
-                                if current_state.get("primary_dm_sent"):
-                                    print(f"⏭️ [PRIMARY DM] Primary DM already sent, skipping")
-                                    return
-                                
-                                # Mark as sent to prevent duplicates
-                                from app.services.pre_dm_handler import update_pre_dm_state
-                                update_pre_dm_state(sender_id_for_dm, rule_id_for_dm, {
-                                    "primary_dm_sent": True
-                                })
-                                
-                                # Send primary DM directly from rule config (no pre-DM state checking)
-                                print(f"✅ [PRIMARY DM] Sending primary DM from rule config")
-                                await execute_automation_action(
-                                    rule_refresh, sender_id_for_dm, account_refresh, db_session,
-                                    trigger_type="primary_timeout",
-                                    message_id=None,
-                                    pre_dm_result_override={"action": "send_primary"}  # Skip pre-DM processing
-                                )
-                                print(f"✅ [PRIMARY DM] Primary DM sent successfully")
-                            except Exception as e:
-                                print(f"❌ [PRIMARY DM] Error in delayed primary DM: {str(e)}")
-                                import traceback
-                                traceback.print_exc()
-                            finally:
-                                db_session.close()
-                                print(f"🔒 [PRIMARY DM] Database session closed")
-                        
-                        # Start the delayed primary DM task
-                        print(f"🚀 [PRIMARY DM] Scheduling primary DM after 15 seconds for sender {sender_id_for_dm}, rule {rule_id_for_dm}")
-                        asyncio.create_task(delayed_primary_dm_simple())
+                                send_private_reply(comment_id, "Hi! 👋", access_token, page_id_for_dm)
+                                await asyncio.sleep(1)
+                            except Exception:
+                                pass
+                            follow_with_prompt = f"{follow_message}\n\n✅ Once you've followed, click below to continue!"
+                            send_private_reply(comment_id, follow_with_prompt, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
+                            print(f"✅ [Followers] First question sent via private reply to {sender_id}")
+                        else:
+                            follow_with_prompt = f"{follow_message}\n\n✅ Once you've followed, click below to continue!"
+                            send_dm_api(str(sender_id), follow_with_prompt, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                            print(f"✅ [Followers] First question sent via DM to {sender_id}")
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(user_id=user_id, instagram_account_id=account_id, recipient_username=str(sender_id), message=follow_message, db=db, instagram_username=username, instagram_igsid=account_igsid)
+                        except Exception:
+                            pass
+                        return  # Wait for user to click "I'm following" or "Follow Me" (handled by quick reply handler)
                 elif pre_dm_result and pre_dm_result["action"] == "send_email_request":
                     # Send email request message with Quick Reply buttons
                     message_template = pre_dm_result["message"]

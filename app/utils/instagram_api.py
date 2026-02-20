@@ -327,45 +327,37 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
     else:
         # No buttons - check if we have media to include
         if media_type and media_url:
-            # For messages without buttons but with media, use generic template
-            element = {
-                "title": message[:80] if len(message) > 80 else message,
-                "subtitle": message[80:] if len(message) > 80 else ""
-            }
-            
-            # Add media attachment
-            if media_type == 'image':
-                element["image_url"] = media_url
-                print(f"   Adding image attachment: {media_url[:50]}...")
-            elif media_type == 'video':
-                element["subtitle"] = f"{element.get('subtitle', '')}\n\n📹 Video: {media_url}".strip()
-                print(f"   Adding video URL: {media_url[:50]}...")
-            elif media_type in ['pdf', 'doc']:
-                element["subtitle"] = f"{element.get('subtitle', '')}\n\n📄 Document: {media_url}".strip()
-                print(f"   Adding document URL: {media_url[:50]}...")
-            elif media_type == 'link':
-                element["subtitle"] = f"{element.get('subtitle', '')}\n\n🔗 Link: {media_url}".strip()
-                print(f"   Adding link URL: {media_url[:50]}...")
-            elif media_type == 'card':
-                element["subtitle"] = f"{element.get('subtitle', '')}\n\n🎴 Card: {media_url}".strip()
-                print(f"   Adding card URL: {media_url[:50]}...")
-            
-            # Add a URL button so the link is clickable (Instagram does not auto-link URLs in template subtitles)
+            # For pdf/doc/link/card/video: send PLAIN TEXT so Instagram auto-linkifies the URL
+            # (blue, underlined, clickable with preview - like ss2). Generic template subtitles are NOT clickable.
             if media_type in ['pdf', 'doc', 'link', 'card', 'video']:
-                button_title = "Open document" if media_type in ['pdf', 'doc'] else "Open link" if media_type == 'link' else "View card" if media_type == 'card' else "Play video"
-                element["buttons"] = [{"type": "web_url", "url": media_url, "title": button_title[:20]}]
-                print(f"   Adding clickable button: {button_title}")
-            
-            message_payload = {
-                "attachment": {
-                    "type": "template",
-                    "payload": {
-                        "template_type": "generic",
-                        "elements": [element]
+                if media_type in ['pdf', 'doc']:
+                    media_label = "📄 Document:"
+                elif media_type == 'link':
+                    media_label = "🔗 Link:"
+                elif media_type == 'card':
+                    media_label = "🎴 Card:"
+                else:
+                    media_label = "📹 Video:"
+                text_with_url = f"{message}\n\n{media_label}\n{media_url}"
+                message_payload = {"text": text_with_url}
+                print(f"   Sending plain text with URL so link is clickable (like ss2): {media_label} {media_url[:50]}...")
+            else:
+                # Image only: use generic template so the image is displayed
+                element = {
+                    "title": message[:80] if len(message) > 80 else message,
+                    "subtitle": message[80:] if len(message) > 80 else "",
+                    "image_url": media_url
+                }
+                message_payload = {
+                    "attachment": {
+                        "type": "template",
+                        "payload": {
+                            "template_type": "generic",
+                            "elements": [element]
+                        }
                     }
                 }
-            }
-            print(f"   Using generic template with media attachment (no buttons)")
+                print(f"   Using generic template with image attachment")
         else:
             # No buttons, no media - use plain text message
             message_payload = {
