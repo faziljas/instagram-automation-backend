@@ -340,17 +340,17 @@ def get_analytics_dashboard(
         from sqlalchemy import case
         counts_query = base_query.with_entities(
             func.sum(case((cast(AnalyticsEvent.event_type, String) == "trigger_matched", 1), else_=0)).label("total_triggers"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("total_dms_sent"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "dm_sent", 1), else_=0)).label("total_dms_sent"),
             func.sum(case(
-                (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                (cast(AnalyticsEvent.event_type, String) == "email_collected", 1),
                 (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                 else_=0
             )).label("leads_collected"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.LINK_CLICKED, 1), else_=0)).label("link_clicks"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.FOLLOW_BUTTON_CLICKED, 1), else_=0)).label("follow_button_clicks"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.IM_FOLLOWING_CLICKED, 1), else_=0)).label("im_following_clicks"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.PROFILE_VISIT, 1), else_=0)).label("profile_visits"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.COMMENT_REPLIED, 1), else_=0)).label("comment_replies"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "link_clicked", 1), else_=0)).label("link_clicks"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "follow_button_clicked", 1), else_=0)).label("follow_button_clicks"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "im_following_clicked", 1), else_=0)).label("im_following_clicks"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "profile_visit", 1), else_=0)).label("profile_visits"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "comment_replied", 1), else_=0)).label("comment_replies"),
         ).first()
         
         # Extract counts (handle None values)
@@ -390,11 +390,11 @@ def get_analytics_dashboard(
             ).with_entities(
                 AnalyticsEvent.media_id,
                 func.sum(case(
-                    (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                    (cast(AnalyticsEvent.event_type, String) == "email_collected", 1),
                     (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                     else_=0
                 )).label("leads"),
-                func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms")
+                func.sum(case((cast(AnalyticsEvent.event_type, String) == "dm_sent", 1), else_=0)).label("dms")
             ).group_by(AnalyticsEvent.media_id)
             
             media_stats = {row[0]: {"leads": int(row[1] or 0), "dms": int(row[2] or 0)} for row in media_stats_query.all()}
@@ -536,9 +536,9 @@ def get_analytics_dashboard(
         daily_breakdown_query = base_query.with_entities(
             func.date(AnalyticsEvent.created_at).label("date"),
             func.sum(case((cast(AnalyticsEvent.event_type, String) == "trigger_matched", 1), else_=0)).label("triggers"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "dm_sent", 1), else_=0)).label("dms_sent"),
             func.sum(case(
-                (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                (cast(AnalyticsEvent.event_type, String) == "email_collected", 1),
                 (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                 else_=0
             )).label("leads")
@@ -743,17 +743,17 @@ def get_media_analytics(
         aggregated_stats = analytics_base.with_entities(
             AnalyticsEvent.media_id,
             func.sum(case((cast(AnalyticsEvent.event_type, String) == "trigger_matched", 1), else_=0)).label("triggers"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "dm_sent", 1), else_=0)).label("dms_sent"),
             func.sum(case(
-                (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                (cast(AnalyticsEvent.event_type, String) == "email_collected", 1),
                 (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                 else_=0
             )).label("leads_collected"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.LINK_CLICKED, 1), else_=0)).label("link_clicks"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.FOLLOW_BUTTON_CLICKED, 1), else_=0)).label("follow_button_clicks"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.PROFILE_VISIT, 1), else_=0)).label("profile_visits"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.IM_FOLLOWING_CLICKED, 1), else_=0)).label("im_following_clicks"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.COMMENT_REPLIED, 1), else_=0)).label("comment_replies"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "link_clicked", 1), else_=0)).label("link_clicks"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "follow_button_clicked", 1), else_=0)).label("follow_button_clicks"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "profile_visit", 1), else_=0)).label("profile_visits"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "im_following_clicked", 1), else_=0)).label("im_following_clicks"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "comment_replied", 1), else_=0)).label("comment_replies"),
         ).group_by(AnalyticsEvent.media_id).all()
         
         # Create stats map for O(1) lookup
