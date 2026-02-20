@@ -381,6 +381,27 @@ async def process_pre_dm_actions(
                             update_automation_stats(rule.id, "lead_captured", db)
                         except Exception:
                             pass
+                        # FIX ISSUE 1: Log EMAIL_COLLECTED analytics event so dashboard "Leads Collected" count increases
+                        try:
+                            from app.utils.analytics import log_analytics_event_sync
+                            from app.models.analytics_event import EventType
+                            media_id = rule.config.get("media_id") if hasattr(rule, "config") else None
+                            log_analytics_event_sync(
+                                db=db,
+                                user_id=account.user_id,
+                                event_type=EventType.EMAIL_COLLECTED,
+                                rule_id=rule.id,
+                                media_id=media_id,
+                                instagram_account_id=account.id,
+                                metadata={
+                                    "sender_id": sender_id,
+                                    "email": email_address,
+                                    "captured_via": "simple_dm_flow",
+                                },
+                            )
+                            print(f"✅ EMAIL_COLLECTED analytics event logged for email: {email_address}")
+                        except Exception as analytics_err:
+                            print(f"⚠️ Failed to log EMAIL_COLLECTED event: {str(analytics_err)}")
                     except Exception as e:
                         print(f"⚠️ Error saving email (simple flow): {str(e)}")
                         db.rollback()
@@ -433,9 +454,14 @@ async def process_pre_dm_actions(
     # ---------------------------------------------------------
     # Simple DM flow (Phone): one follow+phone message, then loop until valid phone
     # Same as email simple flow but collect phone; no disposable-phone list (format validation only).
+    # FIX ISSUE 2: Only run phone flow if email flow is NOT active
+    # This prevents asking for phone number when user only configured email collection
     # ---------------------------------------------------------
     simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
-    if simple_dm_flow_phone:
+    # CRITICAL FIX: Don't run phone flow if email flow is active (even if email not received yet)
+    # This prevents the bug where system asks for phone after email is collected or when email flow is configured
+    # Phone flow should only run if email flow is explicitly disabled
+    if simple_dm_flow_phone and not simple_dm_flow:
         simple_flow_phone_message = config.get("simple_flow_phone_message") or config.get("simpleFlowPhoneMessage") or (
             "Follow me to get the guide 👇 Reply with your phone number and I'll send it! 📱"
         )
