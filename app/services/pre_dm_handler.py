@@ -355,7 +355,7 @@ async def process_pre_dm_actions(
                     update_pre_dm_state(sender_id, rule.id, {
                         "email_received": True,
                         "email": email_address,
-                        "primary_dm_sent": True,
+                        # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
                     })
                     try:
                         captured_lead = CapturedLead(
@@ -461,7 +461,7 @@ async def process_pre_dm_actions(
                     update_pre_dm_state(sender_id, rule.id, {
                         "phone_received": True,
                         "phone": phone_number,
-                        "primary_dm_sent": True,
+                        # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
                     })
                     try:
                         captured_lead = CapturedLead(
@@ -701,10 +701,10 @@ async def process_pre_dm_actions(
                     # v2: Don't send primary; wait for re-comment to trigger Use Case 1 or 2
                     return {"action": "wait_for_email", "message": None, "should_save_email": False, "email": None}
                 else:
-                    update_pre_dm_state(sender_id, rule.id, {"primary_dm_sent": True})
+                    # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
                     return {"action": "send_primary", "message": None, "should_save_email": False, "email": state.get("email")}
             else:
-                update_pre_dm_state(sender_id, rule.id, {"primary_dm_sent": True})
+                # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
                 return {
                     "action": "send_primary",
                     "message": None,
@@ -762,9 +762,7 @@ async def process_pre_dm_actions(
             }
         else:
             # No email request, proceed to primary DM
-            update_pre_dm_state(sender_id, rule.id, {
-                "primary_dm_sent": True  # Mark as sent to prevent duplicate from scheduled task
-            })
+            # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
             return {
                 "action": "send_primary",
                 "message": None,
@@ -835,9 +833,7 @@ async def process_pre_dm_actions(
             else:
                 print(f"⚠️ [DEBUG] Skipping email request: ask_for_email={ask_for_email}, email_request_sent={state.get('email_request_sent')}")
                 # No email request, proceed to primary DM
-                update_pre_dm_state(sender_id, rule.id, {
-                    "primary_dm_sent": True  # Mark as sent to prevent duplicate from scheduled task
-                })
+                # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
                 return {
                     "action": "send_primary",
                     "message": None,
@@ -895,7 +891,7 @@ async def process_pre_dm_actions(
             update_pre_dm_state(sender_id, rule.id, {
                 "email_received": True,
                 "email": email_address,
-                "primary_dm_sent": True  # Mark as sent to prevent duplicates
+                # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
             })
             
             # Save email to leads database
@@ -1011,8 +1007,8 @@ async def process_pre_dm_actions(
         if flow_completed:
             print(f"✅ [PRE-DM] Flow completed - skipping to primary DM")
             update_pre_dm_state(sender_id, rule.id, {
-                "primary_dm_sent": True,
                 "step": "primary"
+                # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
             })
             return {
                 "action": "send_primary",
@@ -1080,8 +1076,8 @@ async def process_pre_dm_actions(
         if follow_completed and email_completed:
             print(f"✅ [PRE-DM] Both follow and email completed - sending primary DM")
             update_pre_dm_state(sender_id, rule.id, {
-                "primary_dm_sent": True,
                 "step": "primary"
+                # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
             })
             return {
                 "action": "send_primary",
