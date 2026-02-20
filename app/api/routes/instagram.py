@@ -1197,6 +1197,37 @@ async def process_instagram_message(event: dict, db: Session):
             
             pre_dm_rules = filtered_rules
             
+            # CRITICAL FIX: Only process rules that have an active state for this sender
+            # This prevents rules from different reels/posts from interfering with each other
+            # A rule is "active" if it has started a conversation (follow_request_sent, email_request_sent, or phone_request_sent)
+            from app.services.pre_dm_handler import get_pre_dm_state
+            active_rules = []
+            for rule in pre_dm_rules:
+                state = get_pre_dm_state(sender_id, rule.id)
+                # Rule is active if it has started any part of the flow
+                is_active = (
+                    state.get("follow_request_sent", False) or
+                    state.get("email_request_sent", False) or
+                    state.get("phone_request_sent", False) or
+                    state.get("primary_dm_sent", False)
+                )
+                
+                # Also include rules with trigger_type="new_message" (they don't need comment trigger)
+                # and rules with trigger_type="story_reply" if this is a story reply
+                trigger_type = getattr(rule, "trigger_type", None)
+                if trigger_type == "new_message":
+                    is_active = True  # Always process new_message rules
+                elif trigger_type == "story_reply" and story_id:
+                    is_active = True  # Process story_reply rules for story replies
+                
+                if is_active:
+                    active_rules.append(rule)
+                    log_print(f"✅ Rule {rule.id} ({rule.name}) is active for sender {sender_id}")
+                else:
+                    log_print(f"⏭️ Rule {rule.id} ({rule.name}) is NOT active for sender {sender_id} (no conversation started), skipping")
+            
+            pre_dm_rules = active_rules
+            
             # FIX: After primary DM is complete (simple reply or lead capture), do NOT process pre_dm_rules.
             # Send one short "already complete" reply so the user isn't left with silence, then stop.
             from app.services.pre_dm_handler import get_pre_dm_state, sender_primary_dm_complete
@@ -1324,8 +1355,29 @@ async def process_instagram_message(event: dict, db: Session):
                     continue
                 
                 # Check if this is a follow confirmation (only if we're actually waiting for it)
-                from app.services.pre_dm_handler import get_pre_dm_state
+                from app.services.pre_dm_handler import get_pre_dm_state, check_if_email_response
+                from app.services.lead_capture import validate_phone
                 state = get_pre_dm_state(sender_id, rule.id)
+                
+                # CRITICAL FIX: Ensure rules only process responses matching their flow type
+                # Reel A (phone) shouldn't process email responses, Reel B (email) shouldn't process phone responses
+                config = rule.config or {}
+                simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
+                simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
+                
+                # If this is a phone flow rule, skip if message looks like an email
+                if simple_dm_flow_phone and message_text:
+                    is_email, _ = check_if_email_response(message_text)
+                    if is_email:
+                        log_print(f"⏭️ Rule {rule.id} (phone flow) skipping email response '{message_text[:50]}...' - this rule only processes phone numbers")
+                        continue
+                
+                # If this is an email flow rule, skip if message looks like a phone number
+                if simple_dm_flow and not simple_dm_flow_phone and message_text:
+                    is_valid_phone, _ = validate_phone(message_text.strip())
+                    if is_valid_phone:
+                        log_print(f"⏭️ Rule {rule.id} (email flow) skipping phone response '{message_text[:50]}...' - this rule only processes emails")
+                        continue
                 
                 # Debug logging to trace why follow confirmation isn't triggering
                 is_follow_confirmation = check_if_follow_confirmation(message_text)
