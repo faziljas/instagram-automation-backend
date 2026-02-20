@@ -107,8 +107,7 @@ Behavior depends on rule config **`skip_for_now_no_final_dm`** (alias: `skipForN
 
 **When the same user comments again later (v2 re-comment):**
 
-- **Use Case 1 — follow not confirmed:** Bot sends **one question**: “Are you following me?” (quick replies: I'm following \| Follow Me). User confirms → then Email Step → user types email → Final DM sent.
-- **Use Case 2 — follow already confirmed:** Bot skips follow question and sends **Email Step** directly (“Please provide your email”) → user types email → Final DM sent.
+- We **always** send **one question**: “Are you following me?” (quick replies: I'm following \| Follow Me). User confirms → then Email Step → user types email → Final DM sent. (We do not skip the follow question on re-comment.)
 
 #### BAU: `skip_for_now_no_final_dm` = **false**
 
@@ -137,8 +136,8 @@ Behavior depends on rule config **`skip_for_now_no_final_dm`** (alias: `skipForN
 | What happens | Result |
 |--------------|--------|
 | Bot does **not** treat as email | No lead saved, no final DM. |
-| Bot keeps state **waiting for email** | DM trigger: may send one retry/reminder message per invalid input (or friendly reminder if they typed “done” while waiting for email). Comment trigger: resend email question as reminder. |
-| **Retry limit:** | **None.** The bot does not give up or send the final DM after N invalid attempts; it keeps waiting for a valid email (or Skip for Now / Share Email). |
+| Bot sends **invalid-email retry message** | e.g. “That doesn’t look like a valid email address. Please share your email so we can send you the guide!” (config: `email_invalid_retry_message`). |
+| **Retry limit:** | **None.** The bot keeps asking for a valid email until the user sends one or uses Skip for Now / Share Email. |
 | **Next:** User can type a valid email or use **Share Email** / **Skip for Now** / **Use My Email** when available. |
 
 ---
@@ -159,9 +158,8 @@ Behavior depends on rule config **`skip_for_now_no_final_dm`** (alias: `skipForN
 | 3c′ | Email | **Skip for Now** (BAU) | ❌ No | Final DM → flow complete |
 | 3d | Email | **Use My Email** (if shown) | ✅ Yes | Final DM → flow complete |
 | 3e | Email | Invalid / other text | ❌ No | Wait / reminder; still in email step |
-| 4a | Comment again (after Skip, v2) | follow not confirmed | — | “Are you following me?” → confirm → Email Step → Final DM |
-| 4b | Comment again (after Skip, v2) | follow confirmed | — | Email Step directly → Final DM |
-| 4c | Comment again (after Skip, BAU) | Any comment | — | Final DM again (or email request if `reask_email_on_comment_if_no_lead=true`) |
+| 4a | Comment again (after Skip, v2) | Any | — | “Are you following me?” → confirm → Email Step → Final DM (always ask follow on re-comment) |
+| 4b | Comment again (after Skip, BAU) | Any comment | — | Final DM again (or email request if `reask_email_on_comment_if_no_lead=true`) |
 
 ---
 
@@ -174,7 +172,8 @@ Behavior depends on rule config **`skip_for_now_no_final_dm`** (alias: `skipForN
 | `skip_for_now_no_final_dm` | `skipForNowNoFinalDm` | **true** (v2) | When **true**, “Skip for Now” does not send Final DM; re-comment triggers Use Case 1 or 2. When **false** (BAU), Skip sends Final DM. |
 | `require_follow_confirmation` | `requireFollowConfirmation` | `false` | When **true**, “Follow Me” only sends reminder; email step only after “I'm following” or “done”. |
 | `reask_email_on_comment_if_no_lead` | `reaskEmailOnCommentIfNoLead` | `false` | When **true** (and BAU: `skip_for_now_no_final_dm` false), if user commented again with no lead, bot re-sends email request instead of final DM again. |
-| `reengagement_follow_message` | `reengagementFollowMessage` | `"Are you following me?"` | Message shown on re-comment when follow was not confirmed (v2 Use Case 1). |
+| `reengagement_follow_message` | `reengagementFollowMessage` | `"Are you following me?"` | Message shown on re-comment (v2; we always ask this before email step). |
+| `email_invalid_retry_message` | `emailInvalidRetryMessage` | (see below) | Message sent when user types invalid/non-email text while we’re waiting for email. Default: “That doesn’t look like a valid email address. Please share your email so we can send you the guide!” |
 
 ---
 

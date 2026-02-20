@@ -404,26 +404,15 @@ async def process_pre_dm_actions(
             except Exception:
                 pass
             if not has_lead:
-                if not state.get("follow_confirmed"):
-                    # Use Case 1: one question "Are you following me?" (not full first-time flow)
-                    print(f"📧 [v2 Use Case 1] Re-comment, follow not confirmed — sending 'Are you following me?'")
-                    reengagement_msg = config.get("reengagement_follow_message", "Are you following me?")
-                    return {
-                        "action": "send_reengagement_follow_check",
-                        "message": reengagement_msg,
-                        "should_save_email": False,
-                        "email": None,
-                    }
-                else:
-                    # Use Case 2: skip follow, go straight to email step
-                    print(f"📧 [v2 Use Case 2] Re-comment, follow confirmed — sending email request directly")
-                    update_pre_dm_state(sender_id, rule.id, {"email_skipped": False})
-                    return {
-                        "action": "send_email_request",
-                        "message": ask_for_email_message,
-                        "should_save_email": False,
-                        "email": None,
-                    }
+                # Always ask "Are you following me?" on re-comment (don't skip to email even if follow was confirmed)
+                print(f"📧 [v2 Re-Comment] No lead — sending 'Are you following me?' (always ask on re-comment)")
+                reengagement_msg = config.get("reengagement_follow_message", "Are you following me?")
+                return {
+                    "action": "send_reengagement_follow_check",
+                    "message": reengagement_msg,
+                    "should_save_email": False,
+                    "email": None,
+                }
 
         # RE-ENGAGEMENT (opt-in): When user commented again but we never collected lead (they skipped email),
         # re-ask for email instead of sending final DM again. Only when rule config enables it (BAU unchanged).
@@ -738,12 +727,13 @@ async def process_pre_dm_actions(
                     "email": None
                 }
             
-            # STRICT MODE: Invalid / gibberish text while waiting for email.
-            # Do NOT send any retry or helper message – just keep waiting silently.
-            print(f"🚫 [STRICT MODE] Ignoring non-email text while waiting for email: '{incoming_message}'")
+            # Invalid / non-email text while waiting for email — ask for a valid email (we have this message)
+            print(f"⚠️ Invalid email input while waiting for email: '{incoming_message}' — sending retry message")
+            invalid_email_msg = config.get("email_invalid_retry_message",
+                "That doesn't look like a valid email address. 🤔\n\nPlease share your email so we can send you the guide! 📧")
             return {
-                "action": "wait_for_email",
-                "message": None,
+                "action": "send_email_retry",
+                "message": invalid_email_msg,
                 "should_save_email": False,
                 "email": None
             }
