@@ -341,7 +341,11 @@ def get_analytics_dashboard(
         counts_query = base_query.with_entities(
             func.sum(case((AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED, 1), else_=0)).label("total_triggers"),
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("total_dms_sent"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1), else_=0)).label("leads_collected"),
+            func.sum(case(
+                (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                else_=0
+            )).label("leads_collected"),
             func.sum(case((AnalyticsEvent.event_type == EventType.LINK_CLICKED, 1), else_=0)).label("link_clicks"),
             func.sum(case((AnalyticsEvent.event_type == EventType.FOLLOW_BUTTON_CLICKED, 1), else_=0)).label("follow_button_clicks"),
             func.sum(case((AnalyticsEvent.event_type == EventType.IM_FOLLOWING_CLICKED, 1), else_=0)).label("im_following_clicks"),
@@ -385,7 +389,11 @@ def get_analytics_dashboard(
                 AnalyticsEvent.media_id.in_(media_ids)
             ).with_entities(
                 AnalyticsEvent.media_id,
-                func.sum(case((AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1), else_=0)).label("leads"),
+                func.sum(case(
+                    (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                    (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                    else_=0
+                )).label("leads"),
                 func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms")
             ).group_by(AnalyticsEvent.media_id)
             
@@ -529,7 +537,11 @@ def get_analytics_dashboard(
             func.date(AnalyticsEvent.created_at).label("date"),
             func.sum(case((AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED, 1), else_=0)).label("triggers"),
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1), else_=0)).label("leads")
+            func.sum(case(
+                (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                else_=0
+            )).label("leads")
         ).group_by(func.date(AnalyticsEvent.created_at))
         
         # Create a map of date -> stats
@@ -732,7 +744,11 @@ def get_media_analytics(
             AnalyticsEvent.media_id,
             func.sum(case((AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED, 1), else_=0)).label("triggers"),
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1), else_=0)).label("leads_collected"),
+            func.sum(case(
+                (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
+                (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                else_=0
+            )).label("leads_collected"),
             func.sum(case((AnalyticsEvent.event_type == EventType.LINK_CLICKED, 1), else_=0)).label("link_clicks"),
             func.sum(case((AnalyticsEvent.event_type == EventType.FOLLOW_BUTTON_CLICKED, 1), else_=0)).label("follow_button_clicks"),
             func.sum(case((AnalyticsEvent.event_type == EventType.PROFILE_VISIT, 1), else_=0)).label("profile_visits"),

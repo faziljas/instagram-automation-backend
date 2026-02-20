@@ -319,7 +319,9 @@ async def process_pre_dm_actions(
     # No "I'm following" / "Follow Me" / "Are you following me?" / "Share Email" / "Skip"
     # ---------------------------------------------------------
     simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
-    if simple_dm_flow:
+    # When we're already in phone flow, don't run email logic (would wrongly treat e.g. "97920453" as invalid email)
+    in_phone_flow = state.get("step") == "phone" or state.get("phone_request_sent")
+    if simple_dm_flow and not in_phone_flow:
         simple_flow_message = config.get("simple_flow_message") or config.get("simpleFlowMessage") or (
             "Follow me to get the guide 👇 Reply with your email and I'll send it! 📧"
         )
@@ -484,6 +486,27 @@ async def process_pre_dm_actions(
                     except Exception as e:
                         print(f"⚠️ Error saving phone (simple flow): {str(e)}")
                         db.rollback()
+                    # Log PHONE_COLLECTED so dashboard "Leads Collected" and Top Performing LEADS count it
+                    try:
+                        from app.utils.analytics import log_analytics_event_sync
+                        from app.models.analytics_event import EventType
+                        media_id = rule.config.get("media_id") if hasattr(rule, "config") else None
+                        log_analytics_event_sync(
+                            db=db,
+                            user_id=account.user_id,
+                            event_type=EventType.PHONE_COLLECTED,
+                            rule_id=rule.id,
+                            media_id=media_id,
+                            instagram_account_id=account.id,
+                            metadata={
+                                "sender_id": sender_id,
+                                "phone": phone_number,
+                                "captured_via": "simple_dm_flow_phone",
+                            },
+                        )
+                        print(f"✅ PHONE_COLLECTED analytics event logged for phone: {phone_number}")
+                    except Exception as analytics_err:
+                        print(f"⚠️ Failed to log PHONE_COLLECTED event: {str(analytics_err)}")
                     return {
                         "action": "send_primary",
                         "message": None,
@@ -500,7 +523,7 @@ async def process_pre_dm_actions(
                         "email": None,
                     }
                 return {
-                    "action": "send_email_retry",
+                    "action": "send_phone_retry",
                     "message": phone_invalid_msg,
                     "should_save_email": False,
                     "email": None,

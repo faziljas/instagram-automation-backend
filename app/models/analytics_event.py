@@ -13,6 +13,7 @@ class EventType(str, Enum):
     DM_SENT = "dm_sent"  # Direct message sent to user
     LINK_CLICKED = "link_clicked"  # User clicked a tracked link (e.g., "Visit Profile")
     EMAIL_COLLECTED = "email_collected"  # User provided their email
+    PHONE_COLLECTED = "phone_collected"  # User provided their phone number
     FOLLOW_BUTTON_CLICKED = "follow_button_clicked"  # User clicked "Follow Me" button
     IM_FOLLOWING_CLICKED = "im_following_clicked"  # User clicked "I'm following" button
     PROFILE_VISIT = "profile_visit"  # User visited profile via button

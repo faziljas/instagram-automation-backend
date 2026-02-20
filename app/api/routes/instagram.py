@@ -1627,6 +1627,43 @@ async def process_instagram_message(event: dict, db: Session):
                         
                         continue
                     
+                    # Handle invalid phone - send retry message (simple flow phone)
+                    if pre_dm_result["action"] == "send_phone_retry":
+                        if not sent_retry_message:
+                            log_print(f"⚠️ [STRICT MODE] Invalid phone format, sending retry message")
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_dm
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                else:
+                                    raise Exception("No access token found")
+                                page_id = account.page_id
+                                retry_msg = pre_dm_result.get("message", "") or "That doesn't look like a valid phone number. 🤔 Please share your correct number so I can send you the guide! 📱"
+                                send_dm(sender_id, retry_msg, access_token, page_id, buttons=None, quick_replies=None)
+                                log_print(f"✅ Retry message sent, waiting for valid phone")
+                                sent_retry_message = True
+                                processed_rules_count += 1
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=retry_msg,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None)
+                                    )
+                                except Exception as log_err:
+                                    log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                            except Exception as e:
+                                log_print(f"❌ Failed to send phone retry message: {str(e)}", "ERROR")
+                        log_print(f"⏳ Waiting for valid phone, skipping primary DM")
+                        return
+                    
                     # Handle invalid email - send retry message (only once, not per rule)
                     # Use standalone 'if' so this is always evaluated (not tied to send_primary branch)
                     if pre_dm_result["action"] == "send_email_retry":
@@ -5219,11 +5256,14 @@ async def execute_automation_action(
                             message_template = random.choice(valid_messages)
                             print(f"🔄 [FALLBACK] Loaded message_template from lead_dm_messages: {repr(message_template)}")
                 
-                # If still no template, return
+                # If still no template but we have send_primary with a lead (phone/email), use a default so primary DM is sent
                 if not message_template or (isinstance(message_template, str) and not message_template.strip()):
-                    print(f"❌ Still no message template after fallback, returning early")
-                    # Email success message was already sent above if needed, so we can return now
-                    return
+                    if pre_dm_result and pre_dm_result.get("action") == "send_primary" and (pre_dm_result.get("phone") or pre_dm_result.get("email")):
+                        message_template = "Thanks! Here’s your guide. 📱 Check your DMs for the link."
+                        print(f"⚠️ No primary DM template for rule {rule.id}; using default message so lead still receives primary DM")
+                    else:
+                        print(f"❌ Still no message template after fallback, returning early")
+                        return
             
             # Update stats
             from app.services.lead_capture import update_automation_stats
