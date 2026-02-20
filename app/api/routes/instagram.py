@@ -2517,6 +2517,41 @@ async def process_instagram_message(event: dict, db: Session):
                 
         # Process new_message rules ONLY if no keyword rule matched AND no story rule matched
         if not keyword_rule_matched and not story_rule_matched:
+            # Fallback: user may be replying in DMs to a follow/email request that was started from a comment (rule has media_id, so not in keyword_rules for regular DM). Route this message to the rule that has pending pre-DM state so "No" / "done" etc. get the retry flow.
+            from app.services.pre_dm_handler import get_pre_dm_state
+            for rule in all_active_rules:
+                if not getattr(rule, "config", None):
+                    continue
+                cfg = rule.config or {}
+                has_pre_dm = (
+                    cfg.get("ask_to_follow") or cfg.get("askForFollow") or
+                    cfg.get("ask_for_email") or cfg.get("askForEmail") or
+                    cfg.get("enable_pre_dm_engagement") or
+                    cfg.get("simple_dm_flow") or cfg.get("simpleDmFlow") or
+                    cfg.get("simple_dm_flow_phone") or cfg.get("simpleDmFlowPhone")
+                )
+                if not has_pre_dm:
+                    continue
+                state = get_pre_dm_state(sender_id, rule.id)
+                pending_follow = state.get("follow_request_sent") and not state.get("follow_confirmed")
+                pending_email = state.get("email_request_sent") and not state.get("email_received")
+                if pending_follow or pending_email:
+                    log_print(f"📩 [DM] Routing message to rule {rule.id} ({rule.name}) — pending pre-DM reply (follow={pending_follow}, email={pending_email})")
+                    processing_key = f"{message_id}_{rule.id}"
+                    if processing_key not in _processing_rules:
+                        _processing_rules[processing_key] = True
+                        if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                            _processing_rules.clear()
+                        asyncio.create_task(execute_automation_action(
+                            rule,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="new_message",
+                            message_id=message_id,
+                            incoming_message=message_text,
+                        ))
+                    return
             if len(new_message_rules) > 0:
                 # STRICT MODE: Check if user is waiting for follow/email confirmation
                 # If yes, ignore new_message rules to prevent unwanted triggers
