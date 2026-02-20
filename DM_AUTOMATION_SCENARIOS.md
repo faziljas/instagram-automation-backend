@@ -2,7 +2,7 @@
 
 This document describes every user path in the comment-triggered DM automation flow: **Follow step** → **Email step** → **Final DM**, including optional config flags.
 
-**Two modes:** (1) **Standard flow** (default): follow with “I'm following” / “Follow Me” and optional confirmation, then email with “Share Email” / “Skip for Now”. (2) **Simple flow** (opt-in): one combined message, then loop the same email question until a valid email is received. See [§8 Simple flow](#8-simple-flow) for the latter.
+**Two modes:** (1) **Standard flow** (default): follow with “I'm following” / “Follow Me” and optional confirmation, then email with “Share Email” / “Skip for Now”. (2) **Simple flow** (opt-in): one combined message, then loop until a valid **email** or **phone** is received. See [§8 Simple flow (email)](#8-simple-flow-opt-in) and [§9 Simple flow (phone)](#9-simple-flow-phone-opt-in).
 
 ---
 
@@ -271,4 +271,36 @@ When **`simple_dm_flow`** (or **`simpleDmFlow`**) is **true** for a rule, the fl
 
 ---
 
-*Document reflects: comment → follow (I'm following / Follow Me / Visit Profile / text) → email (actual email / Share Email / Skip for Now / Use My Email) → final DM, with optional config for follow confirmation and re-asking email on next comment; plus optional Simple flow (one message, loop email until valid). Config keys are canonical snake_case with camelCase aliases.*
+## 9. Simple flow (Phone) (opt-in)
+
+When **`simple_dm_flow_phone`** (or **`simpleDmFlowPhone`**) is **true** for a rule, the flow is the same pattern as [§8](#8-simple-flow-opt-in) but collects a **phone number** instead of email:
+
+1. **One combined message**  
+   On first trigger, the bot sends a single message that asks to follow and to reply with a phone number (e.g. “Follow me to get the guide 👇 Reply with your phone number and I'll send it! 📱”). No buttons.
+
+2. **Loop until valid phone**  
+   On every later message:
+   - If the message is a **valid phone number** (format validation only; there is **no disposable-phone blocklist**) → save lead with `phone`, send primary/final DM, flow complete.
+   - If they type an **acknowledgment** (ok, done, okay, following, yes, followed) → send the **phone question** again.
+   - If they type **random / invalid text** → send the **invalid-phone message** (`phone_invalid_retry_message`).
+
+3. **No follow confirmation**  
+   Same as email simple flow: no separate “Are you following me?” step.
+
+### Config (simple flow – phone)
+
+| Key | Alias | Description |
+|-----|--------|-------------|
+| `simple_dm_flow_phone` | `simpleDmFlowPhone` | Set to **true** to use simple flow (phone) for this rule. Mutually exclusive with `simple_dm_flow` (email). |
+| `simple_flow_phone_message` | `simpleFlowPhoneMessage` | First message (follow + “reply with your phone number”). |
+| `simple_flow_phone_question` | `simpleFlowPhoneQuestion` | Phone question (re-sent until they reply with a valid number). |
+| `phone_invalid_retry_message` | `phoneInvalidRetryMessage` | When they type random/invalid text, send this so they know to share a valid phone number. |
+
+### Summary
+
+- **First trigger:** Send `simple_flow_phone_message` (text only).  
+- **Every later message until phone:** Valid phone (format only; no disposable-phone list) → save + primary DM. Ack words → re-send phone question. Random/invalid text → send `phone_invalid_retry_message`.
+
+---
+
+*Document reflects: comment → follow (I'm following / Follow Me / Visit Profile / text) → email or phone (actual email/phone, Share Email / Skip for Now / Use My Email, or phone loop) → final DM, with optional config for follow confirmation and re-asking on next comment; plus optional Simple flow for email (one message, loop email until valid) or Simple flow for phone (one message, loop phone until valid). Config keys are canonical snake_case with camelCase aliases.*

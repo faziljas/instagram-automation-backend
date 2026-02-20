@@ -10,7 +10,7 @@ from app.models.automation_rule import AutomationRule
 from app.models.captured_lead import CapturedLead
 from app.models.instagram_account import InstagramAccount
 from app.models.follower import Follower
-from app.services.lead_capture import validate_email, update_automation_stats
+from app.services.lead_capture import validate_email, validate_phone, update_automation_stats
 from app.utils.disposable_email import is_disposable_email
 
 
@@ -29,6 +29,8 @@ def get_pre_dm_state(sender_id: str, rule_id: int) -> Dict[str, Any]:
         "follow_request_sent": False,
         "email_request_sent": False,
         "email_received": False,
+        "phone_request_sent": False,
+        "phone_received": False,
         "primary_dm_sent": False,
         "comment_replied_comment_ids": [],
     })
@@ -43,6 +45,8 @@ def update_pre_dm_state(sender_id: str, rule_id: int, updates: Dict[str, Any]):
             "follow_request_sent": False,
             "email_request_sent": False,
             "email_received": False,
+            "phone_request_sent": False,
+            "phone_received": False,
             "primary_dm_sent": False,
             "comment_replied_comment_ids": [],
         }
@@ -419,6 +423,103 @@ async def process_pre_dm_actions(
             return {
                 "action": "send_simple_flow_start",
                 "message": simple_flow_message,
+                "should_save_email": False,
+                "email": None,
+            }
+        return {"action": "ignore", "message": None, "should_save_email": False, "email": None}
+    
+    # ---------------------------------------------------------
+    # Simple DM flow (Phone): one follow+phone message, then loop until valid phone
+    # Same as email simple flow but collect phone; no disposable-phone list (format validation only).
+    # ---------------------------------------------------------
+    simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
+    if simple_dm_flow_phone:
+        simple_flow_phone_message = config.get("simple_flow_phone_message") or config.get("simpleFlowPhoneMessage") or (
+            "Follow me to get the guide 👇 Reply with your phone number and I'll send it! 📱"
+        )
+        simple_flow_phone_question = config.get("simple_flow_phone_question") or config.get("simpleFlowPhoneQuestion") or (
+            "What's your phone number? Reply here and I'll send you the guide! 📱"
+        )
+        phone_invalid_msg = config.get("phone_invalid_retry_message") or config.get("phoneInvalidRetryMessage") or (
+            "That doesn't look like a valid phone number. 🤔 Please share your correct number so I can send you the guide! 📱"
+        )
+        if state.get("phone_received") or state.get("phone"):
+            return {
+                "action": "send_primary",
+                "message": None,
+                "should_save_email": False,
+                "email": None,
+                "phone": state.get("phone"),
+            }
+        if state.get("follow_request_sent") or state.get("phone_request_sent"):
+            if incoming_message:
+                is_valid_phone, _ = validate_phone(incoming_message.strip())
+                if is_valid_phone:
+                    phone_number = re.sub(r'[\s\-\(\)\+\.]', '', incoming_message.strip())
+                    update_pre_dm_state(sender_id, rule.id, {
+                        "phone_received": True,
+                        "phone": phone_number,
+                        "primary_dm_sent": True,
+                    })
+                    try:
+                        captured_lead = CapturedLead(
+                            user_id=account.user_id,
+                            instagram_account_id=account.id,
+                            automation_rule_id=rule.id,
+                            email=None,
+                            phone=phone_number,
+                            extra_metadata={
+                                "sender_id": sender_id,
+                                "captured_via": "simple_dm_flow_phone",
+                                "timestamp": datetime.utcnow().isoformat(),
+                            },
+                        )
+                        db.add(captured_lead)
+                        db.commit()
+                        db.refresh(captured_lead)
+                        try:
+                            update_automation_stats(rule.id, "lead_captured", db)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"⚠️ Error saving phone (simple flow): {str(e)}")
+                        db.rollback()
+                    return {
+                        "action": "send_primary",
+                        "message": None,
+                        "should_save_email": False,
+                        "email": None,
+                        "phone": phone_number,
+                        "send_email_success": False,
+                    }
+                if check_if_follow_confirmation(incoming_message):
+                    return {
+                        "action": "send_phone_request",
+                        "message": simple_flow_phone_question,
+                        "should_save_email": False,
+                        "email": None,
+                    }
+                return {
+                    "action": "send_email_retry",
+                    "message": phone_invalid_msg,
+                    "should_save_email": False,
+                    "email": None,
+                }
+            return {
+                "action": "send_phone_request",
+                "message": simple_flow_phone_question,
+                "should_save_email": False,
+                "email": None,
+            }
+        if trigger_type in ["post_comment", "keyword", "new_message", "story_reply"]:
+            update_pre_dm_state(sender_id, rule.id, {
+                "follow_request_sent": True,
+                "phone_request_sent": True,
+                "step": "phone",
+            })
+            return {
+                "action": "send_simple_flow_start_phone",
+                "message": simple_flow_phone_message,
                 "should_save_email": False,
                 "email": None,
             }

@@ -1168,8 +1168,10 @@ async def process_instagram_message(event: dict, db: Session):
             processed_rules_count = 0
             sent_retry_message = False
             sent_email_request = False  # Track if we already sent email question (only send once for "done")
+            sent_phone_request = False  # Same for phone simple flow
             processed_email = None  # Store processed email to use for all rules
-            rules_waiting_for_email = []  # Collect all rules waiting for email to send primary DM
+            processed_phone = None  # Store processed phone for phone simple flow
+            rules_waiting_for_email = []  # Collect all rules waiting for email/phone lead to send primary DM
             
             # VIP USER HANDLING: If user is already converted, send primary DM for ONLY ONE matching rule
             # IMPORTANT STRICT MODE: Only do this for Story replies (story_id present).
@@ -1397,6 +1399,37 @@ async def process_instagram_message(event: dict, db: Session):
                             log_print(f"❌ Failed to send simple flow message: {str(e)}", "ERROR")
                         return
                     
+                    # Simple flow (Phone): one combined message (follow + phone ask), then loop until valid phone
+                    if pre_dm_result["action"] == "send_simple_flow_start_phone":
+                        simple_phone_msg = pre_dm_result.get("message", "Follow me to get the guide 👇 Reply with your phone number and I'll send it! 📱")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            send_dm(sender_id, simple_phone_msg, access_token, account.page_id, buttons=None, quick_replies=None)
+                            log_print(f"✅ [Simple flow Phone] Start message sent to {sender_id}")
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=simple_phone_msg,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None),
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                        except Exception as e:
+                            log_print(f"❌ Failed to send simple flow phone message: {str(e)}", "ERROR")
+                        return
+                    
                     # Handle follow reminder action (random text while waiting for follow confirmation)
                     if pre_dm_result["action"] == "send_follow_reminder":
                         # Send reminder message to user
@@ -1507,37 +1540,71 @@ async def process_instagram_message(event: dict, db: Session):
                         # Break after processing first matching rule (only one email question)
                         break
                     
-                    # Handle valid email - proceed to primary DM (RACE CONDITION FIX: Process email once, send primary DM for ALL rules)
-                    if pre_dm_result["action"] == "send_primary" and pre_dm_result.get("email"):
-                        # RACE CONDITION FIX: Process email only once, then send primary DM for ALL matching rules
-                        if processed_email is None:
-                            # First time processing email - extract and save it
+                    # Handle phone request (simple flow phone: re-ask phone question)
+                    if pre_dm_result["action"] == "send_phone_request":
+                        if not sent_phone_request:
+                            phone_message = pre_dm_result.get("message", "What's your phone number? Reply here and I'll send you the guide! 📱")
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_dm
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                else:
+                                    raise Exception("No access token found")
+                                send_dm(sender_id, phone_message, access_token, account.page_id, buttons=None, quick_replies=None)
+                                log_print(f"✅ [Simple flow Phone] Phone question sent to {sender_id}")
+                                sent_phone_request = True
+                                processed_rules_count += 1
+                                try:
+                                    from app.utils.plan_enforcement import log_dm_sent
+                                    log_dm_sent(
+                                        user_id=account.user_id,
+                                        instagram_account_id=account.id,
+                                        recipient_username=str(sender_id),
+                                        message=phone_message,
+                                        db=db,
+                                        instagram_username=account.username,
+                                        instagram_igsid=getattr(account, "igsid", None),
+                                    )
+                                except Exception as log_err:
+                                    log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                            except Exception as e:
+                                log_print(f"❌ Failed to send phone request: {str(e)}", "ERROR")
+                        return
+                    
+                    # Handle valid email or phone - proceed to primary DM (RACE CONDITION FIX: Process once, send primary DM for ALL rules)
+                    if pre_dm_result["action"] == "send_primary" and (pre_dm_result.get("email") or pre_dm_result.get("phone")):
+                        # RACE CONDITION FIX: Process email/phone only once, then send primary DM for ALL matching rules
+                        if pre_dm_result.get("email") and processed_email is None:
                             processed_email = pre_dm_result.get("email")
                             log_print(f"✅ [STRICT MODE] Valid email received: {processed_email}")
-                            log_print(f"📤 Will send primary DM for ALL rules waiting for email")
-                            
-                            # Collect all rules that are waiting for email
+                        if pre_dm_result.get("phone") and processed_phone is None:
+                            processed_phone = pre_dm_result.get("phone")
+                            log_print(f"✅ [Simple flow Phone] Valid phone received: {processed_phone}")
+                        if processed_email or processed_phone:
+                            log_print(f"📤 Will send primary DM for ALL rules waiting for lead")
                             for r in pre_dm_rules:
                                 if (story_id is None or str(r.media_id or "") == story_id):
                                     r_state = get_pre_dm_state(sender_id, r.id)
-                                    if r_state.get("email_request_sent") and not r_state.get("email_received"):
-                                        rules_waiting_for_email.append(r)
-                                        log_print(f"📋 Rule {r.id} is waiting for email, will send primary DM")
+                                    if (r_state.get("email_request_sent") and not r_state.get("email_received")) or (r_state.get("phone_request_sent") and not r_state.get("phone_received")):
+                                        if r not in rules_waiting_for_email:
+                                            rules_waiting_for_email.append(r)
+                                            log_print(f"📋 Rule {r.id} is waiting for lead, will send primary DM")
                         
-                        # Add current rule to the list if not already there (CRITICAL FIX)
                         if rule not in rules_waiting_for_email:
                             rules_waiting_for_email.append(rule)
                             log_print(f"📋 Added current rule {rule.id} to waiting list for primary DM")
                         
-                        # CRITICAL FIX: Also mark this rule's state as email_received immediately
                         from app.services.pre_dm_handler import update_pre_dm_state
-                        update_pre_dm_state(sender_id, rule.id, {
-                            "email_received": True,
-                            "email": processed_email
-                        })
-                        log_print(f"✅ Marked rule {rule.id} as email_received: {processed_email}")
+                        if processed_email:
+                            update_pre_dm_state(sender_id, rule.id, {"email_received": True, "email": processed_email})
+                            log_print(f"✅ Marked rule {rule.id} as email_received: {processed_email}")
+                        if processed_phone:
+                            update_pre_dm_state(sender_id, rule.id, {"phone_received": True, "phone": processed_phone})
+                            log_print(f"✅ Marked rule {rule.id} as phone_received: {processed_phone}")
                         
-                        # Continue to collect all matching rules, then send primary DM for all at the end
                         continue
                     
                     # Handle invalid email - send retry message (only once, not per rule)
@@ -1614,32 +1681,50 @@ async def process_instagram_message(event: dict, db: Session):
                             log_print(f"   🚫 Image/attachment ignored - only email text accepted")
                         else:
                             log_print(f"   Message '{message_text}' ignored - not a valid email")
-                        # Continue to check other rules
+                        continue
+                    if state.get("phone_request_sent") and not state.get("phone_received"):
+                        log_print(f"⏳ [Simple flow Phone] Waiting for phone from {sender_id} for rule {rule.id}")
+                        if attachments:
+                            log_print(f"   🚫 Image/attachment ignored - only phone text accepted")
+                        else:
+                            log_print(f"   Message '{message_text}' ignored - not a valid phone")
                         continue
             
-            # RACE CONDITION FIX: If we processed an email, send primary DM for ALL rules waiting for email
-            if processed_email and rules_waiting_for_email:
-                log_print(f"📤 [RACE CONDITION FIX] Sending primary DM for {len(rules_waiting_for_email)} rule(s) with email: {processed_email}")
+            # RACE CONDITION FIX: If we processed an email or phone, send primary DM for ALL rules waiting for lead
+            if (processed_email or processed_phone) and rules_waiting_for_email:
+                lead_info = processed_email or processed_phone
+                log_print(f"📤 [RACE CONDITION FIX] Sending primary DM for {len(rules_waiting_for_email)} rule(s) with lead: {lead_info}")
                 for idx, r in enumerate(rules_waiting_for_email):
-                    # Add small delay between messages to ensure unique timestamps (100ms per message)
                     if idx > 0:
-                        await asyncio.sleep(0.1 * idx)  # 100ms, 200ms, 300ms... delays
+                        await asyncio.sleep(0.1 * idx)
                     
                     from app.services.pre_dm_handler import get_pre_dm_state
                     r_state = get_pre_dm_state(sender_id, r.id)
                     stored_comment_id = r_state.get("comment_id")
                     
-                    # Update state for this rule
                     from app.services.pre_dm_handler import update_pre_dm_state
-                    update_pre_dm_state(sender_id, r.id, {
-                        "email_received": True,
-                        "email": processed_email,
-                        "primary_dm_sent": True
-                    })
+                    if processed_email:
+                        update_pre_dm_state(sender_id, r.id, {
+                            "email_received": True,
+                            "email": processed_email,
+                            "primary_dm_sent": True
+                        })
+                    if processed_phone:
+                        update_pre_dm_state(sender_id, r.id, {
+                            "phone_received": True,
+                            "phone": processed_phone,
+                            "primary_dm_sent": True
+                        })
                     
-                    log_print(f"📤 Sending primary DM for rule {r.id} (email: {processed_email})")
+                    log_print(f"📤 Sending primary DM for rule {r.id} (lead: {lead_info})")
                     
-                    # Send primary DM for this rule
+                    override = {"action": "send_primary"}
+                    if processed_email:
+                        override["email"] = processed_email
+                        override["send_email_success"] = True
+                    if processed_phone:
+                        override["phone"] = processed_phone
+                    
                     asyncio.create_task(execute_automation_action(
                         r,
                         sender_id,
@@ -1648,11 +1733,7 @@ async def process_instagram_message(event: dict, db: Session):
                         trigger_type="story_reply" if story_id else "new_message",
                         message_id=message_id,
                         comment_id=stored_comment_id,
-                        pre_dm_result_override={
-                            "action": "send_primary",
-                            "email": processed_email,
-                            "send_email_success": True,
-                        }
+                        pre_dm_result_override=override
                     ))
                     processed_rules_count += 1
                 
@@ -3564,6 +3645,36 @@ async def execute_automation_action(
                             pass
                     except Exception as e:
                         print(f"❌ Failed to send simple flow start: {str(e)}")
+                    return
+
+                # Simple flow (Phone): one combined message (follow + phone ask), text only
+                if pre_dm_result and pre_dm_result["action"] == "send_simple_flow_start_phone":
+                    simple_phone_msg = pre_dm_result.get("message", "Follow me to get the guide 👇 Reply with your phone number and I'll send it! 📱")
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    from app.utils.encryption import decrypt_credentials
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
+                        page_id_for_dm = account.page_id
+                        is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                        if is_comment_trigger:
+                            from app.utils.instagram_api import send_private_reply
+                            send_private_reply(comment_id, simple_phone_msg, access_token, page_id_for_dm, quick_replies=None)
+                            print(f"✅ [Simple flow Phone] Start message sent via private reply")
+                        else:
+                            send_dm_api(str(sender_id), simple_phone_msg, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                            print(f"✅ [Simple flow Phone] Start message sent via DM")
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(user_id=user_id, instagram_account_id=account_id, recipient_username=str(sender_id), message=simple_phone_msg, db=db, instagram_username=username, instagram_igsid=account_igsid)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"❌ Failed to send simple flow phone start: {str(e)}")
                     return
 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
