@@ -29,6 +29,20 @@ def upgrade() -> None:
     """
     conn = op.get_bind()
     
+    # Check if auth schema exists before creating trigger
+    result = conn.execute(
+        sa.text("""
+            SELECT EXISTS(
+                SELECT 1 FROM information_schema.schemata 
+                WHERE schema_name = 'auth'
+            );
+        """)
+    ).scalar()
+    
+    if not result:
+        print("⚠️  Schema 'auth' does not exist. Skipping trigger creation.")
+        return
+    
     # Create the trigger function
     # This function will be called AFTER a row is deleted from auth.users
     conn.execute(
