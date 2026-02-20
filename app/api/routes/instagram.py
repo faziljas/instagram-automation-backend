@@ -1759,12 +1759,13 @@ async def process_instagram_message(event: dict, db: Session):
                         )
                         # Only mark primary_dm_sent after we actually sent (so future messages don't re-trigger)
                         update_pre_dm_state(sender_id, r.id, {"primary_dm_sent": True})
+                        processed_rules_count += 1
                     except Exception as e:
                         log_print(f"❌ Failed to send primary DM for rule {r.id}: {e}", "ERROR")
                 
                 log_print(f"✅ Sent primary DM for {len(rules_waiting_for_email)} rule(s)")
             
-            # If we processed any rule, don't continue to new_message rules
+            # If we processed any rule, don't continue to new_message rules (must return so we don't fall through to "Primary DM already complete")
             if processed_rules_count > 0:
                 log_print(f"✅ Processed {processed_rules_count} rule(s) in pre_dm_rules, skipping new_message rules")
                 return
