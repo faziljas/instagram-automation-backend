@@ -606,12 +606,14 @@ async def process_pre_dm_actions(
                     "email": None
                 }
         else:
-            # STRICT MODE: Random / gibberish text while waiting for follow confirmation.
-            # Do NOT send any reminder or extra message – just keep waiting silently.
-            print(f"🚫 [STRICT MODE] Ignoring non-confirmation text while waiting for follow confirmation: '{incoming_message}'")
+            # User replied with "no", random text, or something that isn't a follow confirmation — send a friendly reminder
+            print(f"💬 Non-confirmation reply while waiting for follow: '{incoming_message}' — sending follow reminder")
+            follow_reminder = config.get("reengagement_follow_reminder_message") or config.get("reengagementFollowReminderMessage") or (
+                "Please click 'I'm following' or type 'done' / 'yes' to continue! 😊"
+            )
             return {
-                "action": "wait_for_follow",
-                "message": None,
+                "action": "send_follow_reminder",
+                "message": follow_reminder,
                 "should_save_email": False,
                 "email": None
             }

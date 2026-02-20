@@ -67,6 +67,19 @@ Behavior depends on rule config: **`require_follow_confirmation`** (alias in API
 
 ---
 
+### 2.5 After **“Are you following me?”** (re-engagement) — user types text instead of clicking
+
+When the bot has sent **“Are you following me?”** (e.g. on re-comment), the user may type a reply instead of using the quick replies. Behavior:
+
+| User types | Treated as | What the system does |
+|------------|------------|----------------------|
+| **Yes / ok / done / sure / yep / followed / I'm following** (or similar) | Follow confirmation | `follow_confirmed` = **true** → Bot sends **Email Step** (“Where should I send it? Drop your email…”). |
+| **No** or **random text** (e.g. “maybe”, “idk”, “Hdhhdh”) | Not a confirmation | Bot sends a **reminder**: “Please click 'I'm following' or type 'done' / 'yes' to continue! 😊” (config: `reengagement_follow_reminder_message`). Flow stays on follow step until they confirm or click **I'm following**. |
+
+So: **yes** (and similar) → move to email step; **no** or random → one reminder message, then wait again.
+
+---
+
 ## 3. Email step: User’s choice after follow is confirmed
 
 After the **email request** message (with **Share Email** \| **Skip for Now** \| optional **Use My Email**), the following cases apply.
@@ -173,6 +186,7 @@ Behavior depends on rule config **`skip_for_now_no_final_dm`** (alias: `skipForN
 | `require_follow_confirmation` | `requireFollowConfirmation` | `false` | When **true**, “Follow Me” only sends reminder; email step only after “I'm following” or “done”. |
 | `reask_email_on_comment_if_no_lead` | `reaskEmailOnCommentIfNoLead` | `false` | When **true** (and BAU: `skip_for_now_no_final_dm` false), if user commented again with no lead, bot re-sends email request instead of final DM again. |
 | `reengagement_follow_message` | `reengagementFollowMessage` | `"Are you following me?"` | Message shown on re-comment (v2; we always ask this before email step). |
+| `reengagement_follow_reminder_message` | `reengagementFollowReminderMessage` | (see below) | When user replies to “Are you following me?” with **no** or random text, bot sends this reminder. Default: “Please click 'I'm following' or type 'done' / 'yes' to continue! 😊” |
 | `email_invalid_retry_message` | `emailInvalidRetryMessage` | (see below) | Message sent when user types invalid/non-email text while we’re waiting for email. Default: “That doesn’t look like a valid email address. Please share your email so we can send you the guide!” |
 
 ---
