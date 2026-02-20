@@ -1475,10 +1475,13 @@ async def process_instagram_message(event: dict, db: Session):
                 if story_id is not None and str(rule.media_id or "") != story_id:
                     continue
 
-                ask_to_follow = rule.config.get("ask_to_follow", False)
-                ask_for_email = rule.config.get("ask_for_email", False)
-
-                if not (ask_to_follow or ask_for_email):
+                _rule_cfg = rule.config or {}
+                ask_to_follow = _rule_cfg.get("ask_to_follow", False)
+                ask_for_email = _rule_cfg.get("ask_for_email", False)
+                has_simple_flow = _rule_cfg.get("simple_dm_flow") or _rule_cfg.get("simpleDmFlow")
+                has_simple_phone_flow = _rule_cfg.get("simple_dm_flow_phone") or _rule_cfg.get("simpleDmFlowPhone")
+                # Include rules with Email/Phone/Followers pre-DM so we process invalid email/phone replies (e.g. send retry)
+                if not (ask_to_follow or ask_for_email or has_simple_flow or has_simple_phone_flow):
                     continue
                 
                 # CRITICAL FIX: Check if THIS SPECIFIC rule has completed, not globally
@@ -1633,7 +1636,7 @@ async def process_instagram_message(event: dict, db: Session):
                 
                 # Check if user sent ANY message (could be email or invalid response)
                 # Process pre-DM actions to check state and handle the message appropriately
-                if ask_to_follow or ask_for_email:
+                if ask_to_follow or ask_for_email or has_simple_flow or has_simple_phone_flow:
                     pre_dm_result = await process_pre_dm_actions(
                         rule, sender_id, account, db,
                         incoming_message=message_text,
