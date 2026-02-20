@@ -5390,18 +5390,6 @@ async def execute_automation_action(
                 # Debug: Log final message_template value after loading
                 print(f"✅ [DEBUG] Final message_template after loading: {repr(message_template)}, type: {type(message_template)}")
 
-                # SOFT REMINDER: If ask_to_follow is enabled, gently remind user to stay followed
-                try:
-                    if rule.config.get("ask_to_follow", False):
-                        reminder = (
-                            "\n\n🙏 If you ever unfollow, I may have to pause sending free guides and resources. "
-                            "Staying followed helps me keep this running for you. ❤️"
-                        )
-                        message_template = f"{message_template}{reminder}"
-                except Exception:
-                    # Never let reminder logic break the main DM
-                    pass
-            
             # Get access token BEFORE checking message_template
             # This allows us to send email success message even if primary DM template is missing
             from app.utils.encryption import decrypt_credentials
