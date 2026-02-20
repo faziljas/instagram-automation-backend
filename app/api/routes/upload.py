@@ -1,5 +1,5 @@
 """
-Upload routes for automation media (video/image/card).
+Upload routes for automation media (video/image/document/pdf/card).
 Same approach as Report an Issue: receive file via multipart, but we save and serve it
 so the returned URL can be used in Primary DMs later.
 """
@@ -12,10 +12,17 @@ from app.dependencies.auth import get_current_user_id
 
 router = APIRouter()
 
-# Limit 20MB for video/image (Instagram DM media)
+# Limit 20MB for video/image/document (Instagram DM media)
 MAX_FILE_SIZE = 20 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 ALLOWED_VIDEO_TYPES = {"video/mp4", "video/quicktime", "video/webm"}
+ALLOWED_DOCUMENT_TYPES = {
+    "application/pdf",
+    "application/msword",  # .doc
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "text/plain",
+    "application/vnd.oasis.opendocument.text",  # .odt
+}
 
 
 def get_uploads_dir() -> Path:
@@ -37,7 +44,7 @@ async def upload_media(
     user_id: int = Depends(get_current_user_id),
 ):
     """
-    Upload a video or image for automation Primary DM media.
+    Upload video, image, or document (PDF, doc, docx, txt, odt) for automation Primary DM media.
     Saves file to backend and returns a public URL (same host as API).
     No Supabase required.
     """
@@ -54,14 +61,17 @@ async def upload_media(
         subdir = "images"
     elif content_type in ALLOWED_VIDEO_TYPES:
         subdir = "videos"
+    elif content_type in ALLOWED_DOCUMENT_TYPES:
+        subdir = "documents"
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Allowed: image (jpeg, png, gif, webp) or video (mp4, mov, webm)",
+            detail="Allowed: image (jpeg, png, gif, webp), video (mp4, mov, webm), or document (pdf, doc, docx, txt, odt)",
         )
 
     # Safe filename: keep extension, unique prefix
-    ext = Path(file.filename or "file").suffix or (".jpg" if "image" in content_type else ".mp4")
+    default_ext = ".jpg" if "image" in content_type else ".mp4" if "video" in content_type else ".pdf"
+    ext = Path(file.filename or "file").suffix or default_ext
     safe_name = f"{uuid.uuid4().hex[:12]}{ext}"
     uploads_dir = get_uploads_dir()
     target_dir = uploads_dir / subdir
