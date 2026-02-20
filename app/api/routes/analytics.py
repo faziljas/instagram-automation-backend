@@ -727,13 +727,16 @@ def get_media_analytics(
         
         # OPTIMIZED: Get all analytics for all media_ids in a single aggregated query
         # This reduces queries from N*8 (N media items × 8 event types) to 1 query
+        # FIXED: Match by media_id regardless of rule_id - analytics events may have NULL rule_id
+        # or rule_id that doesn't match current rules (e.g., if rule was deleted/updated)
         analytics_base = db.query(AnalyticsEvent).filter(
             and_(
                 AnalyticsEvent.user_id == user_id,
                 AnalyticsEvent.created_at >= start_date,
                 AnalyticsEvent.created_at <= end_date,
                 AnalyticsEvent.media_id.in_(list(media_ids_set)),
-                AnalyticsEvent.rule_id.in_(all_rule_ids),
+                # Match by media_id - rule_id can be NULL or any value (don't filter by rule_id)
+                # This ensures we get all analytics for the media, even if rule_id is NULL or doesn't match
                 AnalyticsEvent.instagram_account_id.in_(account_ids),
                 AnalyticsEvent.instagram_account_id.isnot(None)
             )
@@ -757,7 +760,8 @@ def get_media_analytics(
         ).group_by(AnalyticsEvent.media_id).all()
         
         # Create stats map for O(1) lookup
-        stats_map = {row[0]: {
+        # FIXED: Ensure media_id keys are strings for consistent lookup
+        stats_map = {str(row[0]): {
             "triggers": int(row[1] or 0),
             "dms_sent": int(row[2] or 0),
             "leads_collected": int(row[3] or 0),
@@ -777,7 +781,9 @@ def get_media_analytics(
                 continue
             
             # OPTIMIZED: Get stats from pre-aggregated map instead of individual queries
-            stats = stats_map.get(media_id, {
+            # FIXED: Ensure media_id is string for consistent lookup (media_id from rules is string)
+            media_id_str = str(media_id)
+            stats = stats_map.get(media_id_str, {
                 "triggers": 0,
                 "dms_sent": 0,
                 "leads_collected": 0,
@@ -803,7 +809,7 @@ def get_media_analytics(
             last_modified = active_rule.created_at.isoformat() if active_rule.created_at else None
             
             results.append(MediaAnalytics(
-                media_id=media_id,
+                media_id=media_id_str,
                 rule_id=active_rule.id,
                 rule_name=active_rule.name,
                 is_active=active_rule.is_active,
