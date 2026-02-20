@@ -12,6 +12,7 @@ inserting PHONE_COLLECTED events. This migration adds the new value.
 from typing import Sequence, Union
 
 from alembic import op
+from alembic.utils.safe_enum_addition import safe_add_enum_value
 
 
 revision: str = "011_add_phone_collected"
@@ -23,25 +24,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # Add new eventtype enum value 'phone_collected' for PHONE_COLLECTED events.
     # SQLAlchemy now uses enum VALUES (phone_collected) not enum NAMES (PHONE_COLLECTED) via values_callable.
-    # FIXED: Use DO block to handle "already exists" errors without aborting transaction
-    import sqlalchemy as sa
-    # Only add lowercase value since SQLAlchemy stores enum values, not names
-    op.execute(sa.text("""
-        DO $$
-        BEGIN
-            ALTER TYPE eventtype ADD VALUE 'phone_collected';
-        EXCEPTION
-            WHEN OTHERS THEN
-                -- Check if error is about duplicate/existing value
-                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
-                    -- Value already exists, that's fine - do nothing
-                    NULL;
-                ELSE
-                    -- Re-raise unexpected errors
-                    RAISE;
-                END IF;
-        END $$;
-    """))
+    # Uses safe_add_enum_value helper to prevent transaction abort errors
+    safe_add_enum_value('eventtype', 'phone_collected')
 
 
 def downgrade() -> None:
