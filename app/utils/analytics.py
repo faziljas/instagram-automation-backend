@@ -170,5 +170,38 @@ def log_analytics_event_sync(
         return event.id
     except Exception as e:
         db.rollback()
-        print(f"⚠️ Failed to log analytics event: {str(e)}")
+        error_str = str(e).lower()
+        
+        # Check if this is an enum value error
+        if "invalid input value for enum" in error_str or "invalidtextrepresentation" in error_str:
+            print(f"⚠️ Failed to log analytics event: {str(e)}")
+            print(f"   This indicates a missing enum value in the database.")
+            print(f"   The startup validation should have caught this - check startup logs.")
+            # Try to auto-fix by ensuring enum values exist
+            try:
+                from app.utils.enum_validator import ensure_eventtype_enum_values
+                if ensure_eventtype_enum_values(db):
+                    print(f"   ✅ Auto-fixed missing enum values. Retrying event log...")
+                    # Retry once after fixing
+                    try:
+                        event = AnalyticsEvent(
+                            user_id=user_id,
+                            rule_id=rule_id,
+                            instagram_account_id=instagram_account_id,
+                            media_id=media_id,
+                            media_preview_url=None,
+                            event_type=event_type,
+                            event_metadata=metadata or {}
+                        )
+                        db.add(event)
+                        db.commit()
+                        db.refresh(event)
+                        return event.id
+                    except Exception as retry_error:
+                        print(f"   ⚠️ Retry after enum fix also failed: {retry_error}")
+            except Exception as fix_error:
+                print(f"   ⚠️ Failed to auto-fix enum: {fix_error}")
+        else:
+            print(f"⚠️ Failed to log analytics event: {str(e)}")
+        
         return None

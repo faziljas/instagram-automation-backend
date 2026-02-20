@@ -94,6 +94,37 @@ async def startup_event():
         print(f"❌ Alembic migration failed (server will not start): {str(e)}", file=sys.stderr)
         raise  # Fail startup so you see the error in deploy logs and fix DATABASE_URL / migration
     
+    # CRITICAL: Validate and ensure EventType enum values exist
+    # This prevents the recurring issue where enum values are missing from the database
+    try:
+        print("🔄 Validating EventType enum values...", file=sys.stderr)
+        from app.utils.enum_validator import validate_eventtype_enum, ensure_eventtype_enum_values
+        from app.db.session import SessionLocal
+        
+        db = SessionLocal()
+        try:
+            is_valid, missing = validate_eventtype_enum(db)
+            if not is_valid:
+                print(f"⚠️  Missing enum values detected: {missing}. Attempting to add them...", file=sys.stderr)
+                if ensure_eventtype_enum_values(db):
+                    # Re-validate after adding
+                    is_valid, still_missing = validate_eventtype_enum(db)
+                    if is_valid:
+                        print("✅ All enum values now exist in database", file=sys.stderr)
+                    else:
+                        print(f"⚠️  Warning: Some enum values still missing after auto-fix: {still_missing}", file=sys.stderr)
+                        # Don't fail startup - migrations should handle this, but log the warning
+                else:
+                    print("⚠️  Failed to auto-fix missing enum values. Check migrations.", file=sys.stderr)
+            else:
+                print("✅ EventType enum validation passed", file=sys.stderr)
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"⚠️  Enum validation warning: {str(e)}", file=sys.stderr)
+        # Don't fail startup - migrations should handle enum creation
+        # This is a safety check, not a blocker
+    
     # Temporary fix: Ensure profile_picture_url column exists (backup in case migration didn't run)
     try:
         print("🔄 Checking profile_picture_url column...", file=sys.stderr)
