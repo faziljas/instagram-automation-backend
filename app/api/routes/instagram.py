@@ -3899,32 +3899,22 @@ async def execute_automation_action(
             # Initialize message_template
             message_template = None
             
-            # Check for pre-DM actions (Ask to Follow, Ask for Email)
-            # NEW SIMPLIFIED MVP APPROACH: Single toggle "Pre-DM Engagement Message"
-            # If enable_pre_dm_engagement is set, use it to control both follow and email
-            # Otherwise, fall back to old behavior (backward compatibility)
-            _cfg = rule.config or {}
-            enable_pre_dm_engagement = _cfg.get("enable_pre_dm_engagement")
-            
+            # Pre-DM: use rule_cfg (single ref) so UnboundLocalError cannot occur
+            rule_cfg = rule.config or {}
+            enable_pre_dm_engagement = rule_cfg.get("enable_pre_dm_engagement")
             if enable_pre_dm_engagement is not None:
-                # New simplified mode; ask_for_email can be false for Followers-only (use rule value or default to toggle)
                 ask_to_follow = enable_pre_dm_engagement
-                ask_for_email = _cfg.get("ask_for_email", enable_pre_dm_engagement)
+                ask_for_email = rule_cfg.get("ask_for_email", enable_pre_dm_engagement)
             else:
-                # Backward compatibility: use old individual checkboxes
-                ask_to_follow = _cfg.get("ask_to_follow", False)
-                ask_for_email = _cfg.get("ask_for_email", False)
-            
-            pre_dm_result = pre_dm_result_override  # Use override if provided
-            
-            # CRITICAL: Run pre-DM when Email/Phone/Followers flow is configured (simple_dm_flow / simple_dm_flow_phone)
-            # so the "First message (follow + ask for email)" is sent first, not primary DM + media directly
+                ask_to_follow = rule_cfg.get("ask_to_follow", False)
+                ask_for_email = rule_cfg.get("ask_for_email", False)
+            pre_dm_result = pre_dm_result_override
             _run_pre_dm = (
                 ask_to_follow or ask_for_email or
-                _cfg.get("simple_dm_flow") or _cfg.get("simpleDmFlow") or
-                _cfg.get("simple_dm_flow_phone") or _cfg.get("simpleDmFlowPhone")
+                rule_cfg.get("simple_dm_flow") or rule_cfg.get("simpleDmFlow") or
+                rule_cfg.get("simple_dm_flow_phone") or rule_cfg.get("simpleDmFlowPhone")
             ) and pre_dm_result is None
-            print(f"🔍 [DEBUG] Pre-DM check: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, simple_dm_flow={_cfg.get('simple_dm_flow') or _cfg.get('simpleDmFlow')}, simple_dm_flow_phone={_cfg.get('simple_dm_flow_phone') or _cfg.get('simpleDmFlowPhone')}, run_pre_dm={_run_pre_dm}, pre_dm_result={pre_dm_result}")
+            print(f"🔍 [DEBUG] Pre-DM check: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, simple_dm_flow={rule_cfg.get('simple_dm_flow') or rule_cfg.get('simpleDmFlow')}, simple_dm_flow_phone={rule_cfg.get('simple_dm_flow_phone') or rule_cfg.get('simpleDmFlowPhone')}, run_pre_dm={_run_pre_dm}, pre_dm_result={pre_dm_result}")
             
             # If override says "send_primary", skip all pre-DM processing
             # BUT: If skip_growth_steps is False, we might still need to check for email success message
