@@ -1157,31 +1157,45 @@ async def process_instagram_message(event: dict, db: Session):
             ).all()
             
             # CRITICAL FIX: Filter rules to prevent conflicting lead-capture types (email vs phone)
-            # If multiple rules match, prioritize email flow over phone flow to avoid asking for both
-            email_rules = []
-            phone_rules = []
-            other_rules = []
+            # Only filter conflicts when rules share the SAME context (same media_id or both are general)
+            # This allows Reel A (phone) and Reel B (email) to work independently
+            # But prevents conflicts when multiple rules match the same trigger context
+            
+            # Group rules by media_id to detect conflicts within same context
+            rules_by_media = {}  # media_id -> {email_rules: [], phone_rules: [], other_rules: []}
             
             for rule in pre_dm_rules:
                 config = rule.config or {}
+                media_id = str(config.get("media_id", "")) or "general"  # "general" for rules without media_id
                 simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
                 simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
                 
+                if media_id not in rules_by_media:
+                    rules_by_media[media_id] = {"email_rules": [], "phone_rules": [], "other_rules": []}
+                
                 if simple_dm_flow:
-                    email_rules.append(rule)
+                    rules_by_media[media_id]["email_rules"].append(rule)
                 elif simple_dm_flow_phone:
-                    phone_rules.append(rule)
+                    rules_by_media[media_id]["phone_rules"].append(rule)
                 else:
-                    other_rules.append(rule)
+                    rules_by_media[media_id]["other_rules"].append(rule)
             
-            # If both email and phone rules exist, prioritize email and exclude phone rules
-            # This prevents asking for both email and phone in the same interaction
-            if email_rules and phone_rules:
-                log_print(f"⚠️ [FIX] Found conflicting lead-capture types: {len(email_rules)} email rule(s) and {len(phone_rules)} phone rule(s). Prioritizing email flow and excluding phone rules.")
-                pre_dm_rules = email_rules + other_rules
-            else:
-                # No conflict, use all rules
-                pre_dm_rules = email_rules + phone_rules + other_rules
+            # Filter conflicts per media_id context
+            filtered_rules = []
+            for media_id, rule_groups in rules_by_media.items():
+                email_rules = rule_groups["email_rules"]
+                phone_rules = rule_groups["phone_rules"]
+                other_rules = rule_groups["other_rules"]
+                
+                # If both email and phone rules exist for SAME media_id, prioritize email
+                if email_rules and phone_rules:
+                    log_print(f"⚠️ [FIX] Found conflicting lead-capture types for media_id={media_id}: {len(email_rules)} email rule(s) and {len(phone_rules)} phone rule(s). Prioritizing email flow and excluding phone rules.")
+                    filtered_rules.extend(email_rules + other_rules)
+                else:
+                    # No conflict for this media_id, include all rules
+                    filtered_rules.extend(email_rules + phone_rules + other_rules)
+            
+            pre_dm_rules = filtered_rules
             
             # FIX: After primary DM is complete (simple reply or lead capture), do NOT process pre_dm_rules.
             # Send one short "already complete" reply so the user isn't left with silence, then stop.
