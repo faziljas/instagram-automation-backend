@@ -21,16 +21,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add new eventtype enum value so PHONE_COLLECTED is valid.
-    # Error showed invalid value "PHONE_COLLECTED". Add both forms for enum name/value binding.
+    # Add new eventtype enum value 'phone_collected' for PHONE_COLLECTED events.
+    # SQLAlchemy now uses enum VALUES (phone_collected) not enum NAMES (PHONE_COLLECTED) via values_callable.
     import sqlalchemy as sa
-    for value in ("phone_collected", "PHONE_COLLECTED"):
-        try:
-            op.execute(sa.text(f"ALTER TYPE eventtype ADD VALUE {repr(value)}"))
-        except Exception as e:
-            # Re-running migration: value already exists (e.g. duplicate_object / already exists)
-            if "already exists" not in str(e).lower() and "duplicate" not in str(e).lower():
-                raise
+    # Only add lowercase value since SQLAlchemy stores enum values, not names
+    try:
+        op.execute(sa.text("ALTER TYPE eventtype ADD VALUE 'phone_collected'"))
+    except Exception as e:
+        # Re-running migration: value already exists (e.g. duplicate_object / already exists)
+        if "already exists" not in str(e).lower() and "duplicate" not in str(e).lower():
+            raise
 
 
 def downgrade() -> None:

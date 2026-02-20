@@ -31,7 +31,8 @@ class AnalyticsEvent(Base):
     media_preview_url = Column(String, nullable=True)  # Cached media preview URL (thumbnail_url or media_url) - preserved even if media is deleted
     
     # Event details
-    event_type = Column(SQLEnum(EventType), nullable=False, index=True)
+    # Use values_callable to store enum VALUES (e.g., "phone_collected") not enum NAMES (e.g., "PHONE_COLLECTED")
+    event_type = Column(SQLEnum(EventType, values_callable=lambda choices: [item.value for item in choices]), nullable=False, index=True)
     event_metadata = Column(JSON, nullable=True)  # Store additional data (url, email, sender_id, etc.)
     
     # Timestamps
