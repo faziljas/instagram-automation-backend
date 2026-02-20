@@ -1366,6 +1366,37 @@ async def process_instagram_message(event: dict, db: Session):
                     )
                     log_print(f"🔍 [DEBUG] pre_dm_result action={pre_dm_result.get('action')} for rule {rule.id}")
                     
+                    # Simple flow: one combined message (follow + email ask), then loop email until valid
+                    if pre_dm_result["action"] == "send_simple_flow_start":
+                        simple_msg = pre_dm_result.get("message", "Follow me to get the guide 👇 Reply with your email and I'll send it! 📧")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            send_dm(sender_id, simple_msg, access_token, account.page_id, buttons=None, quick_replies=None)
+                            log_print(f"✅ [Simple flow] Start message sent to {sender_id}")
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=simple_msg,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None),
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                        except Exception as e:
+                            log_print(f"❌ Failed to send simple flow message: {str(e)}", "ERROR")
+                        return
+                    
                     # Handle follow reminder action (random text while waiting for follow confirmation)
                     if pre_dm_result["action"] == "send_follow_reminder":
                         # Send reminder message to user
@@ -3503,6 +3534,36 @@ async def execute_automation_action(
                             pass
                     except Exception as e:
                         print(f"❌ Failed to send re-engagement follow check: {str(e)}")
+                    return
+
+                # Simple flow: one combined message (follow + email ask), text only, no quick replies
+                if pre_dm_result and pre_dm_result["action"] == "send_simple_flow_start":
+                    simple_msg = pre_dm_result.get("message", "Follow me to get the guide 👇 Reply with your email and I'll send it! 📧")
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    from app.utils.encryption import decrypt_credentials
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
+                        page_id_for_dm = account.page_id
+                        is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                        if is_comment_trigger:
+                            from app.utils.instagram_api import send_private_reply
+                            send_private_reply(comment_id, simple_msg, access_token, page_id_for_dm, quick_replies=None)
+                            print(f"✅ [Simple flow] Start message sent via private reply")
+                        else:
+                            send_dm_api(str(sender_id), simple_msg, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                            print(f"✅ [Simple flow] Start message sent via DM")
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(user_id=user_id, instagram_account_id=account_id, recipient_username=str(sender_id), message=simple_msg, db=db, instagram_username=username, instagram_igsid=account_igsid)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"❌ Failed to send simple flow start: {str(e)}")
                     return
 
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":

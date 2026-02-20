@@ -309,6 +309,99 @@ async def process_pre_dm_actions(
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     
+    # ---------------------------------------------------------
+    # Simple DM flow: one follow+email message, then loop email until valid
+    # No "I'm following" / "Follow Me" / "Are you following me?" / "Share Email" / "Skip"
+    # ---------------------------------------------------------
+    simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
+    if simple_dm_flow:
+        simple_flow_message = config.get("simple_flow_message") or config.get("simpleFlowMessage") or (
+            "Follow me to get the guide 👇 Reply with your email and I'll send it! 📧"
+        )
+        simple_flow_email_question = config.get("simple_flow_email_question") or config.get("simpleFlowEmailQuestion") or (
+            "What's your email? Reply here and I'll send you the guide! 📧"
+        )
+        # Already have email → flow complete, send primary
+        if state.get("email_received") or state.get("email"):
+            return {
+                "action": "send_primary",
+                "message": None,
+                "should_save_email": False,
+                "email": state.get("email"),
+            }
+        # We already sent the first message; this is a reply (comment or DM)
+        if state.get("follow_request_sent") or state.get("email_request_sent"):
+            if incoming_message:
+                is_email, email_address = check_if_email_response(incoming_message)
+                if is_email:
+                    update_pre_dm_state(sender_id, rule.id, {
+                        "email_received": True,
+                        "email": email_address,
+                        "primary_dm_sent": True,
+                    })
+                    try:
+                        captured_lead = CapturedLead(
+                            user_id=account.user_id,
+                            instagram_account_id=account.id,
+                            automation_rule_id=rule.id,
+                            email=email_address,
+                            extra_metadata={
+                                "sender_id": sender_id,
+                                "captured_via": "simple_dm_flow",
+                                "timestamp": datetime.utcnow().isoformat(),
+                            },
+                        )
+                        db.add(captured_lead)
+                        db.commit()
+                        db.refresh(captured_lead)
+                        try:
+                            from app.services.global_conversion_check import update_audience_email
+                            update_audience_email(db, sender_id, account.id, account.user_id, email_address)
+                        except Exception:
+                            pass
+                        try:
+                            update_automation_stats(rule.id, "lead_captured", db)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"⚠️ Error saving email (simple flow): {str(e)}")
+                        db.rollback()
+                    return {
+                        "action": "send_primary",
+                        "message": None,
+                        "should_save_email": False,
+                        "email": email_address,
+                        "send_email_success": True,
+                    }
+                # Not a valid email → ask again (same question, loop until email)
+                return {
+                    "action": "send_email_request",
+                    "message": simple_flow_email_question,
+                    "should_save_email": False,
+                    "email": None,
+                }
+            # No incoming message (e.g. timeout) → still ask for email
+            return {
+                "action": "send_email_request",
+                "message": simple_flow_email_question,
+                "should_save_email": False,
+                "email": None,
+            }
+        # First time: send the one combined message (follow + reply with email)
+        if trigger_type in ["post_comment", "keyword", "new_message", "story_reply"]:
+            update_pre_dm_state(sender_id, rule.id, {
+                "follow_request_sent": True,
+                "email_request_sent": True,
+                "step": "email",
+            })
+            return {
+                "action": "send_simple_flow_start",
+                "message": simple_flow_message,
+                "should_save_email": False,
+                "email": None,
+            }
+        return {"action": "ignore", "message": None, "should_save_email": False, "email": None}
+    
     # Note: lead capture flows are not used for pre‑DM email; follow/email
     # behaviour is driven entirely by these flags and messages.
     

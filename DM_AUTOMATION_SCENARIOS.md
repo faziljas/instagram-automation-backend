@@ -2,6 +2,8 @@
 
 This document describes every user path in the comment-triggered DM automation flow: **Follow step** → **Email step** → **Final DM**, including optional config flags.
 
+**Two modes:** (1) **Standard flow** (default): follow with “I'm following” / “Follow Me” and optional confirmation, then email with “Share Email” / “Skip for Now”. (2) **Simple flow** (opt-in): one combined message, then loop the same email question until a valid email is received. See [§8 Simple flow](#8-simple-flow) for the latter.
+
 ---
 
 ## 1. Entry: User comments keyword
@@ -235,4 +237,36 @@ It is the **platform user who owns the Instagram account** (the creator/brand), 
 
 ---
 
-*Document reflects: comment → follow (I'm following / Follow Me / Visit Profile / text) → email (actual email / Share Email / Skip for Now / Use My Email) → final DM, with optional config for follow confirmation and re-asking email on next comment. Config keys are canonical snake_case with camelCase aliases.*
+---
+
+## 8. Simple flow (opt-in)
+
+When **`simple_dm_flow`** (or **`simpleDmFlow`**) is **true** for a rule, the flow is reduced to:
+
+1. **One combined message**  
+   On first trigger (comment or DM), the bot sends a **single** message that asks to follow and to reply with an email (e.g. “Follow me to get the guide 👇 Reply with your email and I'll send it! 📧”). No “I'm following”, “Follow Me”, “Share Email”, or “Skip for Now” buttons.
+
+2. **Loop until valid email**  
+   On **every** later message (comment or DM) from that user:
+   - If the message is a **valid email** → save lead, send primary/final DM, flow complete.
+   - If not (random text, “yes”, “no”, invalid string) → send the **same** email question again (e.g. “What's your email? Reply here and I'll send you the guide! 📧”). No “invalid email” message in-thread; the bot just re-asks on the next message.
+
+3. **No follow confirmation**  
+   There is no separate “Are you following me?” or “done”/“followed” step. The first message is the only follow ask; then the bot only cares about getting a valid email.
+
+### Config (simple flow)
+
+| Key | Alias | Description |
+|-----|--------|-------------|
+| `simple_dm_flow` | `simpleDmFlow` | Set to **true** to use simple flow for this rule. |
+| `simple_flow_message` | `simpleFlowMessage` | First message (follow + “reply with your email”). Default: “Follow me to get the guide 👇 Reply with your email and I'll send it! 📧” |
+| `simple_flow_email_question` | `simpleFlowEmailQuestion` | Message sent every time the user replies without a valid email (loop). Default: “What's your email? Reply here and I'll send you the guide! 📧” |
+
+### Summary
+
+- **First trigger:** Send `simple_flow_message` (text only).  
+- **Every later message until email:** If valid email → save + send primary DM; else → send `simple_flow_email_question` again.
+
+---
+
+*Document reflects: comment → follow (I'm following / Follow Me / Visit Profile / text) → email (actual email / Share Email / Skip for Now / Use My Email) → final DM, with optional config for follow confirmation and re-asking email on next comment; plus optional Simple flow (one message, loop email until valid). Config keys are canonical snake_case with camelCase aliases.*
