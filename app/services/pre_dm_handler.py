@@ -386,6 +386,34 @@ async def process_pre_dm_actions(
     flow_has_completed = follow_completed_for_flow and email_completed_for_flow
     
     if ask_to_follow or ask_for_email:
+        # RE-ENGAGEMENT (opt-in): When user commented again but we never collected lead (they skipped email),
+        # re-ask for email instead of sending final DM again. Only when rule config enables it (BAU unchanged).
+        reask_email_if_no_lead = config.get("reask_email_on_comment_if_no_lead", False) or config.get("reaskEmailOnCommentIfNoLead", False)
+        comment_triggers = ["post_comment", "keyword", "live_comment"]
+        if reask_email_if_no_lead and (trigger_type in comment_triggers and state.get("primary_dm_sent") and state.get("email_skipped")
+            and not state.get("email_received") and ask_for_email):
+            sender_id_str = str(sender_id) if sender_id else None
+            has_lead = False
+            try:
+                from sqlalchemy import cast
+                from sqlalchemy.dialects.postgresql import JSONB
+                has_lead = db.query(CapturedLead.id).filter(
+                    CapturedLead.instagram_account_id == account.id,
+                    CapturedLead.automation_rule_id == rule.id,
+                    cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+                ).limit(1).first() is not None
+            except Exception:
+                pass
+            if not has_lead:
+                update_pre_dm_state(sender_id, rule.id, {"email_skipped": False})
+                print(f"📧 [RE-ENGAGEMENT] No lead for sender {sender_id} — re-asking for email on comment")
+                return {
+                    "action": "send_email_request",
+                    "message": ask_for_email_message,
+                    "should_save_email": False,
+                    "email": None,
+                }
+
         # Case A: THIS FLOW has been completed (follow confirmed AND email received if required)
         # Only skip to primary when THIS FLOW was completed in a previous interaction
         if flow_has_completed:

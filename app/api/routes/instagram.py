@@ -949,33 +949,22 @@ async def process_instagram_message(event: dict, db: Session):
                     except Exception as analytics_err:
                         log_print(f"⚠️ Failed to log FOLLOW_BUTTON_CLICKED event: {str(analytics_err)}", "WARNING")
                     
-                    # Mark follow as confirmed in pre-DM state
-                    update_pre_dm_state(str(sender_id), rule.id, {
-                        "follow_button_clicked": True,
-                        "follow_confirmed": True,
-                        "follow_button_clicked_time": str(asyncio.get_event_loop().time())
-                    })
-                    log_print(f"✅ Marked follow button click + confirmation for rule {rule.id}")
+                    # Optional: require explicit follow confirmation after "Follow Me" (config: require_follow_confirmation).
+                    # Default BAU: "Follow Me" = confirm and send email immediately (no blocking).
+                    require_follow_confirmation = rule.config.get("require_follow_confirmation", False) or rule.config.get("requireFollowConfirmation", False)
                     
-                    # Update global audience record with following status (for VIP check across all automations)
-                    try:
-                        from app.services.global_conversion_check import update_audience_following
-                        update_audience_following(db, str(sender_id), account.id, account.user_id, is_following=True)
-                        log_print(f"✅ Follow status updated in global audience for {sender_id}")
-                    except Exception as audience_err:
-                        log_print(f"⚠️ Failed to update global audience with follow status: {str(audience_err)}", "WARNING")
-                    
-                    # If email is enabled, send email question immediately
-                    if ask_for_email:
-                        ask_for_email_message = rule.config.get(
-                            "ask_for_email_message",
-                            "Quick question - what's your email? I'd love to send you something special! 📧"
-                        )
-                        
-                        log_print(f"📧 [STRICT MODE] Sending email request immediately after Follow Me click")
+                    if require_follow_confirmation:
+                        # New behavior: do NOT confirm until they click "I'm following" or type "done"
+                        update_pre_dm_state(str(sender_id), rule.id, {
+                            "follow_button_clicked": True,
+                            "follow_request_sent": True,
+                            "follow_confirmed": False,
+                            "follow_button_clicked_time": str(asyncio.get_event_loop().time())
+                        })
+                        log_print(f"✅ Marked 'Follow Me' click for rule {rule.id} (waiting for confirmation)")
+                        reminder_message = "Great! Once you've followed, click 'I'm following' or type 'done' to continue! 😊"
                         from app.utils.encryption import decrypt_credentials
-                        from app.utils.instagram_api import send_dm
-                        
+                        from app.utils.instagram_api import send_dm as send_dm_api
                         try:
                             if account.encrypted_page_token:
                                 access_token = decrypt_credentials(account.encrypted_page_token)
@@ -983,24 +972,65 @@ async def process_instagram_message(event: dict, db: Session):
                                 access_token = decrypt_credentials(account.encrypted_credentials)
                             else:
                                 raise Exception("No access token found")
-                            
                             page_id_for_dm = account.page_id
-                            
-                            # Create Quick Reply buttons for email collection
-                            quick_replies = [
-                                {
-                                    "content_type": "text",
-                                    "title": "Share Email",
-                                    "payload": "email_shared"
-                                },
-                                {
-                                    "content_type": "text",
-                                    "title": "Skip for Now",
-                                    "payload": "email_skip"
-                                }
+                            follow_quick_reply = [
+                                {"content_type": "text", "title": "I'm following", "payload": f"im_following_{rule.id}"},
+                                {"content_type": "text", "title": "Follow Me 👆", "payload": f"follow_me_{rule.id}"}
                             ]
-                            
-                            # IMPROVEMENT: Add user's email as quick reply button if available
+                            send_dm_api(sender_id, reminder_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                            log_print(f"✅ Sent follow confirmation reminder (require_follow_confirmation=True)")
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=reminder_message,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None)
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                        except Exception as e:
+                            log_print(f"❌ Failed to send follow confirmation reminder: {str(e)}", "ERROR")
+                        return
+                    
+                    # BAU: "Follow Me" = treat as confirmed, send email (or primary) immediately
+                    update_pre_dm_state(str(sender_id), rule.id, {
+                        "follow_button_clicked": True,
+                        "follow_confirmed": True,
+                        "follow_request_sent": True,
+                        "follow_button_clicked_time": str(asyncio.get_event_loop().time())
+                    })
+                    log_print(f"✅ Marked follow button click + confirmation for rule {rule.id}")
+                    try:
+                        from app.services.global_conversion_check import update_audience_following
+                        update_audience_following(db, str(sender_id), account.id, account.user_id, is_following=True)
+                        log_print(f"✅ Follow status updated in global audience for {sender_id}")
+                    except Exception as audience_err:
+                        log_print(f"⚠️ Failed to update global audience with follow status: {str(audience_err)}", "WARNING")
+                    
+                    if ask_for_email:
+                        ask_for_email_message = rule.config.get(
+                            "ask_for_email_message",
+                            "Quick question - what's your email? I'd love to send you something special! 📧"
+                        )
+                        log_print(f"📧 [STRICT MODE] Sending email request immediately after Follow Me click")
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        try:
+                            if account.encrypted_page_token:
+                                access_token = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                access_token = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            page_id_for_dm = account.page_id
+                            quick_replies = [
+                                {"content_type": "text", "title": "Share Email", "payload": "email_shared"},
+                                {"content_type": "text", "title": "Skip for Now", "payload": "email_skip"}
+                            ]
                             try:
                                 from app.models.user import User
                                 user = db.query(User).filter(User.id == account.user_id).first()
@@ -1010,27 +1040,14 @@ async def process_instagram_message(event: dict, db: Session):
                                         email_parts = email_display.split('@')
                                         if len(email_parts) > 0:
                                             username = email_parts[0]
-                                            if len(username) <= 15:
-                                                email_display = f"{username}@{email_parts[1][:15-len(username)]}..."
-                                            else:
-                                                email_display = f"{username[:17]}..."
+                                            email_display = f"{username}@{email_parts[1][:15-len(username)]}..." if len(username) <= 15 else f"{username[:17]}..."
                                         else:
                                             email_display = email_display[:17] + "..."
-                                    
-                                    quick_replies.insert(0, {
-                                        "content_type": "text",
-                                        "title": email_display,
-                                        "payload": f"email_use_{user.email}"
-                                    })
-                                    print(f"✅ Added user's email ({user.email}) as quick reply button")
-                            except Exception as email_err:
-                                print(f"⚠️ Could not add user email to quick replies: {str(email_err)}")
-                            
-                            # Send email request with quick reply buttons
+                                    quick_replies.insert(0, {"content_type": "text", "title": email_display, "payload": f"email_use_{user.email}"})
+                            except Exception:
+                                pass
                             send_dm(sender_id, ask_for_email_message, access_token, page_id_for_dm, buttons=None, quick_replies=quick_replies)
                             log_print(f"✅ Email request sent after Follow Me button click with quick replies")
-                            
-                            # Log DM sent (tracks in DmLog and increments global tracker)
                             try:
                                 from app.utils.plan_enforcement import log_dm_sent
                                 log_dm_sent(
@@ -1044,8 +1061,6 @@ async def process_instagram_message(event: dict, db: Session):
                                 )
                             except Exception as log_err:
                                 log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
-                            
-                            # Update state to mark that we're now waiting for email
                             update_pre_dm_state(str(sender_id), rule.id, {
                                 "email_request_sent": True,
                                 "step": "email",
@@ -1053,8 +1068,6 @@ async def process_instagram_message(event: dict, db: Session):
                             })
                         except Exception as e:
                             log_print(f"❌ Failed to send email request after Follow Me click: {str(e)}", "ERROR")
-                    
-                    # If no email configured, proceed directly to primary DM
                     else:
                         log_print(f"✅ Follow confirmed via Follow Me button, proceeding directly to primary DM")
                         asyncio.create_task(execute_automation_action(
@@ -1063,8 +1076,6 @@ async def process_instagram_message(event: dict, db: Session):
                             message_id=message_id,
                             pre_dm_result_override={"action": "send_primary"}
                         ))
-                    
-                    # Only process the first matching rule
                     return
         
         # Extract story_id early. For story replies we run pre_dm_rules but only for the
