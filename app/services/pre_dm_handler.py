@@ -94,46 +94,58 @@ def sender_primary_dm_complete(
     db: Session,
 ) -> bool:
     """
-    Return True if this sender has completed primary DM with ANY rule for this account.
+    Return True if this sender has completed primary DM with ALL rules in the provided list.
+    CRITICAL FIX: Check per-rule, not globally. Each reel/post should work independently.
+    
     When True, no automation should run for this user — all messages go to real user.
 
     - Simple reply: primary_dm_sent for that rule → complete.
-    - Lead capture: primary_dm_sent AND lead captured for that rule → complete.
+    - Lead capture: primary_dm_sent AND lead captured for THAT SPECIFIC rule → complete.
 
-    PERFORMANCE: In-memory state first (no DB). Only one CapturedLead query max,
-    and only when we have lead-capture rules with primary_dm_sent.
+    PERFORMANCE: In-memory state first (no DB). Only queries DB when needed.
     """
     sender_id_str = str(sender_id)
-    lead_rules_with_primary = []
-
-    for rule in rules or []:
+    
+    if not rules:
+        return False
+    
+    # CRITICAL FIX: Check each rule independently
+    # Only return True if ALL rules have completed their flow
+    # This ensures Reel A (phone) doesn't skip when Reel B (email) collected lead
+    for rule in rules:
         state = get_pre_dm_state(sender_id_str, rule.id)
+        
+        # Check if this specific rule has completed
         if not state.get("primary_dm_sent"):
-            continue
+            # This rule hasn't completed yet
+            return False
+        
+        # For lead capture rules, also check if lead was captured for THIS specific rule
         is_lead = (rule.config or {}).get("is_lead_capture", False)
         if is_lead:
-            lead_rules_with_primary.append(rule)
-        else:
-            return True
-
-    if not lead_rules_with_primary:
-        return False
-
-    try:
-        from sqlalchemy import cast
-        from sqlalchemy.dialects.postgresql import JSONB
-        has_lead = (
-            db.query(CapturedLead.id)
-            .filter(
-                CapturedLead.instagram_account_id == account_id,
-                cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
-            )
-            .limit(1)
-            .first()
-        )
-        return has_lead is not None
-    except Exception:
-        return False
+            # Check if lead exists for THIS specific rule
+            try:
+                from sqlalchemy import cast
+                from sqlalchemy.dialects.postgresql import JSONB
+                has_lead_for_this_rule = (
+                    db.query(CapturedLead.id)
+                    .filter(
+                        CapturedLead.instagram_account_id == account_id,
+                        CapturedLead.automation_rule_id == rule.id,  # CRITICAL: Check for THIS rule
+                        cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+                    )
+                    .limit(1)
+                    .first()
+                )
+                if not has_lead_for_this_rule:
+                    # This rule hasn't captured lead yet
+                    return False
+            except Exception:
+                # On error, assume not complete to be safe
+                return False
+    
+    # All rules have completed
+    return True
 
 
 def check_if_follow_confirmation(message_text: str) -> bool:

@@ -1228,33 +1228,8 @@ async def process_instagram_message(event: dict, db: Session):
             
             pre_dm_rules = active_rules
             
-            # FIX: After primary DM is complete (simple reply or lead capture), do NOT process pre_dm_rules.
-            # Send one short "already complete" reply so the user isn't left with silence, then stop.
-            from app.services.pre_dm_handler import get_pre_dm_state, sender_primary_dm_complete
-            if sender_primary_dm_complete(sender_id, account.id, pre_dm_rules, db):
-                log_print(f"🚫 [FIX] Primary DM already complete. Skipping pre_dm_rules.")
-                # Send a single acknowledgment so the user gets a reply instead of silence
-                already_done_msg = (
-                    "We already have your info and you're all set! 👍 "
-                    "If you need anything else, just message us."
-                )
-                try:
-                    from app.utils.encryption import decrypt_credentials
-                    from app.utils.instagram_api import send_dm
-                    if account.encrypted_page_token:
-                        access_token = decrypt_credentials(account.encrypted_page_token)
-                    elif account.encrypted_credentials:
-                        access_token = decrypt_credentials(account.encrypted_credentials)
-                    else:
-                        access_token = None
-                    if access_token:
-                        send_dm(sender_id, already_done_msg, access_token, account.page_id, buttons=None, quick_replies=None)
-                        log_print(f"   ✅ Sent 'already complete' acknowledgment to user.")
-                    else:
-                        log_print(f"   💬 No token; user messages handled by real user only.")
-                except Exception as e:
-                    log_print(f"   ⚠️ Could not send acknowledgment: {e}")
-                return
+            # REMOVED: Global completion check - now checking per-rule in the loop below
+            # This ensures each reel/post works independently (Reel A phone doesn't skip when Reel B email completed)
             
             # Track if we processed any rules to avoid duplicate retry messages
             processed_rules_count = 0
@@ -1354,10 +1329,43 @@ async def process_instagram_message(event: dict, db: Session):
                 if not (ask_to_follow or ask_for_email):
                     continue
                 
-                # Check if this is a follow confirmation (only if we're actually waiting for it)
+                # CRITICAL FIX: Check if THIS SPECIFIC rule has completed, not globally
+                # This ensures Reel A (phone) doesn't skip when Reel B (email) completed
                 from app.services.pre_dm_handler import get_pre_dm_state, check_if_email_response
                 from app.services.lead_capture import validate_phone
                 state = get_pre_dm_state(sender_id, rule.id)
+                
+                # Check if this specific rule has completed its flow
+                rule_completed = False
+                if state.get("primary_dm_sent"):
+                    # Check if lead was captured for THIS specific rule (if lead capture)
+                    config = rule.config or {}
+                    is_lead = config.get("is_lead_capture", False)
+                    if is_lead:
+                        try:
+                            from sqlalchemy import cast
+                            from sqlalchemy.dialects.postgresql import JSONB
+                            from app.models.captured_lead import CapturedLead
+                            has_lead_for_this_rule = (
+                                db.query(CapturedLead.id)
+                                .filter(
+                                    CapturedLead.instagram_account_id == account.id,
+                                    CapturedLead.automation_rule_id == rule.id,  # Check THIS rule only
+                                    cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == str(sender_id),
+                                )
+                                .limit(1)
+                                .first()
+                            )
+                            rule_completed = has_lead_for_this_rule is not None
+                        except Exception:
+                            rule_completed = False
+                    else:
+                        # Simple reply rule - if primary_dm_sent, it's complete
+                        rule_completed = True
+                
+                if rule_completed:
+                    log_print(f"⏭️ Rule {rule.id} ({rule.name}) already completed for sender {sender_id}, skipping")
+                    continue
                 
                 # CRITICAL FIX: Ensure rules only process responses matching their flow type
                 # Reel A (phone) shouldn't process email responses, Reel B (email) shouldn't process phone responses
