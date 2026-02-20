@@ -339,7 +339,7 @@ def get_analytics_dashboard(
         # This reduces database round trips from 8 to 1, significantly improving performance
         from sqlalchemy import case
         counts_query = base_query.with_entities(
-            func.sum(case((AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED, 1), else_=0)).label("total_triggers"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "trigger_matched", 1), else_=0)).label("total_triggers"),
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("total_dms_sent"),
             func.sum(case(
                 (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
@@ -366,7 +366,7 @@ def get_analytics_dashboard(
         # Get top performing posts/media (grouped by media_id); include account for media fetch
         top_posts_query = base_query.filter(
             AnalyticsEvent.media_id.isnot(None),
-            AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED
+            cast(AnalyticsEvent.event_type, String) == "trigger_matched"
         ).with_entities(
             AnalyticsEvent.media_id,
             func.count(AnalyticsEvent.id).label("trigger_count"),
@@ -535,7 +535,7 @@ def get_analytics_dashboard(
         # This reduces queries from 21 (for 7 days) to 1
         daily_breakdown_query = base_query.with_entities(
             func.date(AnalyticsEvent.created_at).label("date"),
-            func.sum(case((AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED, 1), else_=0)).label("triggers"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "trigger_matched", 1), else_=0)).label("triggers"),
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
             func.sum(case(
                 (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
@@ -742,7 +742,7 @@ def get_media_analytics(
         # Aggregate stats per media_id in single query
         aggregated_stats = analytics_base.with_entities(
             AnalyticsEvent.media_id,
-            func.sum(case((AnalyticsEvent.event_type == EventType.TRIGGER_MATCHED, 1), else_=0)).label("triggers"),
+            func.sum(case((cast(AnalyticsEvent.event_type, String) == "trigger_matched", 1), else_=0)).label("triggers"),
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
             func.sum(case(
                 (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
