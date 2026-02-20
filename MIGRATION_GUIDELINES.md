@@ -27,10 +27,23 @@ def upgrade() -> None:
 
 **✅ ALWAYS DO THIS:**
 ```python
-from alembic.utils.safe_enum_addition import safe_add_enum_value
+from alembic import op
+import sqlalchemy as sa
 
 def upgrade() -> None:
-    safe_add_enum_value('eventtype', 'new_value')
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'new_value';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    NULL;
+                ELSE
+                    RAISE;
+                END IF;
+        END $$;
+    """))
 ```
 
 **Why:** The try/except approach aborts the PostgreSQL transaction. DO blocks handle errors gracefully without aborting.
@@ -39,14 +52,25 @@ def upgrade() -> None:
 
 **✅ USE THIS:**
 ```python
-from alembic.utils.safe_enum_addition import safe_add_multiple_enum_values
+from alembic import op
+import sqlalchemy as sa
 
 def upgrade() -> None:
-    safe_add_multiple_enum_values('eventtype', [
-        'value1',
-        'value2',
-        'value3'
-    ])
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'value1';
+            ALTER TYPE eventtype ADD VALUE 'value2';
+            ALTER TYPE eventtype ADD VALUE 'value3';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    NULL;
+                ELSE
+                    RAISE;
+                END IF;
+        END $$;
+    """))
 ```
 
 ### 3. Checking Schema Existence
@@ -119,9 +143,6 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-# Import safe helpers
-from alembic.utils.safe_enum_addition import safe_add_enum_value
-
 revision: str = "xyz_description"
 down_revision: Union[str, None] = "previous_revision"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -132,8 +153,20 @@ def upgrade() -> None:
     """Apply migration changes."""
     conn = op.get_bind()
     
-    # Example: Adding enum value
-    safe_add_enum_value('eventtype', 'new_value')
+    # Example: Adding enum value safely
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'new_value';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    NULL;
+                ELSE
+                    RAISE;
+                END IF;
+        END $$;
+    """))
     
     # Example: Checking schema existence
     schema_exists = conn.execute(
@@ -167,10 +200,23 @@ def downgrade() -> None:
 
 ### Pattern 1: Adding Enum Value
 ```python
-from alembic.utils.safe_enum_addition import safe_add_enum_value
+from alembic import op
+import sqlalchemy as sa
 
 def upgrade() -> None:
-    safe_add_enum_value('eventtype', 'new_value')
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'new_value';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    NULL;
+                ELSE
+                    RAISE;
+                END IF;
+        END $$;
+    """))
 ```
 
 ### Pattern 2: Adding Column Safely
@@ -214,7 +260,7 @@ def upgrade() -> None:
 
 ## Checklist Before Committing Migration
 
-- [ ] Uses `safe_add_enum_value` for enum additions
+- [ ] Uses DO block pattern for enum additions (see Pattern 1)
 - [ ] Checks schema existence before using schemas
 - [ ] Uses `IF NOT EXISTS` / `IF EXISTS` where possible
 - [ ] Handles "already exists" errors gracefully

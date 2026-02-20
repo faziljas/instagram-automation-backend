@@ -4,18 +4,45 @@
 
 ### Adding Enum Value
 ```python
-from alembic.utils.safe_enum_addition import safe_add_enum_value
+from alembic import op
+import sqlalchemy as sa
 
 def upgrade() -> None:
-    safe_add_enum_value('eventtype', 'new_value')
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'new_value';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    NULL;
+                ELSE
+                    RAISE;
+                END IF;
+        END $$;
+    """))
 ```
 
 ### Adding Multiple Enum Values
 ```python
-from alembic.utils.safe_enum_addition import safe_add_multiple_enum_values
+from alembic import op
+import sqlalchemy as sa
 
 def upgrade() -> None:
-    safe_add_multiple_enum_values('eventtype', ['value1', 'value2'])
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'value1';
+            ALTER TYPE eventtype ADD VALUE 'value2';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    NULL;
+                ELSE
+                    RAISE;
+                END IF;
+        END $$;
+    """))
 ```
 
 ### Checking Schema Exists
@@ -49,8 +76,20 @@ op.execute(sa.text("CREATE TRIGGER ... ON auth.users ..."))
 ## ✅ Always Do This
 
 ```python
-# ✅ DO: Use safe helper
-safe_add_enum_value('eventtype', 'value')
+# ✅ DO: Use DO block pattern
+op.execute(sa.text("""
+    DO $$
+    BEGIN
+        ALTER TYPE eventtype ADD VALUE 'value';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                NULL;
+            ELSE
+                RAISE;
+            END IF;
+    END $$;
+"""))
 
 # ✅ DO: Check schema first
 if schema_exists:
@@ -59,7 +98,7 @@ if schema_exists:
 
 ## 📋 Pre-Commit Checklist
 
-- [ ] Uses `safe_add_enum_value` for enum additions
+- [ ] Uses DO block pattern for enum additions
 - [ ] Checks schema existence before using schemas  
 - [ ] Uses `IF NOT EXISTS` / `IF EXISTS` where possible
 - [ ] Tested on fresh database

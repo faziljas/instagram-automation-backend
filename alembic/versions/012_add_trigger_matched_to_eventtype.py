@@ -12,7 +12,7 @@ inserting TRIGGER_MATCHED events. This migration adds the new value.
 from typing import Sequence, Union
 
 from alembic import op
-from alembic.utils.safe_enum_addition import safe_add_enum_value
+import sqlalchemy as sa
 
 
 revision: str = "012_add_trigger_matched"
@@ -24,8 +24,20 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # Add new eventtype enum value 'trigger_matched' for TRIGGER_MATCHED events.
     # SQLAlchemy now uses enum VALUES (trigger_matched) not enum NAMES (TRIGGER_MATCHED) via values_callable.
-    # Uses safe_add_enum_value helper to prevent transaction abort errors
-    safe_add_enum_value('eventtype', 'trigger_matched')
+    # Uses DO block to safely handle "already exists" errors without aborting transaction
+    op.execute(sa.text("""
+        DO $$
+        BEGIN
+            ALTER TYPE eventtype ADD VALUE 'trigger_matched';
+        EXCEPTION
+            WHEN OTHERS THEN
+                IF SQLSTATE = '42710' OR SQLERRM LIKE '%already exists%' OR SQLERRM LIKE '%duplicate%' THEN
+                    NULL;
+                ELSE
+                    RAISE;
+                END IF;
+        END $$;
+    """))
 
 
 def downgrade() -> None:
