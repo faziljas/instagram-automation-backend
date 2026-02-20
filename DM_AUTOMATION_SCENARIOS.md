@@ -267,7 +267,7 @@ When **`simple_dm_flow`** (or **`simpleDmFlow`**) is **true** for a rule, the fl
 ### Summary
 
 - **First trigger:** Send `simple_flow_message` (text only).  
-- **Every later message until email:** Valid email → save + primary DM. Ack words (ok, done, okay, following, yes) → re-send email question. Random/invalid text → send invalid-email message (`email_invalid_retry_message` / `email_retry_message`).
+- **Every later message until email:** Valid email (and not a disposable/temp domain) → save + primary DM. Disposable-email domains (same blocklist as sign-up) → send invalid-email message. Ack words (ok, done, okay, following, yes) → re-send email question. Random/invalid text → send invalid-email message (`email_invalid_retry_message` / `email_retry_message`).
 
 ---
 

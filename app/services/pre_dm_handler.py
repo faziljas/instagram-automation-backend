@@ -11,6 +11,7 @@ from app.models.captured_lead import CapturedLead
 from app.models.instagram_account import InstagramAccount
 from app.models.follower import Follower
 from app.services.lead_capture import validate_email, update_automation_stats
+from app.utils.disposable_email import is_disposable_email
 
 
 # In-memory state tracker for pre-DM conversations
@@ -334,6 +335,17 @@ async def process_pre_dm_actions(
             if incoming_message:
                 is_email, email_address = check_if_email_response(incoming_message)
                 if is_email:
+                    # Reject disposable/temp domains (same blocklist as sign-up)
+                    if is_disposable_email(email_address):
+                        invalid_msg = config.get("email_invalid_retry_message") or config.get("emailInvalidRetryMessage") or config.get("email_retry_message") or config.get("emailRetryMessage") or (
+                            "That doesn't look like a valid email. 🤔 Please share your correct email so I can send you the guide! 📧"
+                        )
+                        return {
+                            "action": "send_email_retry",
+                            "message": invalid_msg,
+                            "should_save_email": False,
+                            "email": None,
+                        }
                     update_pre_dm_state(sender_id, rule.id, {
                         "email_received": True,
                         "email": email_address,
@@ -742,6 +754,18 @@ async def process_pre_dm_actions(
         # For DM triggers, check if it's an email
         is_email, email_address = check_if_email_response(incoming_message)
         if is_email:
+            # Reject disposable/temp domains (same blocklist as sign-up)
+            if is_disposable_email(email_address):
+                print(f"⚠️ Disposable email domain rejected: {email_address}")
+                invalid_email_msg = config.get("email_invalid_retry_message") or config.get("emailInvalidRetryMessage") or config.get("email_retry_message") or config.get("emailRetryMessage") or (
+                    "That doesn't look like a valid email address. 🤔\n\nPlease share your email so we can send you the guide! 📧"
+                )
+                return {
+                    "action": "send_email_retry",
+                    "message": invalid_email_msg,
+                    "should_save_email": False,
+                    "email": None,
+                }
             # STRICT MODE: Valid email received! Save it and proceed DIRECTLY to primary DM
             print(f"✅ [STRICT MODE] Valid email received: {email_address}")
             update_pre_dm_state(sender_id, rule.id, {
