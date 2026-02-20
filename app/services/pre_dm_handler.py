@@ -386,10 +386,48 @@ async def process_pre_dm_actions(
     flow_has_completed = follow_completed_for_flow and email_completed_for_flow
     
     if ask_to_follow or ask_for_email:
+        comment_triggers = ["post_comment", "keyword", "live_comment"]
+
+        # v2 Re-Comment after Skip (Use Case 1 & 2): skip_for_now_no_final_dm → no Final DM on skip; on re-comment ask follow then email or email directly
+        skip_no_final_dm = config.get("skip_for_now_no_final_dm", True) or config.get("skipForNowNoFinalDm", True)
+        if skip_no_final_dm and trigger_type in comment_triggers and state.get("email_skipped") and not state.get("email_received") and ask_for_email:
+            sender_id_str = str(sender_id) if sender_id else None
+            has_lead = False
+            try:
+                from sqlalchemy import cast
+                from sqlalchemy.dialects.postgresql import JSONB
+                has_lead = db.query(CapturedLead.id).filter(
+                    CapturedLead.instagram_account_id == account.id,
+                    CapturedLead.automation_rule_id == rule.id,
+                    cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+                ).limit(1).first() is not None
+            except Exception:
+                pass
+            if not has_lead:
+                if not state.get("follow_confirmed"):
+                    # Use Case 1: one question "Are you following me?" (not full first-time flow)
+                    print(f"📧 [v2 Use Case 1] Re-comment, follow not confirmed — sending 'Are you following me?'")
+                    reengagement_msg = config.get("reengagement_follow_message", "Are you following me?")
+                    return {
+                        "action": "send_reengagement_follow_check",
+                        "message": reengagement_msg,
+                        "should_save_email": False,
+                        "email": None,
+                    }
+                else:
+                    # Use Case 2: skip follow, go straight to email step
+                    print(f"📧 [v2 Use Case 2] Re-comment, follow confirmed — sending email request directly")
+                    update_pre_dm_state(sender_id, rule.id, {"email_skipped": False})
+                    return {
+                        "action": "send_email_request",
+                        "message": ask_for_email_message,
+                        "should_save_email": False,
+                        "email": None,
+                    }
+
         # RE-ENGAGEMENT (opt-in): When user commented again but we never collected lead (they skipped email),
         # re-ask for email instead of sending final DM again. Only when rule config enables it (BAU unchanged).
         reask_email_if_no_lead = config.get("reask_email_on_comment_if_no_lead", False) or config.get("reaskEmailOnCommentIfNoLead", False)
-        comment_triggers = ["post_comment", "keyword", "live_comment"]
         if reask_email_if_no_lead and (trigger_type in comment_triggers and state.get("primary_dm_sent") and state.get("email_skipped")
             and not state.get("email_received") and ask_for_email):
             sender_id_str = str(sender_id) if sender_id else None
@@ -416,16 +454,35 @@ async def process_pre_dm_actions(
 
         # Case A: THIS FLOW has been completed (follow confirmed AND email received if required)
         # Only skip to primary when THIS FLOW was completed in a previous interaction
+        # v2: If they skipped email and we never captured lead, do NOT treat as completed (re-engagement will handle on next comment)
         if flow_has_completed:
-            update_pre_dm_state(sender_id, rule.id, {
-                "primary_dm_sent": True
-            })
-            return {
-                "action": "send_primary",
-                "message": None,
-                "should_save_email": False,
-                "email": state.get("email")
-            }
+            if skip_no_final_dm and state.get("email_skipped") and not state.get("email_received"):
+                _has_lead = False
+                try:
+                    from sqlalchemy import cast
+                    from sqlalchemy.dialects.postgresql import JSONB
+                    _sid = str(sender_id) if sender_id else None
+                    _has_lead = db.query(CapturedLead.id).filter(
+                        CapturedLead.instagram_account_id == account.id,
+                        CapturedLead.automation_rule_id == rule.id,
+                        cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == _sid,
+                    ).limit(1).first() is not None
+                except Exception:
+                    pass
+                if not _has_lead:
+                    # v2: Don't send primary; wait for re-comment to trigger Use Case 1 or 2
+                    return {"action": "wait_for_email", "message": None, "should_save_email": False, "email": None}
+                else:
+                    update_pre_dm_state(sender_id, rule.id, {"primary_dm_sent": True})
+                    return {"action": "send_primary", "message": None, "should_save_email": False, "email": state.get("email")}
+            else:
+                update_pre_dm_state(sender_id, rule.id, {"primary_dm_sent": True})
+                return {
+                    "action": "send_primary",
+                    "message": None,
+                    "should_save_email": False,
+                    "email": state.get("email")
+                }
         
         # Case B: User already follows AND already has email, but THIS FLOW hasn't been completed
         # Don't skip - still need to go through the flow to mark it as completed

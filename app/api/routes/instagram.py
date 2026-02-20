@@ -427,32 +427,51 @@ async def process_instagram_message(event: dict, db: Session):
             
             # 1) Handle "Skip for Now" email skip button
             if quick_reply_payload == "email_skip":
-                # User clicked "Skip for Now" - proceed to primary DM
-                log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
-                # Find active rules and proceed to primary DM
+                # v2: skip_for_now_no_final_dm = true → no Final DM (no email = no doc to share). BAU: false → send Final DM.
                 from app.models.automation_rule import AutomationRule
                 rules = db.query(AutomationRule).filter(
                     AutomationRule.instagram_account_id == account.id,
                     AutomationRule.is_active == True,
                     AutomationRule.action_type == "send_dm"
                 ).all()
+                ack_sent = False
                 for rule in rules:
                     if rule.config.get("ask_for_email", False):
-                        # Update state to skip email
                         from app.services.pre_dm_handler import update_pre_dm_state
+                        skip_no_final_dm = rule.config.get("skip_for_now_no_final_dm", True) or rule.config.get("skipForNowNoFinalDm", True)
                         update_pre_dm_state(sender_id, rule.id, {
                             "email_skipped": True,
-                            "email_request_sent": True,  # Mark as sent to prevent re-asking
-                            "email_received": False  # Explicitly mark as not received (skipped)
+                            "email_request_sent": True,
+                            "email_received": False,
                         })
-                        # Proceed to primary DM with override to skip pre-DM processing
-                        asyncio.create_task(execute_automation_action(
-                            rule, sender_id, account, db,
-                            trigger_type="email_skip",
-                            message_id=message_id,
-                            pre_dm_result_override={"action": "send_primary"}  # Skip pre-DM, go directly to primary DM
-                        ))
-                return  # Don't process as regular message
+                        if skip_no_final_dm:
+                            log_print(f"⏭️ [v2] User clicked 'Skip for Now' — no Final DM sent (comment again to re-engage)")
+                            if not ack_sent:
+                                try:
+                                    from app.utils.encryption import decrypt_credentials
+                                    from app.utils.instagram_api import send_dm as send_dm_api
+                                    if account.encrypted_page_token:
+                                        access_token = decrypt_credentials(account.encrypted_page_token)
+                                    elif account.encrypted_credentials:
+                                        access_token = decrypt_credentials(account.encrypted_credentials)
+                                    else:
+                                        access_token = None
+                                    if access_token:
+                                        ack = "No problem! Comment again anytime when you'd like the guide. 📩"
+                                        send_dm_api(sender_id, ack, access_token, account.page_id, buttons=None, quick_replies=None)
+                                        log_print(f"✅ [v2] Sent Skip acknowledgment to {sender_id}")
+                                        ack_sent = True
+                                except Exception as e:
+                                    log_print(f"⚠️ Failed to send Skip ack: {str(e)}", "WARNING")
+                        else:
+                            log_print(f"⏭️ User clicked 'Skip for Now', proceeding to primary DM for {sender_id}")
+                            asyncio.create_task(execute_automation_action(
+                                rule, sender_id, account, db,
+                                trigger_type="email_skip",
+                                message_id=message_id,
+                                pre_dm_result_override={"action": "send_primary"}
+                            ))
+                return
             
             # 1.5) Handle "Share Email" quick reply button
             if quick_reply_payload == "email_shared":
@@ -3446,6 +3465,44 @@ async def execute_automation_action(
                 if pre_dm_result:
                     print(f"🔍 [DEBUG] Pre-DM result: action={pre_dm_result.get('action')}, send_email_success={pre_dm_result.get('send_email_success', False)}")
                 
+                # v2 Use Case 1: Re-engagement follow check — one question "Are you following me?" (not full first-time flow)
+                if pre_dm_result and pre_dm_result["action"] == "send_reengagement_follow_check":
+                    reengagement_msg = pre_dm_result.get("message", "Are you following me?")
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(str(sender_id), rule_id, {"follow_request_sent": True, "step": "follow"})
+                    if comment_id:
+                        update_pre_dm_state(str(sender_id), rule_id, {"comment_id": comment_id})
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    from app.utils.encryption import decrypt_credentials
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
+                        page_id_for_dm = account.page_id
+                        follow_quick_reply = [
+                            {"content_type": "text", "title": "I'm following", "payload": f"im_following_{rule_id}"},
+                            {"content_type": "text", "title": "Follow Me 👆", "payload": f"follow_me_{rule_id}"}
+                        ]
+                        is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                        if is_comment_trigger:
+                            from app.utils.instagram_api import send_private_reply
+                            send_private_reply(comment_id, reengagement_msg, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
+                            print(f"✅ [v2 Use Case 1] Re-engagement follow check sent via private reply")
+                        else:
+                            send_dm_api(str(sender_id), reengagement_msg, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                            print(f"✅ [v2 Use Case 1] Re-engagement follow check sent via DM")
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(user_id=user_id, instagram_account_id=account_id, recipient_username=str(sender_id), message=reengagement_msg, db=db, instagram_username=username, instagram_igsid=account_igsid)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"❌ Failed to send re-engagement follow check: {str(e)}")
+                    return
+
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
                     # STRICT MODE: Send follow request with text-based confirmation (most reliable)
                     follow_message = pre_dm_result["message"]

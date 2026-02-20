@@ -95,23 +95,28 @@ After the **email request** message (with **Share Email** \| **Skip for Now** \|
 
 ### 3.3 User clicks **“Skip for Now”**
 
+Behavior depends on rule config **`skip_for_now_no_final_dm`** (alias: `skipForNowNoFinalDm`).
+
+#### v2 (default): `skip_for_now_no_final_dm` = **true**
+
 | What happens | Result |
 |--------------|--------|
 | `email_skipped` = **true**, `email_received` = **false** | No lead captured. |
-| Bot sends **primary / final DM** | Same final DM as in 3.1 (e.g. PDF message, unfollow disclaimer). |
-| **Flow for this interaction:** | Complete (final DM sent). **Lead:** not captured. |
+| **No Final DM sent** | “No email = no doc to share”; optional short ack: “Comment again anytime when you’d like the guide.” |
+| **Flow:** | Not complete; user can re-comment to re-engage (Use Case 1 or 2 below). |
 
-**When the same user comments again later:**
+**When the same user comments again later (v2 re-comment):**
 
-Behavior depends on rule config: **`reask_email_on_comment_if_no_lead`** (alias: `reaskEmailOnCommentIfNoLead`).
+- **Use Case 1 — follow not confirmed:** Bot sends **one question**: “Are you following me?” (quick replies: I'm following \| Follow Me). User confirms → then Email Step → user types email → Final DM sent.
+- **Use Case 2 — follow already confirmed:** Bot skips follow question and sends **Email Step** directly (“Please provide your email”) → user types email → Final DM sent.
 
-- **Default (BAU):** `reask_email_on_comment_if_no_lead` = **false** or not set  
-  - Bot sends **final DM again** (same as after “Skip for Now”).  
-  - Still no email ask.
+#### BAU: `skip_for_now_no_final_dm` = **false**
 
-- **Opt-in:** `reask_email_on_comment_if_no_lead` = **true**  
-  - Bot sends **email request again** (Share Email \| Skip for Now \| optional Use My Email).  
-  - User can then: [actual email](#31-user-types-actual-email-valid-email-in-message), [Share Email](#32-user-clicks-share-email), or [Skip for Now](#33-user-clicks-skip-for-now) again.
+| What happens | Result |
+|--------------|--------|
+| `email_skipped` = **true** | No lead captured. |
+| Bot sends **primary / final DM** | Same as 3.1 (e.g. PDF, unfollow disclaimer). |
+| **Re-comment:** | Controlled by **`reask_email_on_comment_if_no_lead`** — if true, bot re-sends email request; if false, bot sends final DM again. |
 
 ---
 
@@ -150,11 +155,13 @@ Behavior depends on rule config: **`reask_email_on_comment_if_no_lead`** (alias:
 | 2e | Follow | **Visit Profile** | — | Reminder; wait for confirmation |
 | 3a | Email | Type **valid email** | ✅ Yes | Final DM → flow complete |
 | 3b | Email | **Share Email** then type email | ✅ Yes | Final DM → flow complete |
-| 3c | Email | **Skip for Now** | ❌ No | Final DM → flow complete |
+| 3c | Email | **Skip for Now** (v2) | ❌ No | No Final DM; ack; re-comment → Use Case 1 or 2 |
+| 3c′ | Email | **Skip for Now** (BAU) | ❌ No | Final DM → flow complete |
 | 3d | Email | **Use My Email** (if shown) | ✅ Yes | Final DM → flow complete |
 | 3e | Email | Invalid / other text | ❌ No | Wait / reminder; still in email step |
-| 4a | Comment again (after Skip) | Any comment (BAU) | — | Final DM again |
-| 4b | Comment again (after Skip) | Any comment (`reask_email_on_comment_if_no_lead=true`) | — | Email request again (then 3a–3e) |
+| 4a | Comment again (after Skip, v2) | follow not confirmed | — | “Are you following me?” → confirm → Email Step → Final DM |
+| 4b | Comment again (after Skip, v2) | follow confirmed | — | Email Step directly → Final DM |
+| 4c | Comment again (after Skip, BAU) | Any comment | — | Final DM again (or email request if `reask_email_on_comment_if_no_lead=true`) |
 
 ---
 
@@ -164,8 +171,10 @@ Behavior depends on rule config: **`reask_email_on_comment_if_no_lead`** (alias:
 
 | Config key (canonical) | Alias | Default | Effect |
 |------------------------|-------|--------|--------|
+| `skip_for_now_no_final_dm` | `skipForNowNoFinalDm` | **true** (v2) | When **true**, “Skip for Now” does not send Final DM; re-comment triggers Use Case 1 or 2. When **false** (BAU), Skip sends Final DM. |
 | `require_follow_confirmation` | `requireFollowConfirmation` | `false` | When **true**, “Follow Me” only sends reminder; email step only after “I'm following” or “done”. |
-| `reask_email_on_comment_if_no_lead` | `reaskEmailOnCommentIfNoLead` | `false` | When **true**, if user commented again and we still have no lead (e.g. they skipped), bot re-sends email request instead of final DM again. |
+| `reask_email_on_comment_if_no_lead` | `reaskEmailOnCommentIfNoLead` | `false` | When **true** (and BAU: `skip_for_now_no_final_dm` false), if user commented again with no lead, bot re-sends email request instead of final DM again. |
+| `reengagement_follow_message` | `reengagementFollowMessage` | `"Are you following me?"` | Message shown on re-comment when follow was not confirmed (v2 Use Case 1). |
 
 ---
 
