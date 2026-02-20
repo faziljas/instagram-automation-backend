@@ -1799,8 +1799,10 @@ async def process_instagram_message(event: dict, db: Session):
                         processed_rules_count += 1
                     except Exception as e:
                         log_print(f"❌ Failed to send primary DM for rule {r.id}: {e}", "ERROR")
+                        import traceback
+                        traceback.print_exc()
                 
-                log_print(f"✅ Sent primary DM for {len(rules_waiting_for_email)} rule(s)")
+                log_print(f"✅ Sent primary DM for {processed_rules_count} rule(s)" + (f" ({(len(rules_waiting_for_email) - processed_rules_count)} failed)" if processed_rules_count < len(rules_waiting_for_email) else ""))
             
             # If we processed any rule, don't continue to new_message rules (must return so we don't fall through to "Primary DM already complete")
             if processed_rules_count > 0:
@@ -5375,6 +5377,7 @@ async def execute_automation_action(
                 # Always send DM if message is configured (for all trigger types)
                 # Each new comment gets both comment reply AND primary DM
                 if message_template:
+                    print(f"📤 [PRIMARY DM] Sending primary DM to sender_id={sender_id} rule_id={rule.id} (comment_id={comment_id}, trigger_type={trigger_type})")
                     # Get buttons from pre_dm_result first (for follow button), then from rule config
                     buttons = None
                     if pre_dm_result and pre_dm_result.get("buttons"):

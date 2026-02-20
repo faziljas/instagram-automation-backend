@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, desc, case
+from sqlalchemy import func, and_, desc, case, cast, String
 from urllib.parse import unquote, urlencode, urlparse
 from app.db.session import get_db
 from app.models.analytics_event import AnalyticsEvent, EventType
@@ -343,7 +343,7 @@ def get_analytics_dashboard(
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("total_dms_sent"),
             func.sum(case(
                 (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
-                (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                 else_=0
             )).label("leads_collected"),
             func.sum(case((AnalyticsEvent.event_type == EventType.LINK_CLICKED, 1), else_=0)).label("link_clicks"),
@@ -391,7 +391,7 @@ def get_analytics_dashboard(
                 AnalyticsEvent.media_id,
                 func.sum(case(
                     (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
-                    (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                    (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                     else_=0
                 )).label("leads"),
                 func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms")
@@ -539,7 +539,7 @@ def get_analytics_dashboard(
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
             func.sum(case(
                 (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
-                (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                 else_=0
             )).label("leads")
         ).group_by(func.date(AnalyticsEvent.created_at))
@@ -746,7 +746,7 @@ def get_media_analytics(
             func.sum(case((AnalyticsEvent.event_type == EventType.DM_SENT, 1), else_=0)).label("dms_sent"),
             func.sum(case(
                 (AnalyticsEvent.event_type == EventType.EMAIL_COLLECTED, 1),
-                (AnalyticsEvent.event_type == EventType.PHONE_COLLECTED, 1),
+                (cast(AnalyticsEvent.event_type, String) == "phone_collected", 1),
                 else_=0
             )).label("leads_collected"),
             func.sum(case((AnalyticsEvent.event_type == EventType.LINK_CLICKED, 1), else_=0)).label("link_clicks"),
