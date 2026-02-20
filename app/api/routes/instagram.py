@@ -1157,11 +1157,31 @@ async def process_instagram_message(event: dict, db: Session):
             ).all()
             
             # FIX: After primary DM is complete (simple reply or lead capture), do NOT process pre_dm_rules.
-            # User typing gibberish → no automation, no reminders, no retries. Handled by real user only.
+            # Send one short "already complete" reply so the user isn't left with silence, then stop.
             from app.services.pre_dm_handler import get_pre_dm_state, sender_primary_dm_complete
             if sender_primary_dm_complete(sender_id, account.id, pre_dm_rules, db):
-                log_print(f"🚫 [FIX] Primary DM already complete. Skipping pre_dm_rules (no reply to gibberish).")
-                log_print(f"   💬 User messages handled by real user only.")
+                log_print(f"🚫 [FIX] Primary DM already complete. Skipping pre_dm_rules.")
+                # Send a single acknowledgment so the user gets a reply instead of silence
+                already_done_msg = (
+                    "We already have your info and you're all set! 👍 "
+                    "If you need anything else, just message us."
+                )
+                try:
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm
+                    if account.encrypted_page_token:
+                        access_token = decrypt_credentials(account.encrypted_page_token)
+                    elif account.encrypted_credentials:
+                        access_token = decrypt_credentials(account.encrypted_credentials)
+                    else:
+                        access_token = None
+                    if access_token:
+                        send_dm(sender_id, already_done_msg, access_token, account.page_id, buttons=None, quick_replies=None)
+                        log_print(f"   ✅ Sent 'already complete' acknowledgment to user.")
+                    else:
+                        log_print(f"   💬 No token; user messages handled by real user only.")
+                except Exception as e:
+                    log_print(f"   ⚠️ Could not send acknowledgment: {e}")
                 return
             
             # Track if we processed any rules to avoid duplicate retry messages
@@ -1725,17 +1745,20 @@ async def process_instagram_message(event: dict, db: Session):
                     if processed_phone:
                         override["phone"] = processed_phone
                     
-                    asyncio.create_task(execute_automation_action(
-                        r,
-                        sender_id,
-                        account,
-                        db,
-                        trigger_type="story_reply" if story_id else "new_message",
-                        message_id=message_id,
-                        comment_id=stored_comment_id,
-                        pre_dm_result_override=override
-                    ))
-                    processed_rules_count += 1
+                    # Await so the primary DM is actually sent before we return (fix: create_task was fire-and-forget, user got no reply)
+                    try:
+                        await execute_automation_action(
+                            r,
+                            sender_id,
+                            account,
+                            db,
+                            trigger_type="story_reply" if story_id else "new_message",
+                            message_id=message_id,
+                            comment_id=stored_comment_id,
+                            pre_dm_result_override=override
+                        )
+                    except Exception as e:
+                        log_print(f"❌ Failed to send primary DM for rule {r.id}: {e}", "ERROR")
                 
                 log_print(f"✅ Sent primary DM for {len(rules_waiting_for_email)} rule(s)")
             
