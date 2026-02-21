@@ -756,39 +756,56 @@ async def process_instagram_message(event: dict, db: Session):
                                 pre_dm_result_override={"action": "send_primary"}
                             ))
                     else:
-                        # User said No - resend follow request
-                        log_print(f"❌ User clicked 'No' on 'Are you followed?' for rule {rule.id} - resending follow request")
-                        ask_to_follow_message = rule.config.get(
-                            "ask_to_follow_message",
-                            "Hey! Would you mind following me? I share great content! 🙌"
-                        ) if rule.config else "Hey! Would you mind following me? I share great content! 🙌"
-                        
-                        update_pre_dm_state(str(sender_id), rule.id, {
-                            "follow_recheck_sent": False,
-                            "follow_request_sent": False  # Reset to ask again
-                        })
-                        
-                        from app.utils.encryption import decrypt_credentials
-                        from app.utils.instagram_api import send_dm
-                        try:
-                            if account.encrypted_page_token:
-                                access_token = decrypt_credentials(account.encrypted_page_token)
-                            elif account.encrypted_credentials:
-                                access_token = decrypt_credentials(account.encrypted_credentials)
-                            else:
-                                raise Exception("No access token found")
-                            
-                            page_id_for_dm = account.page_id
-                            
-                            # Send follow request with buttons
-                            follow_quick_reply = [
-                                {"content_type": "text", "title": "I'm following", "payload": f"im_following_{rule.id}"},
-                                {"content_type": "text", "title": "Follow Me 👆", "payload": f"follow_me_{rule.id}"}
-                            ]
-                            send_dm(sender_id, ask_to_follow_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                            log_print(f"✅ Follow request resent after 'Are you followed?' No")
-                        except Exception as e:
-                            log_print(f"❌ Failed to resend follow request: {str(e)}", "ERROR")
+                        # User said No
+                        if not ask_for_email:
+                            # Followers-only: send exit message, no primary DM; next comment asks "Are you following me?" again
+                            exit_msg = (rule.config or {}).get("follow_no_exit_message") or (rule.config or {}).get("followNoExitMessage") or (
+                                "No problem! Comment again anytime when you'd like the guide. 📩"
+                            )
+                            update_pre_dm_state(str(sender_id), rule.id, {
+                                "follow_recheck_sent": False,
+                                "follow_exit_sent": True,
+                                "follow_request_sent": True,
+                            })
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_dm
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                else:
+                                    raise Exception("No access token found")
+                                send_dm(sender_id, exit_msg, access_token, account.page_id, buttons=None, quick_replies=None)
+                                log_print(f"📩 [FOLLOWERS] User clicked No — sent exit message, no primary DM")
+                            except Exception as e:
+                                log_print(f"❌ Failed to send exit message: {str(e)}", "ERROR")
+                        else:
+                            # Email/Phone flow: resend follow request
+                            log_print(f"❌ User clicked 'No' on 'Are you followed?' for rule {rule.id} - resending follow request")
+                            ask_to_follow_message = (rule.config or {}).get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
+                            update_pre_dm_state(str(sender_id), rule.id, {
+                                "follow_recheck_sent": False,
+                                "follow_request_sent": False,
+                            })
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_dm
+                            try:
+                                if account.encrypted_page_token:
+                                    access_token = decrypt_credentials(account.encrypted_page_token)
+                                elif account.encrypted_credentials:
+                                    access_token = decrypt_credentials(account.encrypted_credentials)
+                                else:
+                                    raise Exception("No access token found")
+                                page_id_for_dm = account.page_id
+                                follow_quick_reply = [
+                                    {"content_type": "text", "title": "I'm following", "payload": f"im_following_{rule.id}"},
+                                    {"content_type": "text", "title": "Follow Me 👆", "payload": f"follow_me_{rule.id}"}
+                                ]
+                                send_dm(sender_id, ask_to_follow_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                log_print(f"✅ Follow request resent after 'Are you followed?' No")
+                            except Exception as e:
+                                log_print(f"❌ Failed to resend follow request: {str(e)}", "ERROR")
                     
                     # Only process the first matching rule
                     return
@@ -1119,6 +1136,34 @@ async def process_instagram_message(event: dict, db: Session):
                         log_print(f"✅ Logged FOLLOW_BUTTON_CLICKED analytics event for rule {rule.id}")
                     except Exception as analytics_err:
                         log_print(f"⚠️ Failed to log FOLLOW_BUTTON_CLICKED event: {str(analytics_err)}", "WARNING")
+                    
+                    # Followers-only: "Follow Me" → ask "Are you following me?" with Yes/No (no primary until Yes)
+                    if not ask_for_email:
+                        follow_recheck_msg = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
+                        update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True})
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm as send_dm_api
+                        try:
+                            if account.encrypted_page_token:
+                                _tok = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                _tok = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            yes_no_quick_replies = [
+                                {"content_type": "text", "title": "Yes", "payload": f"follow_recheck_yes_{rule.id}"},
+                                {"content_type": "text", "title": "No", "payload": f"follow_recheck_no_{rule.id}"},
+                            ]
+                            send_dm_api(sender_id, follow_recheck_msg, _tok, account.page_id, buttons=None, quick_replies=yes_no_quick_replies)
+                            log_print(f"📩 [FOLLOWERS] User clicked 'Follow Me' — sent 'Are you following me?' with Yes/No")
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(user_id=account.user_id, instagram_account_id=account.id, recipient_username=str(sender_id), message=follow_recheck_msg, db=db, instagram_username=account.username, instagram_igsid=getattr(account, "igsid", None))
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            log_print(f"❌ Failed to send follow recheck: {str(e)}", "ERROR")
+                        return
                     
                     # Optional: require explicit follow confirmation after "Follow Me" (config: require_follow_confirmation).
                     # Default BAU: "Follow Me" = confirm and send email immediately (no blocking).
@@ -1748,10 +1793,48 @@ async def process_instagram_message(event: dict, db: Session):
                         # Continue to check other rules
                         continue
                     
-                    # Handle "Are you followed?" recheck with Yes/No buttons
+                    # Handle Followers-only "No" exit (no primary DM; next comment asks "Are you following me?" again)
+                    if pre_dm_result["action"] == "send_follow_no_exit":
+                        exit_msg = pre_dm_result.get("message", "No problem! Comment again anytime when you'd like the guide. 📩")
+                        log_print(f"📩 [FOLLOWERS] Sending exit message (no primary DM) to {sender_id}")
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        update_pre_dm_state(str(sender_id), rule.id, {
+                            "follow_recheck_sent": False,
+                            "follow_exit_sent": True,
+                            "follow_request_sent": True,
+                        })
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        try:
+                            if account.encrypted_page_token:
+                                _tok = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                _tok = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            send_dm(sender_id, exit_msg, _tok, account.page_id, buttons=None, quick_replies=None)
+                            log_print(f"✅ Exit message sent")
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(
+                                    user_id=account.user_id,
+                                    instagram_account_id=account.id,
+                                    recipient_username=str(sender_id),
+                                    message=exit_msg,
+                                    db=db,
+                                    instagram_username=account.username,
+                                    instagram_igsid=getattr(account, "igsid", None),
+                                )
+                            except Exception as log_err:
+                                log_print(f"⚠️ Failed to log DM: {str(log_err)}", "WARNING")
+                        except Exception as send_err:
+                            log_print(f"⚠️ Failed to send exit message: {str(send_err)}", "ERROR")
+                        continue
+                    
+                    # Handle "Are you followed?" / "Are you following me?" recheck with Yes/No buttons
                     if pre_dm_result["action"] == "send_follow_recheck":
-                        follow_recheck_msg = pre_dm_result.get("message", "Are you followed?")
-                        log_print(f"💬 Sending 'Are you followed?' question to {sender_id}")
+                        follow_recheck_msg = pre_dm_result.get("message", "Are you following me?")
+                        log_print(f"💬 Sending follow recheck question to {sender_id}: {follow_recheck_msg}")
                         
                         from app.utils.encryption import decrypt_credentials
                         from app.utils.instagram_api import send_dm
@@ -2948,11 +3031,40 @@ async def process_postback_event(event: dict, db: Session):
                     except Exception as analytics_err:
                         print(f"⚠️ Failed to log FOLLOW_BUTTON_CLICKED event: {str(analytics_err)}")
                     
-                    # Mark that follow button was clicked in state
+                    # Followers-only: "Follow Me" → ask "Are you following me?" with Yes/No (no primary until Yes)
+                    if not ask_for_email:
+                        from app.services.pre_dm_handler import update_pre_dm_state
+                        follow_recheck_msg = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
+                        update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True})
+                        from app.utils.encryption import decrypt_credentials
+                        from app.utils.instagram_api import send_dm
+                        try:
+                            if account.encrypted_page_token:
+                                _tok = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                _tok = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                raise Exception("No access token found")
+                            yes_no_quick_replies = [
+                                {"content_type": "text", "title": "Yes", "payload": f"follow_recheck_yes_{rule.id}"},
+                                {"content_type": "text", "title": "No", "payload": f"follow_recheck_no_{rule.id}"},
+                            ]
+                            send_dm(sender_id, follow_recheck_msg, _tok, account.page_id, buttons=None, quick_replies=yes_no_quick_replies)
+                            print(f"📩 [FOLLOWERS] User clicked 'Follow Me' (postback) — sent 'Are you following me?' with Yes/No")
+                            try:
+                                from app.utils.plan_enforcement import log_dm_sent
+                                log_dm_sent(user_id=account.user_id, instagram_account_id=account.id, recipient_username=str(sender_id), message=follow_recheck_msg, db=db, instagram_username=account.username, instagram_igsid=getattr(account, "igsid", None))
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            print(f"❌ Failed to send follow recheck: {str(e)}")
+                        break
+                    
+                    # Mark that follow button was clicked in state (Email/Phone flow)
                     from app.services.pre_dm_handler import update_pre_dm_state
                     update_pre_dm_state(str(sender_id), rule.id, {
                         "follow_button_clicked": True,
-                        "follow_confirmed": True,  # Mark as confirmed since they clicked the button
+                        "follow_confirmed": True,
                         "follow_button_clicked_time": str(asyncio.get_event_loop().time())
                     })
                     print(f"✅ Marked follow button click for rule {rule.id}")
@@ -4024,6 +4136,68 @@ async def execute_automation_action(
                             pass
                     except Exception as e:
                         print(f"❌ Failed to send re-engagement follow check: {str(e)}")
+                    return
+
+                # Followers-only: "No" → exit message (no primary DM); next comment will ask "Are you following me?" again
+                if pre_dm_result and pre_dm_result["action"] == "send_follow_no_exit":
+                    exit_msg = pre_dm_result.get("message", "No problem! Comment again anytime when you'd like the guide. 📩")
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(str(sender_id), rule_id, {"follow_recheck_sent": False, "follow_exit_sent": True, "follow_request_sent": True})
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    from app.utils.encryption import decrypt_credentials
+                    try:
+                        if account.encrypted_page_token:
+                            _tok = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            _tok = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
+                        page_id_for_dm = account.page_id
+                        if comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]:
+                            from app.utils.instagram_api import send_private_reply
+                            send_private_reply(comment_id, exit_msg, _tok, page_id_for_dm, quick_replies=None)
+                        else:
+                            send_dm_api(str(sender_id), exit_msg, _tok, page_id_for_dm, buttons=None, quick_replies=None)
+                        print(f"📩 [FOLLOWERS] Exit message sent (no primary DM)")
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(user_id=user_id, instagram_account_id=account_id, recipient_username=str(sender_id), message=exit_msg, db=db, instagram_username=username, instagram_igsid=account_igsid)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"❌ Failed to send exit message: {str(e)}")
+                    return
+
+                # Followers re-comment or "Follow me" / "No" → "Are you following me?" with Yes/No only
+                if pre_dm_result and pre_dm_result["action"] == "send_follow_recheck":
+                    follow_recheck_msg = pre_dm_result.get("message", "Are you following me?")
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    from app.utils.encryption import decrypt_credentials
+                    try:
+                        if account.encrypted_page_token:
+                            _tok = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            _tok = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token found")
+                        page_id_for_dm = account.page_id
+                        yes_no_quick_replies = [
+                            {"content_type": "text", "title": "Yes", "payload": f"follow_recheck_yes_{rule_id}"},
+                            {"content_type": "text", "title": "No", "payload": f"follow_recheck_no_{rule_id}"},
+                        ]
+                        if comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]:
+                            from app.utils.instagram_api import send_private_reply
+                            send_private_reply(comment_id, follow_recheck_msg, _tok, page_id_for_dm, quick_replies=yes_no_quick_replies)
+                        else:
+                            send_dm_api(str(sender_id), follow_recheck_msg, _tok, page_id_for_dm, buttons=None, quick_replies=yes_no_quick_replies)
+                        print(f"✅ 'Are you following me?' sent with Yes/No buttons")
+                        try:
+                            from app.utils.plan_enforcement import log_dm_sent
+                            log_dm_sent(user_id=user_id, instagram_account_id=account_id, recipient_username=str(sender_id), message=follow_recheck_msg, db=db, instagram_username=username, instagram_igsid=account_igsid)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"❌ Failed to send follow recheck: {str(e)}")
                     return
 
                 # Simple flow: one combined message (follow + email ask), text only, no quick replies

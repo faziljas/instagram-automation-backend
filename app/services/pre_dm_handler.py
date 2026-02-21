@@ -32,6 +32,7 @@ def get_pre_dm_state(sender_id: str, rule_id: int) -> Dict[str, Any]:
         "phone_request_sent": False,
         "phone_received": False,
         "primary_dm_sent": False,
+        "follow_exit_sent": False,  # Followers-only: user said No → exit message sent; next comment asks "Are you following me?" only
         "comment_replied_comment_ids": [],
     })
 
@@ -48,6 +49,7 @@ def update_pre_dm_state(sender_id: str, rule_id: int, updates: Dict[str, Any]):
             "phone_request_sent": False,
             "phone_received": False,
             "primary_dm_sent": False,
+            "follow_exit_sent": False,
             "comment_replied_comment_ids": [],
         }
     _pre_dm_states[key].update(updates)
@@ -754,6 +756,18 @@ async def process_pre_dm_actions(
                     "email": None,
                 }
 
+        # Followers-only: user commented again after "No" (exit message) — ask only "Are you following me?" with Yes/No (no long follow message)
+        if ask_to_follow and not ask_for_email and state.get("follow_exit_sent") and not state.get("follow_confirmed"):
+            follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or "Are you following me?"
+            update_pre_dm_state(sender_id, rule.id, {"follow_recheck_sent": True})
+            print(f"📩 [FOLLOWERS] Re-comment after exit — sending only 'Are you following me?' with Yes/No")
+            return {
+                "action": "send_follow_recheck",
+                "message": follow_recheck_msg,
+                "should_save_email": False,
+                "email": None,
+            }
+
         # Case A: THIS FLOW has been completed (follow confirmed AND email received if required)
         # Only skip to primary when THIS FLOW was completed in a previous interaction
         # v2: If they skipped email and we never captured lead, do NOT treat as completed (re-engagement will handle on next comment)
@@ -987,44 +1001,60 @@ async def process_pre_dm_actions(
                             "email": None
                         }
                 elif is_no:
-                    # User said no - ask them to follow again
+                    # User said no
+                    if not ask_for_email:
+                        # Followers-only: send exit message, no primary DM; next comment will ask "Are you following me?" again
+                        exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or (
+                            "No problem! Comment again anytime when you'd like the guide. 📩"
+                        )
+                        update_pre_dm_state(sender_id, rule.id, {
+                            "follow_recheck_sent": False,
+                            "follow_exit_sent": True,
+                            "follow_request_sent": True,  # Keep True so next comment is recognized
+                        })
+                        print(f"📩 [FOLLOWERS] User said No — sending exit message, no primary DM")
+                        return {
+                            "action": "send_follow_no_exit",
+                            "message": exit_msg,
+                            "should_save_email": False,
+                            "email": None,
+                        }
+                    # Email/Phone flow: resend follow request
                     print(f"❌ User said they're not following yet - resending follow request")
                     update_pre_dm_state(sender_id, rule.id, {
                         "follow_recheck_sent": False,
-                        "follow_request_sent": False  # Reset to ask again
+                        "follow_request_sent": False,
                     })
                     return {
                         "action": "send_follow_request",
                         "message": ask_to_follow_message,
                         "should_save_email": False,
-                        "email": None
+                        "email": None,
                     }
                 else:
-                    # Unclear response - ask "Are you followed?" again
-                    print(f"💬 Unclear response to 'Are you followed?' - asking again")
+                    # Unclear response - ask again with Yes/No
                     follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
-                        "Are you followed? Please reply with Yes or No."
+                        "Are you following me?" if not ask_for_email else "Are you followed? Please reply with Yes or No."
                     )
+                    print(f"💬 Unclear response - asking again: '{follow_recheck_msg}'")
                     return {
                         "action": "send_follow_recheck",
                         "message": follow_recheck_msg,
                         "should_save_email": False,
-                        "email": None
+                        "email": None,
                     }
             else:
-                # First time random text - ask "Are you followed?" with Yes/No buttons
-                print(f"💬 Non-confirmation reply while waiting for follow: '{incoming_message}' — asking 'Are you followed?'")
+                # First time random text (e.g. "No" or "Follow me" click) — ask "Are you following me?" with Yes/No
                 follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
-                    "Are you followed?"
+                    "Are you following me?" if not ask_for_email else "Are you followed?"
                 )
-                update_pre_dm_state(sender_id, rule.id, {
-                    "follow_recheck_sent": True
-                })
+                print(f"💬 Non-confirmation reply while waiting for follow: '{incoming_message}' — asking '{follow_recheck_msg}'")
+                update_pre_dm_state(sender_id, rule.id, {"follow_recheck_sent": True})
                 return {
                     "action": "send_follow_recheck",
                     "message": follow_recheck_msg,
                     "should_save_email": False,
-                    "email": None
+                    "email": None,
                 }
     
     # Check if this is a response to an email request
