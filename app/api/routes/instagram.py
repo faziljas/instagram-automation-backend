@@ -1424,11 +1424,24 @@ async def process_instagram_message(event: dict, db: Session):
             # IMPORTANT STRICT MODE: Only do this for Story replies (story_id present).
             # For plain DMs (no story_id), do NOT auto-send anything for VIP users – their
             # messages should be handled manually by the account owner.
+            # EXCEPTION: If we're in an active flow waiting for phone or email, process the message so we can complete the flow and send primary DM.
             if is_vip_user:
                 if story_id is None:
-                    log_print(f"⭐ [VIP] User {sender_id} is converted and this DM is NOT a story reply. Skipping all pre-DM VIP auto-send.")
-                    # Do not send any primary DM here; message will be handled manually.
-                    return
+                    waiting_for_phone_or_email = False
+                    for _r in pre_dm_rules:
+                        _st = get_pre_dm_state(sender_id, _r.id)
+                        if _st.get("phone_request_sent") and not _st.get("phone_received"):
+                            waiting_for_phone_or_email = True
+                            log_print(f"📱 [VIP] Rule {_r.id} waiting for phone — processing DM so we can complete flow and send primary DM")
+                            break
+                        if _st.get("email_request_sent") and not _st.get("email_received"):
+                            waiting_for_phone_or_email = True
+                            log_print(f"📧 [VIP] Rule {_r.id} waiting for email — processing DM so we can complete flow and send primary DM")
+                            break
+                    if not waiting_for_phone_or_email:
+                        log_print(f"⭐ [VIP] User {sender_id} is converted and this DM is NOT a story reply. Skipping all pre-DM VIP auto-send.")
+                        # Do not send any primary DM here; message will be handled manually.
+                        return
 
                 vip_rule_processed = False
                 for rule in pre_dm_rules:
