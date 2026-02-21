@@ -2376,9 +2376,21 @@ async def process_instagram_message(event: dict, db: Session):
                         CapturedLead.instagram_account_id == account.id,
                         cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
                     ).first()
-                    
+                    # Only treat as "lead captured" if lead matches current flow type (email vs phone)
+                    lead_matches_flow = False
                     if existing_lead:
-                        # FIX: Lead already captured - flow is complete, stop ALL automation
+                        cfg = rule.config or {}
+                        simple_dm_flow_phone = cfg.get("simple_dm_flow_phone", False) or cfg.get("simpleDmFlowPhone", False)
+                        simple_dm_flow = cfg.get("simple_dm_flow", False) or cfg.get("simpleDmFlow", False)
+                        ask_for_email = cfg.get("ask_for_email", False) or cfg.get("askForEmail", False)
+                        if simple_dm_flow_phone:
+                            lead_matches_flow = bool(existing_lead.phone and str(existing_lead.phone).strip())
+                        elif simple_dm_flow or ask_for_email:
+                            lead_matches_flow = bool(existing_lead.email and str(existing_lead.email).strip())
+                        else:
+                            lead_matches_flow = True
+                    if existing_lead and lead_matches_flow:
+                        # FIX: Lead already captured for this flow type - flow is complete, stop ALL automation
                         log_print(f"🚫 [FIX] Lead already captured for rule {rule.id}, stopping automation completely")
                         log_print(f"   💬 All further messages will be handled by real user, not automation")
                         lead_capture_processed = True  # Mark as processed to skip further rule processing
@@ -3939,7 +3951,8 @@ async def execute_automation_action(
                     )
                     has_incoming_message = incoming_message and incoming_message.strip()
                     
-                    # Check if lead was already captured for this sender and rule
+                    # Check if lead was already captured for this sender and rule (match current flow type)
+                    # So switching rule from email → phone still asks for phone; phone → email still asks for email
                     lead_already_captured = False
                     if is_lead_capture:
                         from app.models.captured_lead import CapturedLead
@@ -3951,8 +3964,18 @@ async def execute_automation_action(
                             cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
                         ).first()
                         if existing_lead:
-                            lead_already_captured = True
-                            print(f"✅ Lead already captured for sender {sender_id} and rule {rule_id}")
+                            cfg = rule.config or {}
+                            simple_dm_flow_phone = cfg.get("simple_dm_flow_phone", False) or cfg.get("simpleDmFlowPhone", False)
+                            simple_dm_flow = cfg.get("simple_dm_flow", False) or cfg.get("simpleDmFlow", False)
+                            ask_for_email = cfg.get("ask_for_email", False) or cfg.get("askForEmail", False)
+                            if simple_dm_flow_phone:
+                                lead_already_captured = bool(existing_lead.phone and str(existing_lead.phone).strip())
+                            elif simple_dm_flow or ask_for_email:
+                                lead_already_captured = bool(existing_lead.email and str(existing_lead.email).strip())
+                            else:
+                                lead_already_captured = True
+                            if lead_already_captured:
+                                print(f"✅ Lead already captured for sender {sender_id} and rule {rule_id} (matches current flow type)")
                     
                     # FIX: After primary DM completion, stop ALL automation - let real users handle it
                     # For simple reply rules, if primary DM was sent, don't re-trigger
@@ -5407,9 +5430,21 @@ async def execute_automation_action(
                         CapturedLead.instagram_account_id == account_id,
                         cast(CapturedLead.extra_metadata, JSONB)['sender_id'].astext == str(sender_id)
                     ).first()
-                    
+                    # Only treat as "lead captured" if lead matches current flow type (email vs phone)
+                    lead_matches_flow = False
                     if existing_lead:
-                        # Lead already captured - flow is complete, don't send any messages
+                        cfg = rule.config or {}
+                        simple_dm_flow_phone = cfg.get("simple_dm_flow_phone", False) or cfg.get("simpleDmFlowPhone", False)
+                        simple_dm_flow = cfg.get("simple_dm_flow", False) or cfg.get("simpleDmFlow", False)
+                        ask_for_email = cfg.get("ask_for_email", False) or cfg.get("askForEmail", False)
+                        if simple_dm_flow_phone:
+                            lead_matches_flow = bool(existing_lead.phone and str(existing_lead.phone).strip())
+                        elif simple_dm_flow or ask_for_email:
+                            lead_matches_flow = bool(existing_lead.email and str(existing_lead.email).strip())
+                        else:
+                            lead_matches_flow = True
+                    if existing_lead and lead_matches_flow:
+                        # Lead already captured for this flow type - flow is complete, don't send any messages
                         print(f"🚫 [FIX] Lead already captured for rule {rule.id}, ignoring random text - no messages will be sent")
                         return  # Exit - flow is complete, don't send anything
                     
