@@ -89,6 +89,16 @@ def clear_pre_dm_state(sender_id: str, rule_id: int):
         del _pre_dm_states[key]
 
 
+def normalize_follow_recheck_message(msg: Optional[str], default: str = "Are you following me?") -> str:
+    """Use 'Are you following me?' even if rule config still has old 'Are you followed?'."""
+    if not msg or not str(msg).strip():
+        return default
+    s = str(msg).strip().lower().replace("?", "").strip()
+    if s == "are you followed":
+        return "Are you following me?"
+    return str(msg).strip()
+
+
 def sender_primary_dm_complete(
     sender_id: str,
     account_id: int,
@@ -765,7 +775,8 @@ async def process_pre_dm_actions(
 
         # User commented again after "No" (exit message) — ask only "Are you following me?" with Yes/No (no long follow message)
         if ask_to_follow and state.get("follow_exit_sent") and not state.get("follow_confirmed"):
-            follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or "Are you following me?"
+            raw = config.get("follow_recheck_message") or config.get("followRecheckMessage") or "Are you following me?"
+            follow_recheck_msg = normalize_follow_recheck_message(raw)
             update_pre_dm_state(sender_id, rule.id, {"follow_recheck_sent": True})
             print(f"📩 Re-comment after exit — sending only 'Are you following me?' with Yes/No")
             return {
@@ -1026,9 +1037,12 @@ async def process_pre_dm_actions(
                     }
                 else:
                     # Unclear response - ask again with Yes/No
-                    follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
+                    raw = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
                         "Are you following me?" if not ask_for_email else "Are you following me? Please reply with Yes or No."
                     )
+                    follow_recheck_msg = normalize_follow_recheck_message(raw, "Are you following me?" if not ask_for_email else "Are you following me? Please reply with Yes or No.")
+                    if ask_for_email and follow_recheck_msg == "Are you following me?":
+                        follow_recheck_msg = "Are you following me? Please reply with Yes or No."
                     print(f"💬 Unclear response - asking again: '{follow_recheck_msg}'")
                     return {
                         "action": "send_follow_recheck",
@@ -1047,9 +1061,8 @@ async def process_pre_dm_actions(
                         "email": None,
                     }
                 # First time random text (e.g. "No" or "Follow me" click) — ask "Are you following me?" with Yes/No only (do NOT resend initial follow message)
-                follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
-                    "Are you following me?"
-                )
+                raw = config.get("follow_recheck_message") or config.get("followRecheckMessage") or "Are you following me?"
+                follow_recheck_msg = normalize_follow_recheck_message(raw)
                 print(f"💬 Non-confirmation reply while waiting for follow: '{incoming_message}' — asking '{follow_recheck_msg}'")
                 update_pre_dm_state(sender_id, rule.id, {"follow_recheck_sent": True})
                 return {

@@ -654,7 +654,7 @@ async def process_instagram_message(event: dict, db: Session):
                     log_print(f"⚠️ Could not parse rule_id from payload: {quick_reply_payload}", "WARNING")
                 
                 from app.models.automation_rule import AutomationRule
-                from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state
+                from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state, normalize_follow_recheck_message
                 from app.services.lead_capture import update_automation_stats
                 
                 # Find the specific rule
@@ -756,10 +756,7 @@ async def process_instagram_message(event: dict, db: Session):
                                 pre_dm_result_override={"action": "send_primary"}
                             ))
                     else:
-                        # User said No — always send only exit message; do NOT resend the initial follow message
-                        if state.get("follow_exit_sent"):
-                            log_print(f"📩 User clicked No again after exit — ignoring until they comment again")
-                            return
+                        # User said No — always send exit message so they see "No problem! Comment again..." every time
                         exit_msg = (rule.config or {}).get("follow_no_exit_message") or (rule.config or {}).get("followNoExitMessage") or (
                             "No problem! Comment again anytime when you'd like the guide. 📩"
                         )
@@ -778,7 +775,7 @@ async def process_instagram_message(event: dict, db: Session):
                             else:
                                 raise Exception("No access token found")
                             send_dm(sender_id, exit_msg, access_token, account.page_id, buttons=None, quick_replies=None)
-                            log_print(f"📩 User clicked No to 'Are you following me?' — sent exit message only (no initial message resend)")
+                            log_print(f"📩 User clicked No to 'Are you following me?' — sent exit message (no initial message resend)")
                         except Exception as e:
                             log_print(f"❌ Failed to send exit message: {str(e)}", "ERROR")
                     
@@ -1114,7 +1111,8 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     # Followers-only: "Follow Me" → ask "Are you following me?" with Yes/No (no primary until Yes)
                     if not ask_for_email:
-                        follow_recheck_msg = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
+                        raw = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
+                        follow_recheck_msg = normalize_follow_recheck_message(raw)
                         update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True})
                         from app.utils.encryption import decrypt_credentials
                         from app.utils.instagram_api import send_dm as send_dm_api
@@ -1628,7 +1626,7 @@ async def process_instagram_message(event: dict, db: Session):
                             # Mark all matching rules as email_request_sent (they all share the same email question)
                             for r in pre_dm_rules:
                                 if (story_id is None or str(r.media_id or "") == story_id) and r.config.get("ask_for_email", False):
-                                    from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state
+                                    from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state, normalize_follow_recheck_message
                                     r_state = get_pre_dm_state(sender_id, r.id)
                                     if r_state.get("follow_request_sent") and not r_state.get("email_request_sent"):
                                         update_pre_dm_state(sender_id, r.id, {
@@ -1808,7 +1806,7 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     # Handle "Are you following me?" recheck with Yes/No buttons
                     if pre_dm_result["action"] == "send_follow_recheck":
-                        follow_recheck_msg = pre_dm_result.get("message", "Are you following me?")
+                        follow_recheck_msg = normalize_follow_recheck_message(pre_dm_result.get("message") or "Are you following me?")
                         log_print(f"💬 Sending follow recheck question to {sender_id}: {follow_recheck_msg}")
                         
                         from app.utils.encryption import decrypt_credentials
@@ -1917,7 +1915,7 @@ async def process_instagram_message(event: dict, db: Session):
                             # Mark all matching rules as email_request_sent (they all share the same email question)
                             for r in pre_dm_rules:
                                 if (story_id is None or str(r.media_id or "") == story_id) and r.config.get("ask_for_email", False):
-                                    from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state
+                                    from app.services.pre_dm_handler import update_pre_dm_state, get_pre_dm_state, normalize_follow_recheck_message
                                     r_state = get_pre_dm_state(sender_id, r.id)
                                     if r_state.get("follow_request_sent") and not r_state.get("email_request_sent"):
                                         update_pre_dm_state(sender_id, r.id, {
@@ -3009,7 +3007,8 @@ async def process_postback_event(event: dict, db: Session):
                     # Followers-only: "Follow Me" → ask "Are you following me?" with Yes/No (no primary until Yes)
                     if not ask_for_email:
                         from app.services.pre_dm_handler import update_pre_dm_state
-                        follow_recheck_msg = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
+                        raw = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
+                        follow_recheck_msg = normalize_follow_recheck_message(raw)
                         update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True})
                         from app.utils.encryption import decrypt_credentials
                         from app.utils.instagram_api import send_dm
@@ -4062,7 +4061,7 @@ async def execute_automation_action(
                 print(f"🔍 [DEBUG] Processing pre-DM actions: ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}, skip_growth_steps={skip_growth_steps}")
                 # Process pre-DM actions (unless override is provided)
                 # CRITICAL: If skip_growth_steps=True (VIP user), process_pre_dm_actions will return send_primary immediately
-                from app.services.pre_dm_handler import process_pre_dm_actions
+                from app.services.pre_dm_handler import process_pre_dm_actions, normalize_follow_recheck_message
                 
                 pre_dm_result = await process_pre_dm_actions(
                     rule, sender_id, account, db,
@@ -4077,8 +4076,8 @@ async def execute_automation_action(
                 
                 # v2 Use Case 1: Re-engagement follow check — one question "Are you following me?" (not full first-time flow)
                 if pre_dm_result and pre_dm_result["action"] == "send_reengagement_follow_check":
-                    reengagement_msg = pre_dm_result.get("message", "Are you following me?")
                     from app.services.pre_dm_handler import update_pre_dm_state
+                    reengagement_msg = normalize_follow_recheck_message(pre_dm_result.get("message") or "Are you following me?")
                     update_pre_dm_state(str(sender_id), rule_id, {"follow_request_sent": True, "step": "follow"})
                     if comment_id:
                         update_pre_dm_state(str(sender_id), rule_id, {"comment_id": comment_id})
@@ -4145,7 +4144,7 @@ async def execute_automation_action(
 
                 # Followers re-comment or "Follow me" / "No" → "Are you following me?" with Yes/No only
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_recheck":
-                    follow_recheck_msg = pre_dm_result.get("message", "Are you following me?")
+                    follow_recheck_msg = normalize_follow_recheck_message(pre_dm_result.get("message") or "Are you following me?")
                     from app.utils.instagram_api import send_dm as send_dm_api
                     from app.utils.encryption import decrypt_credentials
                     try:
