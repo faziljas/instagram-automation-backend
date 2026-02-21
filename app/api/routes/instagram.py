@@ -3990,6 +3990,27 @@ async def execute_automation_action(
                     )
                     has_incoming_message = incoming_message and incoming_message.strip()
                     
+                    # When we skip due to primary_dm_sent/lead captured, still reply to COMMENT triggers so user sees "Check your DMs!"
+                    is_comment_trigger_here = comment_id and trigger_type in ("post_comment", "live_comment", "keyword")
+                    def _send_check_dms_reply_if_comment():
+                        if not is_comment_trigger_here or not comment_id:
+                            return
+                        try:
+                            from app.utils.encryption import decrypt_credentials
+                            from app.utils.instagram_api import send_private_reply
+                            if account.encrypted_page_token:
+                                _tok = decrypt_credentials(account.encrypted_page_token)
+                            elif account.encrypted_credentials:
+                                _tok = decrypt_credentials(account.encrypted_credentials)
+                            else:
+                                return
+                            _page_id = account.page_id
+                            _msg = (rule.config or {}).get("check_dms_comment_reply") or (rule.config or {}).get("checkDmsCommentReply") or "Check your DMs! 📩"
+                            send_private_reply(comment_id, _msg, _tok, _page_id, quick_replies=None)
+                            print(f"✅ [COMMENT AGAIN] Sent 'Check your DMs' reply to comment {comment_id} (primary DM already sent)")
+                        except Exception as _e:
+                            print(f"⚠️ Failed to send check-DMs comment reply: {_e}")
+                    
                     # Check if lead was already captured for this sender and rule (match current flow type)
                     # So switching rule from email → phone still asks for phone; phone → email still asks for email
                     lead_already_captured = False
@@ -4022,12 +4043,14 @@ async def execute_automation_action(
                         print(f"🚫 [FIX ISSUE 1] Simple reply rule {rule_id} - primary DM already sent, skipping to prevent re-triggering")
                         print(f"   trigger_type={trigger_type}, has_incoming_message={has_incoming_message}")
                         print(f"   💬 Message will be handled by real user, not automation")
+                        _send_check_dms_reply_if_comment()
                         return  # Exit early - don't send any messages
                     
                     # FIX: For lead capture rules, if lead is already captured, stop automation completely
                     if is_lead_capture and lead_already_captured:
                         print(f"🚫 [FIX] Lead capture rule {rule_id} - lead already captured, stopping automation")
                         print(f"   💬 All further messages will be handled by real user, not automation")
+                        _send_check_dms_reply_if_comment()
                         return  # Exit early - don't send any messages
                     
                     # Only allow processing if it's a lead capture flow AND there's an incoming message AND lead not yet captured
@@ -4043,6 +4066,7 @@ async def execute_automation_action(
                             print(f"🚫 [FIX ISSUE 1] Primary DM already sent for rule {rule_id}, skipping to prevent re-triggering")
                             print(f"   💬 Message will be handled by real user, not automation")
                         print(f"   trigger_type={trigger_type}, is_lead_capture={is_lead_capture}, has_incoming_message={has_incoming_message}, lead_already_captured={lead_already_captured}")
+                        _send_check_dms_reply_if_comment()
                         return  # Exit early - don't send any messages
                 
                 # Log TRIGGER_MATCHED analytics event

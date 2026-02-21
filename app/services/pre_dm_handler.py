@@ -1255,22 +1255,25 @@ async def process_pre_dm_actions(
     if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout", "story_reply"] and not state.get("primary_dm_sent"):
         # Check if flow is COMPLETED (both follow confirmed AND email received if required)
         # Only skip to primary DM if flow was completed in a previous interaction
-        follow_completed = not ask_to_follow or state.get("follow_confirmed", False)
+        # Cross-reel: if user already follows (from another reel / Follower table), treat as follow_completed for this rule too
+        follow_completed = not ask_to_follow or state.get("follow_confirmed", False) or (ask_to_follow and already_following)
         # Email is completed if: not asking for email, email received, OR email was skipped
         email_completed = not ask_for_email or state.get("email_received", False) or state.get("email_skipped", False)
         flow_completed = follow_completed and email_completed
         
         print(f"🔍 [PRE-DM DEBUG] trigger_type={trigger_type}, ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}")
         print(f"🔍 [PRE-DM DEBUG] state: follow_request_sent={state.get('follow_request_sent')}, follow_confirmed={state.get('follow_confirmed')}, email_request_sent={state.get('email_request_sent')}, email_received={state.get('email_received')}")
-        print(f"🔍 [PRE-DM DEBUG] flow_completed={flow_completed} (follow_completed={follow_completed}, email_completed={email_completed})")
+        print(f"🔍 [PRE-DM DEBUG] flow_completed={flow_completed} (follow_completed={follow_completed}, email_completed={email_completed}, already_following={already_following})")
         
         # If flow is completed, skip directly to primary DM
         if flow_completed:
             print(f"✅ [PRE-DM] Flow completed - skipping to primary DM")
-            update_pre_dm_state(sender_id, rule.id, {
-                "step": "primary"
-                # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
-            })
+            state_updates = {"step": "primary"}
+            if ask_to_follow and already_following and not state.get("follow_confirmed"):
+                state_updates["follow_request_sent"] = True
+                state_updates["follow_confirmed"] = True
+            update_pre_dm_state(sender_id, rule.id, state_updates)
+            # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
             return {
                 "action": "send_primary",
                 "message": None,
