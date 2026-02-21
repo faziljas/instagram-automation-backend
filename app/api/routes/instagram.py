@@ -4979,6 +4979,28 @@ async def execute_automation_action(
                 # Waiting for user action - don't send anything
                 print(f"⏳ Waiting for user action, not sending primary DM")
                 return
+            elif pre_dm_result and pre_dm_result["action"] == "send_phone_retry":
+                    # Phone flow: user sent email or invalid input - send retry message (DM path from "Routing message to rule")
+                    retry_message = pre_dm_result.get("message", "")
+                    if not retry_message or not retry_message.strip():
+                        retry_message = "We need your phone number for this, not your email. 📱 Please reply with your phone number!"
+                    print(f"⚠️ [PHONE FLOW] Invalid/email input in DM, sending phone retry message")
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    try:
+                        if account.encrypted_page_token:
+                            access_token = decrypt_credentials(account.encrypted_page_token)
+                            page_id_for_dm = account.page_id
+                        elif account.encrypted_credentials:
+                            access_token = decrypt_credentials(account.encrypted_credentials)
+                            page_id_for_dm = account.page_id
+                        else:
+                            raise Exception("No access token found for account")
+                        send_dm_api(str(sender_id), retry_message, access_token, page_id_for_dm, buttons=None, quick_replies=None)
+                        print(f"✅ Phone retry message sent via DM")
+                    except Exception as e:
+                        print(f"⚠️ Failed to send phone retry: {e}")
+                    return
             elif pre_dm_result and pre_dm_result["action"] == "send_email_retry":
                     # Invalid email format received - send retry message
                     # NOTE: This should only happen for DM triggers, not comment triggers
