@@ -344,12 +344,21 @@ async def process_pre_dm_actions(
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     
     # After "No" to "Are you following me?" we sent exit message — do NOT reply to any DM until user comments again on post.
-    # When they comment again (post_comment/keyword/live_comment), we'll ask "Are you following me?" again (loop until Yes).
+    # Exception: if we just asked "Are you following me?" (re-comment) and they reply "No" in DM, send exit message again.
     comment_triggers = ["post_comment", "keyword", "live_comment"]
     if state.get("follow_exit_sent") and not state.get("follow_confirmed"):
         if trigger_type not in comment_triggers:
-            print(f"📩 DM after exit (trigger={trigger_type}) — not replying until user comments again on post")
-            return {"action": "wait", "message": None, "should_save_email": False, "email": None}
+            # DM after exit: wait — unless they're replying "No" to our "Are you following me?" (send exit again)
+            if state.get("follow_recheck_sent") and incoming_message:
+                msg_lower = incoming_message.strip().lower()
+                if msg_lower in ["no", "nope", "nah", "not yet", "not", "n", "nop"]:
+                    pass  # fall through: handle No → send_follow_no_exit below
+                else:
+                    print(f"📩 DM after exit (trigger={trigger_type}) — not replying until user comments again on post")
+                    return {"action": "wait", "message": None, "should_save_email": False, "email": None}
+            else:
+                print(f"📩 DM after exit (trigger={trigger_type}) — not replying until user comments again on post")
+                return {"action": "wait", "message": None, "should_save_email": False, "email": None}
     
     # ---------------------------------------------------------
     # Simple DM flow: one follow+email message, then loop email until valid
@@ -775,7 +784,8 @@ async def process_pre_dm_actions(
                 }
 
         # User commented again on post after "No" (exit) — ask only "Are you following me?" with Yes/No (loop until Yes).
-        if ask_to_follow and state.get("follow_exit_sent") and not state.get("follow_confirmed"):
+        # Only for comment triggers; for DM we handle "No" response below (send exit again).
+        if ask_to_follow and state.get("follow_exit_sent") and not state.get("follow_confirmed") and trigger_type in comment_triggers:
             raw = config.get("follow_recheck_message") or config.get("followRecheckMessage") or "Are you following me?"
             follow_recheck_msg = normalize_follow_recheck_message(raw)
             update_pre_dm_state(sender_id, rule.id, {"follow_recheck_sent": True})
@@ -954,7 +964,7 @@ async def process_pre_dm_actions(
                 # User is responding to "Are you following me?" question
                 message_lower = incoming_message.strip().lower()
                 is_yes = message_lower in ["yes", "yep", "yup", "yeah", "y", "ok", "okay", "sure", "done", "followed", "following", "i'm following", "im following", "i am following"]
-                is_no = message_lower in ["no", "nope", "nah", "not yet", "not", "n"]
+                is_no = message_lower in ["no", "nope", "nah", "not yet", "not", "n", "nop"]
                 
                 if is_yes:
                     # User confirmed they're following - mark as confirmed and proceed
@@ -1063,7 +1073,7 @@ async def process_pre_dm_actions(
                     }
                 # User replied to initial follow message (we haven't asked "Are you following me?" yet)
                 message_lower = (incoming_message or "").strip().lower()
-                is_no_initial = message_lower in ["no", "nope", "nah", "not yet", "not", "n"]
+                is_no_initial = message_lower in ["no", "nope", "nah", "not yet", "not", "n", "nop"]
                 if is_no_initial:
                     # User said No to initial message — send exit message directly (same as No to "Are you following me?")
                     exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or (
