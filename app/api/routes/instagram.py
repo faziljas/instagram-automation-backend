@@ -3914,6 +3914,25 @@ async def execute_automation_action(
                 rule_id = rule.id
                 print(f"🔍 [EXECUTE] Stored values - user_id: {user_id}, account_id: {account_id}, username: {username}, rule_id: {rule_id}")
                 
+                # For phone flow: only skip growth steps (VIP) if we already have phone for this rule+sender
+                # So VIP users (email + following) still get asked for phone when rule is phone flow
+                if skip_growth_steps:
+                    cfg = rule.config or {}
+                    simple_dm_flow_phone = cfg.get("simple_dm_flow_phone", False) or cfg.get("simpleDmFlowPhone", False)
+                    if simple_dm_flow_phone:
+                        from app.models.captured_lead import CapturedLead
+                        from sqlalchemy import cast
+                        from sqlalchemy.dialects.postgresql import JSONB
+                        lead_with_phone = db.query(CapturedLead).filter(
+                            CapturedLead.automation_rule_id == rule_id,
+                            CapturedLead.instagram_account_id == account_id,
+                            CapturedLead.phone.isnot(None),
+                            cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == str(sender_id),
+                        ).first()
+                        if not (lead_with_phone and lead_with_phone.phone and str(lead_with_phone.phone).strip()):
+                            skip_growth_steps = False
+                            print(f"⭐ [VIP] Rule {rule_id} is phone flow but no phone for this sender — will ask for phone (not skipping growth steps)")
+                
                 # FIX ISSUE 1: Check if primary DM was already sent BEFORE any processing
                 # This prevents primary DM from being re-triggered when user sends random text
                 # BUT: If pre_dm_result_override has send_email_success=True, we need to send success message first
