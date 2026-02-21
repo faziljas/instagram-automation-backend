@@ -758,7 +758,11 @@ async def process_instagram_message(event: dict, db: Session):
                     else:
                         # User said No
                         if not ask_for_email:
-                            # Followers-only: send exit message, no primary DM; next comment asks "Are you following me?" again
+                            # Followers-only: if we already sent the exit message, do nothing (no loop); only new comment restarts
+                            if state.get("follow_exit_sent"):
+                                log_print(f"📩 [FOLLOWERS] User clicked No again after exit — ignoring until they comment again")
+                                return
+                            # Send exit message once; next comment asks "Are you following me?" again
                             exit_msg = (rule.config or {}).get("follow_no_exit_message") or (rule.config or {}).get("followNoExitMessage") or (
                                 "No problem! Comment again anytime when you'd like the guide. 📩"
                             )

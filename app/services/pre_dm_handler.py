@@ -1044,6 +1044,15 @@ async def process_pre_dm_actions(
                         "email": None,
                     }
             else:
+                # Followers-only: already sent exit message — do NOT re-prompt in this DM thread; only a new comment should restart
+                if ask_to_follow and not ask_for_email and state.get("follow_exit_sent"):
+                    print(f"📩 [FOLLOWERS] User sent '{incoming_message}' after exit message — ignoring until they comment again")
+                    return {
+                        "action": "wait",
+                        "message": None,
+                        "should_save_email": False,
+                        "email": None,
+                    }
                 # First time random text (e.g. "No" or "Follow me" click) — ask "Are you following me?" with Yes/No
                 follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
                     "Are you following me?" if not ask_for_email else "Are you followed?"
