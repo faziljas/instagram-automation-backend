@@ -6064,16 +6064,8 @@ async def execute_automation_action(
                             from app.utils.instagram_api import send_dm
                             from app.utils.plan_enforcement import log_dm_sent
                             
-                            # Get media attachment from rule config (backward compatible - only if configured)
-                            media_type = rule.config.get("media_type") or rule.config.get("mediaType")
-                            media_url = rule.config.get("media_url") or rule.config.get("mediaUrl")
-                            # Only use media if both type and URL are provided and type is not 'none'
-                            if media_type and media_type != 'none' and media_url:
-                                send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_type=media_type, media_url=media_url)
-                                print(f"✅ DM with buttons/quick replies and media ({media_type}) sent to {sender_id}")
-                            else:
-                                send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
-                                print(f"✅ DM with buttons/quick replies sent to {sender_id}")
+                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
+                            print(f"✅ DM with buttons/quick replies sent to {sender_id}")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             try:
@@ -6092,19 +6084,8 @@ async def execute_automation_action(
                             # Capture timestamp RIGHT BEFORE sending to match Instagram's timing exactly
                             # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
                             message_timestamp = datetime.utcnow() + timedelta(hours=8)
-                            # No buttons/quick replies - check if we have media
-                            media_type = rule.config.get("media_type") or rule.config.get("mediaType")
-                            media_url = rule.config.get("media_url") or rule.config.get("mediaUrl")
-                            
-                            # Private replies don't support media attachments, so include media URL in message text if provided
-                            if media_type and media_type != 'none' and media_url:
-                                media_text = f"\n\n📎 {media_url}"
-                                message_with_media = f"{message_template}{media_text}"
-                                send_private_reply(comment_id, message_with_media, access_token, page_id_for_dm)
-                                print(f"✅ Private reply with media URL sent to comment {comment_id} from user {sender_id}")
-                            else:
-                                send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
-                                print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
+                            send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
+                            print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             # Note: Private replies are counted as DMs for tracking purposes
@@ -6134,16 +6115,8 @@ async def execute_automation_action(
                         from app.utils.instagram_api import send_dm
                         from app.utils.plan_enforcement import log_dm_sent
                         
-                        # Get media attachment from rule config (backward compatible - only if configured)
-                        media_type = rule.config.get("media_type") or rule.config.get("mediaType")
-                        media_url = rule.config.get("media_url") or rule.config.get("mediaUrl")
-                        # Only use media if both type and URL are provided and type is not 'none'
-                        if media_type and media_type != 'none' and media_url:
-                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_type=media_type, media_url=media_url)
-                            print(f"✅ DM with media ({media_type}) sent to {sender_id}")
-                        else:
-                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
-                            print(f"✅ DM sent to {sender_id}")
+                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
+                        print(f"✅ DM sent to {sender_id}")
                         
                         # Log DM sent (tracks in DmLog and increments global tracker)
                         try:

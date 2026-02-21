@@ -148,9 +148,9 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
     return result
 
 
-def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None, quick_replies: list = None, media_type: str = None, media_url: str = None) -> dict:
+def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None, quick_replies: list = None) -> dict:
     """
-    Send a direct message to an Instagram user with optional buttons/quick replies and media attachments.
+    Send a direct message to an Instagram user with optional buttons/quick replies.
     
     Note: This requires the recipient to have messaged you first, or you need
     to be within the 24-hour messaging window for standard messaging.
@@ -167,8 +167,6 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                  Maximum 3 buttons for generic template, text max 20 characters
         quick_replies: Optional list of quick reply objects with format: [{"content_type": "text", "title": "Button Text", "payload": "PAYLOAD"}]
                       Maximum 13 quick replies, title max 20 characters
-        media_type: Optional media type ('image', 'video', 'link', 'doc', 'pdf', 'card')
-        media_url: Optional media URL (required if media_type is provided)
         
     Returns:
         dict: API response
@@ -277,35 +275,6 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                         "buttons": template_buttons
                     }
                     
-                    # Add media attachment if provided (Instagram supports image_url in generic template)
-                    if media_type and media_url:
-                        if media_type == 'image':
-                            element["image_url"] = media_url
-                            print(f"   Adding image attachment: {media_url[:50]}...")
-                        elif media_type == 'video':
-                            # Videos need to be uploaded first, but we can include URL in subtitle
-                            element["subtitle"] = f"{subtitle_text}\n\n📹 Video: {media_url}".strip() if subtitle_text else f"📹 Video: {media_url}"
-                            print(f"   Adding video URL to subtitle: {media_url[:50]}...")
-                        elif media_type in ['pdf', 'doc']:
-                            # PDFs/Docs - include URL in subtitle or as button
-                            element["subtitle"] = f"{subtitle_text}\n\n📄 Document: {media_url}".strip() if subtitle_text else f"📄 Document: {media_url}"
-                            print(f"   Adding document URL to subtitle: {media_url[:50]}...")
-                        elif media_type == 'link':
-                            # Links - include URL in subtitle
-                            element["subtitle"] = f"{subtitle_text}\n\n🔗 Link: {media_url}".strip() if subtitle_text else f"🔗 Link: {media_url}"
-                            print(f"   Adding link URL to subtitle: {media_url[:50]}...")
-                        elif media_type == 'card':
-                            # Cards - include URL in subtitle
-                            element["subtitle"] = f"{subtitle_text}\n\n🎴 Card: {media_url}".strip() if subtitle_text else f"🎴 Card: {media_url}"
-                            print(f"   Adding card URL to subtitle: {media_url[:50]}...")
-                        # Add clickable button for media URL (Instagram does not auto-link URLs in subtitles)
-                        if media_type in ['pdf', 'doc', 'link', 'card', 'video'] and len(template_buttons) < 3:
-                            media_btn_title = "Open document" if media_type in ['pdf', 'doc'] else "Open link" if media_type == 'link' else "View card" if media_type == 'card' else "Play video"
-                            template_buttons = list(template_buttons)
-                            template_buttons.append({"type": "web_url", "url": media_url, "title": media_btn_title[:20]})
-                            element["buttons"] = template_buttons
-                            print(f"   Adding clickable media button: {media_btn_title}")
-                    
                     message_payload = {
                         "attachment": {
                             "type": "template",
@@ -325,44 +294,10 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
             # No valid buttons, use plain text
             message_payload = {"text": message}
     else:
-        # No buttons - check if we have media to include
-        if media_type and media_url:
-            # For pdf/doc/link/card/video: send PLAIN TEXT so Instagram auto-linkifies the URL
-            # (blue, underlined, clickable with preview - like ss2). Generic template subtitles are NOT clickable.
-            if media_type in ['pdf', 'doc', 'link', 'card', 'video']:
-                if media_type in ['pdf', 'doc']:
-                    media_label = "📄 Document:"
-                elif media_type == 'link':
-                    media_label = "🔗 Link:"
-                elif media_type == 'card':
-                    media_label = "🎴 Card:"
-                else:
-                    media_label = "📹 Video:"
-                text_with_url = f"{message}\n\n{media_label}\n{media_url}"
-                message_payload = {"text": text_with_url}
-                print(f"   Sending plain text with URL so link is clickable (like ss2): {media_label} {media_url[:50]}...")
-            else:
-                # Image only: use generic template so the image is displayed
-                element = {
-                    "title": message[:80] if len(message) > 80 else message,
-                    "subtitle": message[80:] if len(message) > 80 else "",
-                    "image_url": media_url
-                }
-                message_payload = {
-                    "attachment": {
-                        "type": "template",
-                        "payload": {
-                            "template_type": "generic",
-                            "elements": [element]
-                        }
-                    }
-                }
-                print(f"   Using generic template with image attachment")
-        else:
-            # No buttons, no media - use plain text message
-            message_payload = {
-                "text": message
-            }
+        # No buttons - use plain text message
+        message_payload = {
+            "text": message
+        }
     
     # Add quick replies if provided (Quick Replies work with both text and template messages)
     if quick_replies and isinstance(quick_replies, list) and len(quick_replies) > 0:
