@@ -781,9 +781,12 @@ async def process_instagram_message(event: dict, db: Session):
                             except Exception as e:
                                 log_print(f"❌ Failed to send exit message: {str(e)}", "ERROR")
                         else:
-                            # Email/Phone flow: resend follow request
+                            # Email/Phone flow: resend follow request (same format as FE: base + instructions + profile link)
                             log_print(f"❌ User clicked 'No' on 'Are you followed?' for rule {rule.id} - resending follow request")
                             ask_to_follow_message = (rule.config or {}).get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
+                            username = account.username or ""
+                            profile_url = f"https://www.instagram.com/{username}" if username else ""
+                            follow_with_full_format = f"{ask_to_follow_message}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!\n\n🔗 Visit my profile: {profile_url}\n\nClick one of the options below:"
                             update_pre_dm_state(str(sender_id), rule.id, {
                                 "follow_recheck_sent": False,
                                 "follow_request_sent": False,
@@ -802,7 +805,7 @@ async def process_instagram_message(event: dict, db: Session):
                                     {"content_type": "text", "title": "I'm following", "payload": f"im_following_{rule.id}"},
                                     {"content_type": "text", "title": "Follow Me 👆", "payload": f"follow_me_{rule.id}"}
                                 ]
-                                send_dm(sender_id, ask_to_follow_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                send_dm(sender_id, follow_with_full_format, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
                                 log_print(f"✅ Follow request resent after 'Are you followed?' No")
                             except Exception as e:
                                 log_print(f"❌ Failed to resend follow request: {str(e)}", "ERROR")
@@ -4457,41 +4460,19 @@ async def execute_automation_action(
                                 print(f"❌ Failed to send follow request: {str(e)}")
                         else:
                             try:
-                                # Send follow message with "Visit Profile" URL button (card format - required for navigation)
-                                send_dm_api(sender_id, follow_message_with_instructions, access_token, page_id_for_dm, buttons=visit_profile_button, quick_replies=None)
-                                print(f"✅ Follow request sent with 'Visit Profile' URL button (card format - enables navigation)")
+                                # Send full message (same format as FE: base + instructions + profile link + prompt) with quick replies
+                                follow_with_full_format = f"{follow_message_with_instructions}\n\n🔗 Visit my profile: {profile_url}\n\nClick one of the options below:"
+                                send_dm_api(sender_id, follow_with_full_format, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                                print(f"✅ Follow request sent (same format as FE: base + profile link + quick replies)")
                                 
-                                # Log DM sent (tracks in DmLog and increments global tracker)
+                                # Log DM sent
                                 try:
                                     from app.utils.plan_enforcement import log_dm_sent
                                     log_dm_sent(
                                         user_id=account.user_id,
                                         instagram_account_id=account.id,
                                         recipient_username=str(sender_id),
-                                        message=follow_message_with_instructions,
-                                        db=db,
-                                        instagram_username=account.username,
-                                        instagram_igsid=getattr(account, "igsid", None)
-                                    )
-                                except Exception as log_err:
-                                    print(f"⚠️ Failed to log DM: {str(log_err)}")
-                                
-                                # Small delay between messages
-                                await asyncio.sleep(1)
-                                
-                                # Send second message with quick replies for "I'm following" and "Follow Me" (plain text format)
-                                quick_reply_message = "Click one of the options below:"
-                                send_dm_api(sender_id, quick_reply_message, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                                print(f"✅ Quick reply buttons sent for 'I'm following' and 'Follow Me' (plain text, straight layout)")
-                                
-                                # Log second DM sent
-                                try:
-                                    from app.utils.plan_enforcement import log_dm_sent
-                                    log_dm_sent(
-                                        user_id=account.user_id,
-                                        instagram_account_id=account.id,
-                                        recipient_username=str(sender_id),
-                                        message=quick_reply_message,
+                                        message=follow_with_full_format,
                                         db=db,
                                         instagram_username=account.username,
                                         instagram_igsid=getattr(account, "igsid", None)
@@ -4581,6 +4562,8 @@ async def execute_automation_action(
                             print(f"❌ Failed to get access token for Followers flow: {str(e)}")
                             return
                         is_comment_trigger = comment_id and trigger_type in ["post_comment", "keyword", "live_comment"]
+                        profile_url = f"https://www.instagram.com/{username}"
+                        follow_with_prompt = f"{follow_message}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!\n\n🔗 Visit my profile: {profile_url}\n\nClick one of the options below:"
                         if is_comment_trigger:
                             from app.utils.instagram_api import send_private_reply
                             try:
@@ -4588,11 +4571,9 @@ async def execute_automation_action(
                                 await asyncio.sleep(1)
                             except Exception:
                                 pass
-                            follow_with_prompt = f"{follow_message}\n\n✅ Once you've followed, click below to continue!"
                             send_private_reply(comment_id, follow_with_prompt, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
                             print(f"✅ [Followers] First question sent via private reply to {sender_id}")
                         else:
-                            follow_with_prompt = f"{follow_message}\n\n✅ Once you've followed, click below to continue!"
                             send_dm_api(str(sender_id), follow_with_prompt, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
                             print(f"✅ [Followers] First question sent via DM to {sender_id}")
                         try:
@@ -4849,7 +4830,8 @@ async def execute_automation_action(
                         # We need to manually trigger it since we're in an elif block
                         # Actually, we can't easily fall through, so let's handle it here
                         follow_message = pre_dm_result.get("message") or rule.config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
-                        follow_message_with_instructions = f"{follow_message}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!"
+                        profile_url = f"https://www.instagram.com/{username}"
+                        follow_message_with_instructions = f"{follow_message}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!\n\n🔗 Visit my profile: {profile_url}\n\nClick one of the options below:"
                         
                         # Mark follow as sent
                         update_pre_dm_state(str(sender_id), rule_id, {
