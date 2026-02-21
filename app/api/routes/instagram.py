@@ -3927,11 +3927,15 @@ async def execute_automation_action(
                 rule_id = rule.id
                 print(f"🔍 [EXECUTE] Stored values - user_id: {user_id}, account_id: {account_id}, username: {username}, rule_id: {rule_id}")
                 
-                # For phone flow: only skip growth steps (VIP) if we already have phone for this rule+sender
-                # So VIP users (email + following) still get asked for phone when rule is phone flow
+                # Flow-type aware VIP: only skip growth steps when we have what THIS rule needs
+                from app.services.pre_dm_handler import get_pre_dm_state
+                rule_state = get_pre_dm_state(str(sender_id), rule_id)
                 if skip_growth_steps:
                     cfg = rule.config or {}
                     simple_dm_flow_phone = cfg.get("simple_dm_flow_phone", False) or cfg.get("simpleDmFlowPhone", False)
+                    simple_dm_flow = cfg.get("simple_dm_flow", False) or cfg.get("simpleDmFlow", False)
+                    ask_to_follow = cfg.get("ask_to_follow", False) or cfg.get("askToFollow", False)
+                    # Phone flow: only skip if we have phone for this rule+sender
                     if simple_dm_flow_phone:
                         from app.models.captured_lead import CapturedLead
                         from sqlalchemy import cast
@@ -3945,13 +3949,16 @@ async def execute_automation_action(
                         if not (lead_with_phone and lead_with_phone.phone and str(lead_with_phone.phone).strip()):
                             skip_growth_steps = False
                             print(f"⭐ [VIP] Rule {rule_id} is phone flow but no phone for this sender — will ask for phone (not skipping growth steps)")
+                    # Follower flow: only skip if follow confirmed for this rule+sender (email+phone from before ≠ VIP for follower rule)
+                    is_follower_flow = ask_to_follow and not simple_dm_flow and not simple_dm_flow_phone
+                    if is_follower_flow and not rule_state.get("follow_confirmed", False):
+                        skip_growth_steps = False
+                        print(f"⭐ [VIP] Rule {rule_id} is follower flow but follow not confirmed for this sender — will ask for follow (not skipping growth steps)")
                 
                 # FIX ISSUE 1: Check if primary DM was already sent BEFORE any processing
                 # This prevents primary DM from being re-triggered when user sends random text
                 # BUT: If pre_dm_result_override has send_email_success=True, we need to send success message first
                 # BUT: For VIP users commenting again (post_comment/live_comment) → reply to comment + primary DM only, no early exit
-                from app.services.pre_dm_handler import get_pre_dm_state
-                rule_state = get_pre_dm_state(str(sender_id), rule_id)
                 should_send_email_success_first = (
                     pre_dm_result_override and 
                     isinstance(pre_dm_result_override, dict) and
