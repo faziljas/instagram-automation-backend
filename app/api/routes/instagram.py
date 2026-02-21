@@ -1369,10 +1369,18 @@ async def process_instagram_message(event: dict, db: Session):
             
             pre_dm_rules = filtered_rules
             
+            # CRITICAL: After primary DM is sent to this user, bot must not reply to any further messages in this thread.
+            # Endpoint is "primary DM" — after that, all messages are for the real user only.
+            from app.services.pre_dm_handler import get_pre_dm_state
+            for _r in pre_dm_rules:
+                _state = get_pre_dm_state(sender_id, _r.id)
+                if _state.get("primary_dm_sent"):
+                    log_print(f"🚫 [FIX] Primary DM already sent to {sender_id} (rule {_r.id}). Skipping all automation — bot will not reply.")
+                    return
+            
             # CRITICAL FIX: Only process rules that have an active state for this sender
             # This prevents rules from different reels/posts from interfering with each other
             # A rule is "active" if it has started a conversation (follow_request_sent, email_request_sent, or phone_request_sent)
-            from app.services.pre_dm_handler import get_pre_dm_state
             active_rules = []
             for rule in pre_dm_rules:
                 state = get_pre_dm_state(sender_id, rule.id)
@@ -5968,6 +5976,10 @@ async def execute_automation_action(
                             )
                         except Exception as log_err:
                             print(f"⚠️ Failed to log DM: {str(log_err)}")
+                    
+                    # Mark primary DM sent so further messages from this user are not auto-replied (endpoint = primary DM)
+                    from app.services.pre_dm_handler import update_pre_dm_state
+                    update_pre_dm_state(str(sender_id), rule.id, {"primary_dm_sent": True})
                     
                     # Update stats
                     from app.services.lead_capture import update_automation_stats
