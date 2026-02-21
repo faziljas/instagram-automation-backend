@@ -16,6 +16,7 @@ from app.utils.encryption import encrypt_credentials, decrypt_credentials
 from app.services.instagram_client import InstagramClient
 from app.dependencies.auth import get_current_user_id
 from app.utils.plan_enforcement import check_account_limit
+from app.services.pre_dm_handler import normalize_follow_recheck_message
 
 router = APIRouter()
 
