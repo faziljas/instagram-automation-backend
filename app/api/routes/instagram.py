@@ -3995,6 +3995,27 @@ async def execute_automation_action(
                     def _send_check_dms_reply_if_comment():
                         if not is_comment_trigger_here or not comment_id:
                             return
+                        import random
+                        cfg = rule.config or {}
+                        # Use only UI-configured messages; no hardcoded default
+                        _msg = cfg.get("check_dms_comment_reply") or cfg.get("checkDmsCommentReply")
+                        if not _msg or not str(_msg).strip():
+                            lead_dm = cfg.get("lead_dm_messages") or cfg.get("leadDmMessages") or []
+                            if isinstance(lead_dm, list) and lead_dm:
+                                valid = [m for m in lead_dm if m and str(m).strip()]
+                                if valid:
+                                    _msg = random.choice(valid)
+                            if not _msg or not str(_msg).strip():
+                                variations = cfg.get("message_variations") or cfg.get("messageVariations") or []
+                                if isinstance(variations, list) and variations:
+                                    valid = [m for m in variations if m and str(m).strip()]
+                                    if valid:
+                                        _msg = random.choice(valid)
+                            if not _msg or not str(_msg).strip():
+                                _msg = (cfg.get("message_template") or cfg.get("messageTemplate") or "").strip() or None
+                        if not _msg or not str(_msg).strip():
+                            print(f"⏭️ [COMMENT AGAIN] No configured message for comment-again reply (rule {rule_id}), skipping")
+                            return
                         try:
                             from app.utils.encryption import decrypt_credentials
                             from app.utils.instagram_api import send_private_reply
@@ -4005,11 +4026,10 @@ async def execute_automation_action(
                             else:
                                 return
                             _page_id = account.page_id
-                            _msg = (rule.config or {}).get("check_dms_comment_reply") or (rule.config or {}).get("checkDmsCommentReply") or "Check your DMs! 📩"
                             send_private_reply(comment_id, _msg, _tok, _page_id, quick_replies=None)
-                            print(f"✅ [COMMENT AGAIN] Sent 'Check your DMs' reply to comment {comment_id} (primary DM already sent)")
+                            print(f"✅ [COMMENT AGAIN] Sent reply to comment {comment_id} using UI config (primary DM already sent)")
                         except Exception as _e:
-                            print(f"⚠️ Failed to send check-DMs comment reply: {_e}")
+                            print(f"⚠️ Failed to send comment-again reply: {_e}")
                     
                     # Check if lead was already captured for this sender and rule (match current flow type)
                     # So switching rule from email → phone still asks for phone; phone → email still asks for email
