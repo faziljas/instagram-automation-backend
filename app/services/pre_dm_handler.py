@@ -411,7 +411,7 @@ async def process_pre_dm_actions(
         simple_flow_email_question = config.get("simple_flow_email_question") or config.get("simpleFlowEmailQuestion") or (
             "What's your email? Reply here and I'll send you the guide! 📧"
         )
-        # Already have email → flow complete, send primary
+        # Already have email (this rule or captured earlier on any rule for this account) → send primary, don't ask again
         if state.get("email_received") or state.get("email"):
             return {
                 "action": "send_primary",
@@ -419,6 +419,24 @@ async def process_pre_dm_actions(
                 "should_save_email": False,
                 "email": state.get("email"),
             }
+        try:
+            from sqlalchemy import cast
+            from sqlalchemy.dialects.postgresql import JSONB
+            sender_id_str = str(sender_id) if sender_id else None
+            lead = db.query(CapturedLead).filter(
+                CapturedLead.instagram_account_id == account.id,
+                CapturedLead.email.isnot(None),
+                cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+            ).first()
+            if lead and lead.email:
+                return {
+                    "action": "send_primary",
+                    "message": None,
+                    "should_save_email": False,
+                    "email": lead.email,
+                }
+        except Exception:
+            pass
         # We already sent the first message; this is a reply (comment or DM)
         if state.get("follow_request_sent") or state.get("email_request_sent"):
             if incoming_message:
@@ -576,6 +594,25 @@ async def process_pre_dm_actions(
                 "email": None,
                 "phone": state.get("phone"),
             }
+        try:
+            from sqlalchemy import cast
+            from sqlalchemy.dialects.postgresql import JSONB
+            sender_id_str = str(sender_id) if sender_id else None
+            lead = db.query(CapturedLead).filter(
+                CapturedLead.instagram_account_id == account.id,
+                CapturedLead.phone.isnot(None),
+                cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+            ).first()
+            if lead and lead.phone:
+                return {
+                    "action": "send_primary",
+                    "message": None,
+                    "should_save_email": False,
+                    "email": None,
+                    "phone": lead.phone,
+                }
+        except Exception:
+            pass
         if state.get("follow_request_sent") or state.get("phone_request_sent"):
             if incoming_message:
                 is_valid_phone, _ = validate_phone(incoming_message.strip())
