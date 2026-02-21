@@ -1008,33 +1008,19 @@ async def process_pre_dm_actions(
                             "email": None
                         }
                 elif is_no:
-                    # User said no
-                    if not ask_for_email:
-                        # Followers-only: send exit message, no primary DM; next comment will ask "Are you following me?" again
-                        exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or (
-                            "No problem! Comment again anytime when you'd like the guide. 📩"
-                        )
-                        update_pre_dm_state(sender_id, rule.id, {
-                            "follow_recheck_sent": False,
-                            "follow_exit_sent": True,
-                            "follow_request_sent": True,  # Keep True so next comment is recognized
-                        })
-                        print(f"📩 [FOLLOWERS] User said No — sending exit message, no primary DM")
-                        return {
-                            "action": "send_follow_no_exit",
-                            "message": exit_msg,
-                            "should_save_email": False,
-                            "email": None,
-                        }
-                    # Email/Phone flow: resend follow request
-                    print(f"❌ User said they're not following yet - resending follow request")
+                    # User said No to "Are you followed?" — always send only exit message; do NOT resend the initial follow message
+                    exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or (
+                        "No problem! Comment again anytime when you'd like the guide. 📩"
+                    )
                     update_pre_dm_state(sender_id, rule.id, {
                         "follow_recheck_sent": False,
-                        "follow_request_sent": False,
+                        "follow_exit_sent": True,
+                        "follow_request_sent": True,  # Keep True so next comment is recognized
                     })
+                    print(f"📩 User said No to 'Are you followed?' — sending exit message only (no initial message resend)")
                     return {
-                        "action": "send_follow_request",
-                        "message": ask_to_follow_message,
+                        "action": "send_follow_no_exit",
+                        "message": exit_msg,
                         "should_save_email": False,
                         "email": None,
                     }
