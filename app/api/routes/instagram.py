@@ -1369,8 +1369,9 @@ async def process_instagram_message(event: dict, db: Session):
             
             pre_dm_rules = filtered_rules
             
-            # CRITICAL: After primary DM is sent to this user, bot must not reply to any further messages in this thread.
-            # Endpoint is "primary DM" — after that, all messages are for the real user only.
+            # CRITICAL: After primary DM is sent to this user, bot must not reply to any further *DMs* in this thread.
+            # This applies only to incoming messaging events (DMs). Comments are handled by process_comment_event
+            # and will still trigger primary DM when user comments again (email already collected / VIP).
             from app.services.pre_dm_handler import get_pre_dm_state
             for _r in pre_dm_rules:
                 _state = get_pre_dm_state(sender_id, _r.id)
@@ -5770,11 +5771,13 @@ async def execute_automation_action(
                             message_template = random.choice(valid_messages)
                             print(f"🔄 [FALLBACK] Loaded message_template from lead_dm_messages: {repr(message_template)}")
                 
-                # If still no template but we have send_primary with a lead (phone/email), use a default so primary DM is sent
+                # If still no template but we have send_primary (lead phone/email OR VIP commenting again), use default so primary DM is sent
                 if not message_template or (isinstance(message_template, str) and not message_template.strip()):
-                    if pre_dm_result and pre_dm_result.get("action") == "send_primary" and (pre_dm_result.get("phone") or pre_dm_result.get("email")):
+                    is_send_primary = pre_dm_result and pre_dm_result.get("action") == "send_primary"
+                    has_lead_data = pre_dm_result and (pre_dm_result.get("phone") or pre_dm_result.get("email"))
+                    if is_send_primary and (has_lead_data or skip_growth_steps):
                         message_template = "Thanks! Here’s your guide. 📱 Check your DMs for the link."
-                        print(f"⚠️ No primary DM template for rule {rule.id}; using default message so lead still receives primary DM")
+                        print(f"⚠️ No primary DM template for rule {rule.id}; using default message so primary DM is sent (lead/VIP comment)")
                     else:
                         print(f"❌ Still no message template after fallback, returning early")
                         return
@@ -5889,6 +5892,8 @@ async def execute_automation_action(
                 # Always send DM if message is configured (for all trigger types)
                 # Each new comment gets both comment reply AND primary DM
                 if message_template:
+                    if comment_id and skip_growth_steps:
+                        print(f"📤 [PRIMARY DM] Sending primary DM for comment trigger (VIP / already have email) → sender_id={sender_id} rule_id={rule.id}")
                     print(f"📤 [PRIMARY DM] Sending primary DM to sender_id={sender_id} rule_id={rule.id} (comment_id={comment_id}, trigger_type={trigger_type})")
                     # Get buttons from pre_dm_result first (for follow button), then from rule config
                     buttons = None
