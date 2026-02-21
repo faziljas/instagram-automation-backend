@@ -388,10 +388,12 @@ async def process_pre_dm_actions(
     # When we're already in phone flow, don't run email logic (would wrongly treat e.g. "97920453" as invalid email)
     # CRITICAL: In phone flow the first message is "follow + phone" in one, so we only set follow_request_sent.
     # Treat as phone flow when we've sent that so we don't accept email as valid (validate phone only).
+    # CRITICAL: For phone-only rules (simple_dm_flow_phone and not simple_dm_flow), never run email block.
     in_phone_flow = (
         state.get("step") == "phone"
         or state.get("phone_request_sent")
         or (simple_dm_flow_phone and state.get("follow_request_sent"))
+        or (simple_dm_flow_phone and not simple_dm_flow)
     )
     
     # CRITICAL FIX: If config changed from phone to email, clear old phone state to allow email collection
