@@ -4369,6 +4369,25 @@ async def execute_automation_action(
                         print(f"⚠️ Failed to send phone retry: {e}")
                     return
 
+                # Email flow: user sent phone or invalid input — send retry and stop (no primary DM)
+                if pre_dm_result and pre_dm_result["action"] == "send_email_retry":
+                    retry_msg = pre_dm_result.get("message", "") or "That doesn't look like a valid email. 🤔 Please share your correct email so I can send you the guide! 📧"
+                    print(f"⚠️ [EMAIL FLOW] Rejecting phone/invalid input, sending email retry (action=send_email_retry)")
+                    from app.utils.encryption import decrypt_credentials
+                    from app.utils.instagram_api import send_dm as send_dm_api
+                    try:
+                        if account.encrypted_page_token:
+                            _tok = decrypt_credentials(account.encrypted_page_token)
+                        elif account.encrypted_credentials:
+                            _tok = decrypt_credentials(account.encrypted_credentials)
+                        else:
+                            raise Exception("No access token")
+                        send_dm_api(str(sender_id), retry_msg, _tok, account.page_id, buttons=None, quick_replies=None)
+                        print(f"✅ Email retry message sent")
+                    except Exception as e:
+                        print(f"⚠️ Failed to send email retry: {e}")
+                    return
+
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_request":
                     # STRICT MODE: Send follow request with text-based confirmation (most reliable)
                     follow_message = pre_dm_result["message"]
