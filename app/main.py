@@ -59,7 +59,8 @@ def run_migrations() -> None:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, dodo as dodo_router, leads, analytics, support
+from fastapi.staticfiles import StaticFiles
+from app.api.routes import auth, instagram, instagram_oauth, automation, webhooks, users, dodo as dodo_router, leads, analytics, support, upload
 from app.db.session import engine
 from app.utils.disposable_email import ensure_blocklist_loaded
 from app.db.base import Base
@@ -192,3 +193,9 @@ app.include_router(dodo_router.router, prefix="/api/dodo", tags=["Dodo Payments"
 app.include_router(leads.router, prefix="/api", tags=["Leads"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(support.router, prefix="/support", tags=["Support"])
+app.include_router(upload.router, prefix="/upload", tags=["Upload"])
+
+# Serve uploaded DM media (image/video/voice) at /uploads/...
+_uploads_dir = Path(__file__).resolve().parent.parent / "uploads"
+_uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
