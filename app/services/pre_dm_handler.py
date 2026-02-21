@@ -333,6 +333,13 @@ async def process_pre_dm_actions(
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     
+    # Followers-only: after exit message, do NOT reply to any DM in this thread; only a new comment restarts
+    comment_triggers = ["post_comment", "keyword", "live_comment"]
+    if ask_to_follow and not ask_for_email and state.get("follow_exit_sent") and not state.get("follow_confirmed"):
+        if trigger_type not in comment_triggers:
+            print(f"📩 [FOLLOWERS] DM after exit (trigger={trigger_type}) — not replying until user comments again")
+            return {"action": "wait", "message": None, "should_save_email": False, "email": None}
+    
     # ---------------------------------------------------------
     # Simple DM flow: one follow+email message, then loop email until valid
     # No "I'm following" / "Follow Me" / "Are you following me?" / "Share Email" / "Skip"
