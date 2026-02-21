@@ -386,7 +386,13 @@ async def process_pre_dm_actions(
     # simple_dm_flow already set above for flow-type detection
     # ---------------------------------------------------------
     # When we're already in phone flow, don't run email logic (would wrongly treat e.g. "97920453" as invalid email)
-    in_phone_flow = state.get("step") == "phone" or state.get("phone_request_sent")
+    # CRITICAL: In phone flow the first message is "follow + phone" in one, so we only set follow_request_sent.
+    # Treat as phone flow when we've sent that so we don't accept email as valid (validate phone only).
+    in_phone_flow = (
+        state.get("step") == "phone"
+        or state.get("phone_request_sent")
+        or (simple_dm_flow_phone and state.get("follow_request_sent"))
+    )
     
     # CRITICAL FIX: If config changed from phone to email, clear old phone state to allow email collection
     # This handles scenario where Reel A was configured for phone (collected phone), then changed to email
@@ -521,6 +527,19 @@ async def process_pre_dm_actions(
                         "should_save_email": False,
                         "email": None,
                     }
+                # Reject phone number when we asked for email: do not accept phone as valid
+                is_valid_phone, _ = validate_phone(incoming_message.strip())
+                if is_valid_phone:
+                    print(f"⚠️ [EMAIL FLOW] User sent phone number while we asked for email — rejecting, asking for email again")
+                    invalid_msg = config.get("email_not_phone_retry_message") or config.get("emailNotPhoneRetryMessage") or (
+                        "We need your email for this, not your phone number. 📧 Please reply with your email address!"
+                    )
+                    return {
+                        "action": "send_email_retry",
+                        "message": invalid_msg,
+                        "should_save_email": False,
+                        "email": None,
+                    }
                 invalid_msg = config.get("email_invalid_retry_message") or config.get("emailInvalidRetryMessage") or config.get("email_retry_message") or config.get("emailRetryMessage") or (
                     "That doesn't look like a valid email. 🤔 Please share your correct email so I can send you the guide! 📧"
                 )
@@ -615,6 +634,18 @@ async def process_pre_dm_actions(
             pass
         if state.get("follow_request_sent") or state.get("phone_request_sent"):
             if incoming_message:
+                # Reject email when we asked for phone: do not accept email as valid
+                is_email_like, _ = check_if_email_response(incoming_message)
+                if is_email_like:
+                    print(f"⚠️ [PHONE FLOW] User sent email while we asked for phone — rejecting, asking for phone again")
+                    return {
+                        "action": "send_phone_retry",
+                        "message": config.get("phone_not_email_retry_message") or config.get("phoneNotEmailRetryMessage") or (
+                            "We need your phone number for this, not your email. 📱 Please reply with your phone number!"
+                        ),
+                        "should_save_email": False,
+                        "email": None,
+                    }
                 is_valid_phone, _ = validate_phone(incoming_message.strip())
                 if is_valid_phone:
                     phone_number = re.sub(r'[\s\-\(\)\+\.]', '', incoming_message.strip())
