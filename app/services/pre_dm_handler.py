@@ -359,6 +359,13 @@ async def process_pre_dm_actions(
         # CRITICAL FIX: If phone flow is enabled, don't ask for email (phone flow replaces email)
         ask_for_email = config.get("ask_for_email", False) and not simple_dm_flow_phone
     
+    # Three independent flows: Follower, Email, Phone. Each acts alone; no mixing.
+    # Follower flow = follow only → primary DM (no email, no phone).
+    simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
+    is_follower_flow = ask_to_follow and not simple_dm_flow and not simple_dm_flow_phone
+    if is_follower_flow:
+        ask_for_email = False  # Follower flow never asks for email; remove email step completely
+    
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     
@@ -374,10 +381,10 @@ async def process_pre_dm_actions(
                 return {"action": "wait", "message": None, "should_save_email": False, "email": None}
     
     # ---------------------------------------------------------
-    # Simple DM flow: one follow+email message, then loop email until valid
+    # Simple DM flow (Email): one follow+email message, then loop email until valid
     # No "I'm following" / "Follow Me" / "Are you following me?" / "Share Email" / "Skip"
+    # simple_dm_flow already set above for flow-type detection
     # ---------------------------------------------------------
-    simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
     # When we're already in phone flow, don't run email logic (would wrongly treat e.g. "97920453" as invalid email)
     in_phone_flow = state.get("step") == "phone" or state.get("phone_request_sent")
     
@@ -1010,17 +1017,8 @@ async def process_pre_dm_actions(
                         update_audience_following(db, sender_id, account.id, account.user_id, is_following=True)
                     except Exception:
                         pass
-                    if ask_for_email and not state.get("email_request_sent"):
-                        update_pre_dm_state(sender_id, rule.id, {
-                            "email_request_sent": True,
-                            "step": "email"
-                        })
-                        return {
-                            "action": "send_email_request",
-                            "message": ask_for_email_message,
-                            "should_save_email": False,
-                            "email": None
-                        }
+                    # Follower flow: after Yes to "Are you following me?" send ONLY primary DM (UI config). No email-request message.
+                    update_pre_dm_state(sender_id, rule.id, {"email_skipped": True})
                     return {
                         "action": "send_primary",
                         "message": None,
@@ -1082,10 +1080,10 @@ async def process_pre_dm_actions(
                     "email": None,
                 }
     
-    # Check if this is a response to an email request
+    # Check if this is a response to an email request (email flow only; follower flow never asks for email)
     # IMPORTANT: Only process emails from DMs, NOT from comments
     # Comments should only trigger resending the email question as a reminder
-    if incoming_message and state.get("email_request_sent") and not state.get("email_received"):
+    if ask_for_email and incoming_message and state.get("email_request_sent") and not state.get("email_received"):
         # Skip email processing for comment triggers - they should only resend email question
         is_comment_trigger = trigger_type in ["post_comment", "keyword", "live_comment"]
         
@@ -1192,15 +1190,12 @@ async def process_pre_dm_actions(
                 "send_email_success": True
             }
         else:
-            # Check if user typed a follow confirmation (like "done") while waiting for email
-            # Send friendly reminder instead of generic retry message
+            # User typed follow confirmation (e.g. "Yes", "done") while waiting for email — resend only the UI-configured email request message (no old/default message).
             if check_if_follow_confirmation(incoming_message):
-                print(f"💬 [FRIENDLY REMINDER] User typed follow confirmation '{incoming_message}' while waiting for email")
-                friendly_reminder = config.get("email_friendly_reminder_message", 
-                    "I see you confirmed following! 👋\n\nNow I just need your email address so I can send you the guide! 📧")
+                print(f"💬 User typed follow confirmation while waiting for email — resending configured email request message")
                 return {
                     "action": "send_email_retry",
-                    "message": friendly_reminder,
+                    "message": ask_for_email_message,
                     "should_save_email": False,
                     "email": None
                 }
