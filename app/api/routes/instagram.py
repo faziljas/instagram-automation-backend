@@ -1112,8 +1112,9 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     # Followers-only: "Follow Me" → ask "Are you following me?" with Yes/No (no primary until Yes)
                     if not ask_for_email:
+                        from app.services.pre_dm_handler import normalize_follow_recheck_message as _norm_recheck
                         raw = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
-                        follow_recheck_msg = normalize_follow_recheck_message(raw)
+                        follow_recheck_msg = _norm_recheck(raw)
                         update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True})
                         from app.utils.encryption import decrypt_credentials
                         from app.utils.instagram_api import send_dm as send_dm_api
