@@ -3936,13 +3936,12 @@ async def execute_automation_action(
                     simple_dm_flow_phone = cfg.get("simple_dm_flow_phone", False) or cfg.get("simpleDmFlowPhone", False)
                     simple_dm_flow = cfg.get("simple_dm_flow", False) or cfg.get("simpleDmFlow", False)
                     ask_to_follow = cfg.get("ask_to_follow", False) or cfg.get("askToFollow", False)
-                    # Phone flow: only skip if we have phone for this rule+sender
+                    # Phone flow: only skip if we have phone for this account+sender (any rule) — matches VIP / pre_dm_handler
                     if simple_dm_flow_phone:
                         from app.models.captured_lead import CapturedLead
                         from sqlalchemy import cast
                         from sqlalchemy.dialects.postgresql import JSONB
                         lead_with_phone = db.query(CapturedLead).filter(
-                            CapturedLead.automation_rule_id == rule_id,
                             CapturedLead.instagram_account_id == account_id,
                             CapturedLead.phone.isnot(None),
                             cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == str(sender_id),
