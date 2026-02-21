@@ -1287,8 +1287,8 @@ async def process_instagram_message(event: dict, db: Session):
         is_vip_user = conversion_status["is_converted"]
         
         if is_vip_user:
-            log_print(f"⭐ [VIP USER] User {sender_id} is already converted (email + following). Skipping growth steps for all automations.")
-            log_print(f"   Email: {conversion_status['has_email']}, Following: {conversion_status['is_following']}")
+            log_print(f"⭐ [VIP USER] User {sender_id} is already converted (email + phone + following). Skipping growth steps for all automations.")
+            log_print(f"   Email: {conversion_status['has_email']}, Phone: {conversion_status.get('has_phone', False)}, Following: {conversion_status['is_following']}")
         
         # CRITICAL FIX: Check if sender is the bot itself BEFORE processing pre-DM actions
         # This prevents bot's own messages from breaking the flow when waiting for user responses
@@ -3237,8 +3237,8 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
         is_vip_user = conversion_status["is_converted"]
         
         if is_vip_user:
-            print(f"⭐ [VIP USER] User {commenter_id_str} is already converted (email + following). Skipping growth steps for all automations.")
-            print(f"   Email: {conversion_status['has_email']}, Following: {conversion_status['is_following']}")
+            print(f"⭐ [VIP USER] User {commenter_id_str} is already converted (email + phone + following). Skipping growth steps for all automations.")
+            print(f"   Email: {conversion_status['has_email']}, Phone: {conversion_status.get('has_phone', False)}, Following: {conversion_status['is_following']}")
         
         # Find active automation rules for comments
         # We need to check BOTH:
@@ -3695,8 +3695,8 @@ async def process_live_comment_event(change: dict, igsid: str, db: Session):
         is_vip_user = conversion_status["is_converted"]
         
         if is_vip_user:
-            print(f"⭐ [VIP USER] User {commenter_id_str} is already converted (email + following). Skipping growth steps for all automations.")
-            print(f"   Email: {conversion_status['has_email']}, Following: {conversion_status['is_following']}")
+            print(f"⭐ [VIP USER] User {commenter_id_str} is already converted (email + phone + following). Skipping growth steps for all automations.")
+            print(f"   Email: {conversion_status['has_email']}, Phone: {conversion_status.get('has_phone', False)}, Following: {conversion_status['is_following']}")
         
         # Find active automation rules for live comments
         # We need to check BOTH:

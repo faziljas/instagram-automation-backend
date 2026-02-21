@@ -51,8 +51,9 @@ def get_or_create_audience(db: Session, sender_id: str, instagram_account_id: in
 
 def check_global_conversion_status(db: Session, sender_id: str, instagram_account_id: int, user_id: int, username: str = None) -> dict:
     """
-    Check if a user is globally converted (has email + is following).
-    This is the "VIP" check that determines if we should skip growth steps.
+    Check if a user is globally converted (has email AND phone AND is following).
+    This is the "VIP" check: only when all three are collected do we treat as VIP and send primary DM directly.
+    If any one is missed, not VIP — we ask for what each rule needs (email / phone / follow).
     
     Args:
         db: Database session
@@ -63,8 +64,9 @@ def check_global_conversion_status(db: Session, sender_id: str, instagram_accoun
         
     Returns:
         dict with keys:
-            - is_converted: bool (True if user has email AND is following)
+            - is_converted: bool (True if user has email AND phone AND is following)
             - has_email: bool
+            - has_phone: bool
             - is_following: bool
             - audience: InstagramAudience instance
     """
@@ -103,12 +105,29 @@ def check_global_conversion_status(db: Session, sender_id: str, instagram_accoun
     # Check following status
     is_following = audience.is_following
     
-    # User is converted if they have email AND are following
-    is_converted = has_email and is_following
+    # Check if user has phone (from any automation for this account)
+    has_phone = False
+    try:
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB
+        sender_id_str = str(sender_id)
+        lead_with_phone = db.query(CapturedLead).filter(
+            CapturedLead.instagram_account_id == instagram_account_id,
+            CapturedLead.phone.isnot(None),
+            cast(CapturedLead.extra_metadata, JSONB)["sender_id"].astext == sender_id_str,
+        ).first()
+        if lead_with_phone and lead_with_phone.phone and str(lead_with_phone.phone).strip():
+            has_phone = True
+    except Exception as e:
+        print(f"⚠️ Error checking CapturedLead for phone: {str(e)}")
+    
+    # VIP = all three collected: email AND phone AND following. If any one is missed, not VIP.
+    is_converted = has_email and has_phone and is_following
     
     return {
         "is_converted": is_converted,
         "has_email": has_email,
+        "has_phone": has_phone,
         "is_following": is_following,
         "audience": audience
     }
