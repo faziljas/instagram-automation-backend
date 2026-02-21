@@ -32,7 +32,7 @@ def get_pre_dm_state(sender_id: str, rule_id: int) -> Dict[str, Any]:
         "phone_request_sent": False,
         "phone_received": False,
         "primary_dm_sent": False,
-        "follow_exit_sent": False,  # Followers-only: user said No → exit message sent; next comment asks "Are you following me?" only
+        "follow_exit_sent": False,  # user said No to "Are you following me?" → exit message sent; no DM reply until they comment again
         "comment_replied_comment_ids": [],
     })
 
@@ -333,11 +333,11 @@ async def process_pre_dm_actions(
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     
-    # Followers-only: after exit message, do NOT reply to any DM in this thread; only a new comment restarts
+    # After "No" to "Are you following me?" we sent exit message — do NOT reply to any DM until user comments again
     comment_triggers = ["post_comment", "keyword", "live_comment"]
-    if ask_to_follow and not ask_for_email and state.get("follow_exit_sent") and not state.get("follow_confirmed"):
+    if state.get("follow_exit_sent") and not state.get("follow_confirmed"):
         if trigger_type not in comment_triggers:
-            print(f"📩 [FOLLOWERS] DM after exit (trigger={trigger_type}) — not replying until user comments again")
+            print(f"📩 DM after exit (trigger={trigger_type}) — not replying until user comments again")
             return {"action": "wait", "message": None, "should_save_email": False, "email": None}
     
     # ---------------------------------------------------------
@@ -763,11 +763,11 @@ async def process_pre_dm_actions(
                     "email": None,
                 }
 
-        # Followers-only: user commented again after "No" (exit message) — ask only "Are you following me?" with Yes/No (no long follow message)
-        if ask_to_follow and not ask_for_email and state.get("follow_exit_sent") and not state.get("follow_confirmed"):
+        # User commented again after "No" (exit message) — ask only "Are you following me?" with Yes/No (no long follow message)
+        if ask_to_follow and state.get("follow_exit_sent") and not state.get("follow_confirmed"):
             follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or "Are you following me?"
             update_pre_dm_state(sender_id, rule.id, {"follow_recheck_sent": True})
-            print(f"📩 [FOLLOWERS] Re-comment after exit — sending only 'Are you following me?' with Yes/No")
+            print(f"📩 Re-comment after exit — sending only 'Are you following me?' with Yes/No")
             return {
                 "action": "send_follow_recheck",
                 "message": follow_recheck_msg,
@@ -937,16 +937,16 @@ async def process_pre_dm_actions(
                 }
         else:
             # User replied with random text that isn't a follow confirmation
-            # Check if they're responding to "Are you followed?" question
+            # Check if they're responding to "Are you following me?" question
             if state.get("follow_recheck_sent", False):
-                # User is responding to "Are you followed?" question
+                # User is responding to "Are you following me?" question
                 message_lower = incoming_message.strip().lower()
                 is_yes = message_lower in ["yes", "yep", "yup", "yeah", "y", "ok", "okay", "sure", "done", "followed", "following", "i'm following", "im following", "i am following"]
                 is_no = message_lower in ["no", "nope", "nah", "not yet", "not", "n"]
                 
                 if is_yes:
                     # User confirmed they're following - mark as confirmed and proceed
-                    print(f"✅ User confirmed following via 'Are you followed?' question")
+                    print(f"✅ User confirmed following via 'Are you following me?' question")
                     update_pre_dm_state(sender_id, rule.id, {
                         "follow_confirmed": True,
                         "follow_recheck_sent": False
@@ -973,7 +973,7 @@ async def process_pre_dm_actions(
                             instagram_account_id=account.id,
                             metadata={
                                 "sender_id": str(sender_id),
-                                "confirmed_via": "are_you_followed_yes",
+                                "confirmed_via": "are_you_following_me_yes",
                                 "message": incoming_message[:200] if incoming_message else None,
                             },
                         )
@@ -1008,7 +1008,7 @@ async def process_pre_dm_actions(
                             "email": None
                         }
                 elif is_no:
-                    # User said No to "Are you followed?" — always send only exit message; do NOT resend the initial follow message
+                    # User said No to "Are you following me?" — always send only exit message; do NOT resend the initial follow message
                     exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or (
                         "No problem! Comment again anytime when you'd like the guide. 📩"
                     )
@@ -1017,7 +1017,7 @@ async def process_pre_dm_actions(
                         "follow_exit_sent": True,
                         "follow_request_sent": True,  # Keep True so next comment is recognized
                     })
-                    print(f"📩 User said No to 'Are you followed?' — sending exit message only (no initial message resend)")
+                    print(f"📩 User said No to 'Are you following me?' — sending exit message only (no initial message resend)")
                     return {
                         "action": "send_follow_no_exit",
                         "message": exit_msg,
@@ -1027,7 +1027,7 @@ async def process_pre_dm_actions(
                 else:
                     # Unclear response - ask again with Yes/No
                     follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
-                        "Are you following me?" if not ask_for_email else "Are you followed? Please reply with Yes or No."
+                        "Are you following me?" if not ask_for_email else "Are you following me? Please reply with Yes or No."
                     )
                     print(f"💬 Unclear response - asking again: '{follow_recheck_msg}'")
                     return {
@@ -1037,18 +1037,18 @@ async def process_pre_dm_actions(
                         "email": None,
                     }
             else:
-                # Followers-only: already sent exit message — do NOT re-prompt in this DM thread; only a new comment should restart
-                if ask_to_follow and not ask_for_email and state.get("follow_exit_sent"):
-                    print(f"📩 [FOLLOWERS] User sent '{incoming_message}' after exit message — ignoring until they comment again")
+                # Already sent exit message — do NOT reply to any DM until user comments again (new comment restarts flow)
+                if state.get("follow_exit_sent"):
+                    print(f"📩 User sent '{incoming_message}' after exit message — ignoring until they comment again")
                     return {
                         "action": "wait",
                         "message": None,
                         "should_save_email": False,
                         "email": None,
                     }
-                # First time random text (e.g. "No" or "Follow me" click) — ask "Are you following me?" with Yes/No
+                # First time random text (e.g. "No" or "Follow me" click) — ask "Are you following me?" with Yes/No only (do NOT resend initial follow message)
                 follow_recheck_msg = config.get("follow_recheck_message") or config.get("followRecheckMessage") or (
-                    "Are you following me?" if not ask_for_email else "Are you followed?"
+                    "Are you following me?"
                 )
                 print(f"💬 Non-confirmation reply while waiting for follow: '{incoming_message}' — asking '{follow_recheck_msg}'")
                 update_pre_dm_state(sender_id, rule.id, {"follow_recheck_sent": True})

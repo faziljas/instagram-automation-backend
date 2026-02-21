@@ -641,7 +641,7 @@ async def process_instagram_message(event: dict, db: Session):
 
                 return  # Exit early, don't process as regular message
             
-            # 1.5) Handle "Are you followed?" Yes/No quick reply buttons
+            # 1.5) Handle "Are you following me?" Yes/No quick reply buttons
             if quick_reply_payload.startswith("follow_recheck_yes_") or quick_reply_payload.startswith("follow_recheck_no_"):
                 is_yes = quick_reply_payload.startswith("follow_recheck_yes_")
                 rule_id_from_payload = None
@@ -681,7 +681,7 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     if is_yes:
                         # User confirmed they're following
-                        log_print(f"✅ User clicked 'Yes' on 'Are you followed?' for rule {rule.id}")
+                        log_print(f"✅ User clicked 'Yes' on 'Are you following me?' for rule {rule.id}")
                         update_pre_dm_state(str(sender_id), rule.id, {
                             "follow_confirmed": True,
                             "follow_recheck_sent": False
@@ -743,12 +743,12 @@ async def process_instagram_message(event: dict, db: Session):
                                     "email_request_sent": True,
                                     "step": "email"
                                 })
-                                log_print(f"✅ Email request sent after 'Are you followed?' Yes confirmation")
+                                log_print(f"✅ Email request sent after 'Are you following me?' Yes confirmation")
                             except Exception as e:
                                 log_print(f"❌ Failed to send email request: {str(e)}", "ERROR")
                         else:
                             # No email request, proceed directly to primary DM
-                            log_print(f"✅ Follow confirmed via 'Are you followed?' Yes, proceeding to primary DM")
+                            log_print(f"✅ Follow confirmed via 'Are you following me?' Yes, proceeding to primary DM")
                             asyncio.create_task(execute_automation_action(
                                 rule, sender_id, account, db,
                                 trigger_type="postback",
@@ -778,7 +778,7 @@ async def process_instagram_message(event: dict, db: Session):
                             else:
                                 raise Exception("No access token found")
                             send_dm(sender_id, exit_msg, access_token, account.page_id, buttons=None, quick_replies=None)
-                            log_print(f"📩 User clicked No to 'Are you followed?' — sent exit message only (no initial message resend)")
+                            log_print(f"📩 User clicked No to 'Are you following me?' — sent exit message only (no initial message resend)")
                         except Exception as e:
                             log_print(f"❌ Failed to send exit message: {str(e)}", "ERROR")
                     
@@ -1806,7 +1806,7 @@ async def process_instagram_message(event: dict, db: Session):
                             log_print(f"⚠️ Failed to send exit message: {str(send_err)}", "ERROR")
                         continue
                     
-                    # Handle "Are you followed?" / "Are you following me?" recheck with Yes/No buttons
+                    # Handle "Are you following me?" recheck with Yes/No buttons
                     if pre_dm_result["action"] == "send_follow_recheck":
                         follow_recheck_msg = pre_dm_result.get("message", "Are you following me?")
                         log_print(f"💬 Sending follow recheck question to {sender_id}: {follow_recheck_msg}")
@@ -1839,7 +1839,7 @@ async def process_instagram_message(event: dict, db: Session):
                             ]
                             
                             send_dm(sender_id, follow_recheck_msg, access_token, page_id, buttons=None, quick_replies=yes_no_quick_replies)
-                            log_print(f"✅ 'Are you followed?' question sent with Yes/No buttons")
+                            log_print(f"✅ 'Are you following me?' question sent with Yes/No buttons")
                             
                             # Log DM sent
                             try:
