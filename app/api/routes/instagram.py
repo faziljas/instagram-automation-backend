@@ -181,7 +181,11 @@ async def receive_webhook(
             for entry in body.get("entry", []):
                 # Process messaging events (DMs)
                 messaging_events = entry.get("messaging", [])
-                log_print(f"📬 Found {len(messaging_events)} messaging event(s) in webhook entry")
+                if messaging_events:
+                    log_print(f"📬 Found {len(messaging_events)} messaging event(s) in webhook entry")
+                elif entry.get("changes"):
+                    # Comment/live webhooks have "changes" but no "messaging" — normal
+                    log_print(f"📬 Entry has 0 messaging events (comment/live or other change event)")
                 
                 for messaging_event in messaging_events:
                     # Check if this is a postback event (button click)
