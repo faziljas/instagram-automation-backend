@@ -15,6 +15,7 @@ from app.services.instagram_usage_tracker import (
     increment_rule_count,
     check_and_reset_usage
 )
+from app.utils.instagram_limits import validate_automation_config
 
 router = APIRouter()
 
@@ -47,6 +48,14 @@ def create_automation_rule(
 
     # Rule limit check removed - free tier now has unlimited rules (High Volume pricing)
     # check_rule_limit(user_id, db, instagram_account_id=rule_data.instagram_account_id)
+
+    # Validate config against Instagram limits (DM/comment length, keyword count, etc.)
+    config_errors = validate_automation_config(rule_data.config)
+    if config_errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Config exceeds Instagram limits.", "errors": config_errors},
+        )
 
     # Create automation rule
     rule = AutomationRule(
@@ -160,6 +169,15 @@ def update_automation_rule(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Automation rule not found"
         )
+
+    # Validate config against Instagram limits when config is being updated
+    if rule_update.config is not None:
+        config_errors = validate_automation_config(rule_update.config)
+        if config_errors:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"message": "Config exceeds Instagram limits.", "errors": config_errors},
+            )
 
     # Update fields
     if rule_update.name is not None:
