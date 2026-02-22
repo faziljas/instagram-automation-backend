@@ -201,21 +201,20 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
         if "localhost" in media_url_clean or "127.0.0.1" in media_url_clean:
             print(f"⚠️ Skipping media attachment: URL must be publicly accessible (localhost/127.0.0.1 not reachable by Instagram)")
         else:
-            # Dynamically infer media_type from URL or Content-Type headers
+            # Infer media_type from URL if not provided (common extensions)
             inferred_type = media_type
             if not inferred_type:
                 lower = media_url_clean.lower()
-                if any(ext in lower for ext in (".mp4", ".mov", ".webm", ".avi")):
+                if any(ext in lower for ext in (".mp3", ".m4a", ".ogg", ".wav", ".aac")):
+                    inferred_type = "audio"
+                elif any(ext in lower for ext in (".mp4", ".mov", ".webm", ".avi")):
                     inferred_type = "video"
                 elif any(ext in lower for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")):
                     inferred_type = "image"
-                elif any(ext in lower for ext in (".mp3", ".m4a", ".ogg", ".wav", ".aac")):
-                    inferred_type = "audio"
                 else:
-                    # Extensionless URL detected! Need to dynamically check Content-Type headers
-                    print(f"🔍 [MEDIA CHECK] Extensionless URL detected. Analyzing headers...")
+                    # Extensionless URL detected (LogicDM uploads)! Dynamically check Content-Type
                     try:
-                        # Make a fast HEAD request to get the exact MIME type from your server
+                        print(f"🔍 [MEDIA CHECK] Checking MIME type for extensionless URL...")
                         head_req = requests.head(media_url_clean, allow_redirects=True, timeout=5)
                         content_type = head_req.headers.get("Content-Type", "").lower()
                         if "video" in content_type:
@@ -223,10 +222,10 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                         elif "audio" in content_type:
                             inferred_type = "audio"
                         else:
-                            inferred_type = "image"  # Default fallback
-                        print(f"✅ [MEDIA CHECK] Content-Type is '{content_type}' -> Sending payload as '{inferred_type}'")
+                            inferred_type = "image"
+                        print(f"✅ [MEDIA CHECK] Detected {content_type} -> Set to {inferred_type}")
                     except Exception as e:
-                        print(f"⚠️ [MEDIA CHECK] Could not fetch headers: {e}. Defaulting to image.")
+                        print(f"⚠️ [MEDIA CHECK] Failed to get headers: {e}. Defaulting to image.")
                         inferred_type = "image"
             if inferred_type not in ("image", "video", "audio"):
                 inferred_type = "image"

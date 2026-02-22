@@ -6027,9 +6027,9 @@ async def execute_automation_action(
                         # If detached, use None (not critical for DM sending)
                         page_id_for_dm = None
                     
-                    # Extract DM media attachment from rule config (image/video, voice message, or card)
+                    # Extract DM media attachment from rule config
                     _cfg = rule.config if isinstance(rule.config, dict) else {}
-                    # FIXED: Added leadDmMediaUrl to safely catch the frontend payload (lead capture uses camelCase)
+                    # ADDED leadDmMediaUrl to safely catch the frontend payload
                     dm_media_url_val = (
                         _cfg.get("dm_media_url") or
                         _cfg.get("dmMediaUrl") or
