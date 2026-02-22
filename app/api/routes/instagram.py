@@ -4519,8 +4519,19 @@ async def execute_automation_action(
                                     # Include profile URL in message text since buttons aren't supported
                                     # Combine follow message with profile URL and quick reply prompt
                                     follow_with_quick_replies = f"{follow_message_with_instructions}\n\n🔗 Visit my profile: {profile_url}\n\nClick one of the options below:"
-                                    send_private_reply(comment_id, follow_with_quick_replies, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
-                                    print(f"✅ Follow request sent via private reply with quick replies (bypasses 24-hour window)")
+                                    follow_sent = False
+                                    try:
+                                        send_private_reply(comment_id, follow_with_quick_replies, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
+                                        follow_sent = True
+                                        print(f"✅ Follow request sent via private reply with quick replies (bypasses 24-hour window)")
+                                    except Exception as qr_err:
+                                        # Meta often returns OAuthException code 1 for quick_replies on private reply; fallback to text-only so flow continues and primary DM (with media URL) can be sent
+                                        print(f"⚠️ Private reply with quick_replies failed ({str(qr_err)}), retrying as text-only...")
+                                        send_private_reply(comment_id, follow_with_quick_replies, access_token, page_id_for_dm, quick_replies=None)
+                                        follow_sent = True
+                                        print(f"✅ Follow request sent via private reply (text-only fallback)")
+                                    if not follow_sent:
+                                        raise RuntimeError("Follow request private reply failed")
                                     
                                     # Log DM sent (tracks in DmLog and increments global tracker)
                                     try:
