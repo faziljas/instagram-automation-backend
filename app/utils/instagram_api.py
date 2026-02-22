@@ -1,7 +1,11 @@
 """
 Instagram Graph API utility functions for sending messages and replies.
 """
+import time
 import requests
+
+# Instagram private reply / DM text limit (conservative to avoid Meta "unknown error")
+PRIVATE_REPLY_MESSAGE_MAX_LENGTH = 500
 
 
 def send_public_comment_reply(comment_id: str, message: str, instagram_access_token: str) -> dict:
@@ -102,8 +106,13 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
         print(f"   Quick Replies: {len(quick_replies)} button(s)")
     
     # Instagram private reply format: recipient uses comment_id instead of id
+    # Truncate message to avoid Meta "unknown error" (OAuthException code 1) from long text
+    text = (message or "").strip()
+    if len(text) > PRIVATE_REPLY_MESSAGE_MAX_LENGTH:
+        text = text[:PRIVATE_REPLY_MESSAGE_MAX_LENGTH - 3] + "..."
+        print(f"⚠️ [PRIVATE REPLY] Message truncated to {PRIVATE_REPLY_MESSAGE_MAX_LENGTH} chars")
     message_payload = {
-        "text": message
+        "text": text or " "
     }
     
     # Add quick replies if provided
@@ -116,7 +125,7 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
                 valid_quick_replies.append({
                     "content_type": "text",
                     "title": str(qr["title"])[:20],
-                    "payload": str(qr["payload"])
+                    "payload": str(qr["payload"])[:1000]  # payload max ~1000
                 })
         
         # Limit to 13 quick replies (Instagram's max)
@@ -136,12 +145,26 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
         "Authorization": f"Bearer {page_access_token}"
     }
     
-    response = requests.post(url, json=payload, headers=headers)
+    def _do_post():
+        return requests.post(url, json=payload, headers=headers)
     
+    response = _do_post()
     if response.status_code != 200:
         error_detail = response.text
-        print(f"❌ Failed to send private reply: {error_detail}")
-        raise Exception(f"Failed to send private reply: {error_detail}")
+        # Retry once on Meta's generic "An unknown error has occurred" (OAuthException code 1)
+        try:
+            err_json = response.json()
+            code = (err_json.get("error") or {}).get("code")
+            if code == 1:
+                print(f"⚠️ [PRIVATE REPLY] Meta returned code 1 (unknown error), retrying in 2s...")
+                time.sleep(2)
+                response = _do_post()
+        except Exception:
+            pass
+        if response.status_code != 200:
+            error_detail = response.text
+            print(f"❌ Failed to send private reply: {error_detail}")
+            raise Exception(f"Failed to send private reply: {error_detail}")
     
     result = response.json()
     print(f"✅ Private reply sent successfully: {result}")
