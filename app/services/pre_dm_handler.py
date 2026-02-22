@@ -369,15 +369,15 @@ async def process_pre_dm_actions(
     ask_to_follow_message = config.get("ask_to_follow_message", "Hey! Would you mind following me? I share great content! 🙌")
     ask_for_email_message = config.get("ask_for_email_message", "Quick question - what's your email? I'd love to send you something special! 📧")
     
-    # EXIT = after "No problem! Comment again!" bot does not respond to DMs until user comments again (or we asked "Are you following me?" and they reply).
-    comment_triggers = ["post_comment", "keyword", "live_comment"]
+    # EXIT = after "No problem! Comment again!" bot does not respond to DMs until user comments/replies to story again (or we asked "Are you following me?" and they reply).
+    comment_triggers = ["post_comment", "keyword", "live_comment", "story_reply"]
     if state.get("follow_exit_sent") and not state.get("follow_confirmed"):
         if trigger_type not in comment_triggers:
             # DM after exit: no reply (EXIT) — except when we just asked "Are you following me?" (re-comment), then we must handle Yes → primary or else → exit message
             if state.get("follow_recheck_sent") and incoming_message:
                 pass  # fall through: handle Yes → primary, else → exit message (Rule 4 & 5)
             else:
-                print(f"📩 [EXIT] DM after exit — not replying until user comments again on post")
+                print(f"📩 [EXIT] DM after exit — not replying until user comments again on post or replies to story")
                 return {"action": "wait", "message": None, "should_save_email": False, "email": None}
     
     # ---------------------------------------------------------
@@ -818,9 +818,9 @@ async def process_pre_dm_actions(
     flow_has_completed = follow_completed_for_flow and email_completed_for_flow
     
     if ask_to_follow or ask_for_email:
-        comment_triggers = ["post_comment", "keyword", "live_comment"]
+        comment_triggers = ["post_comment", "keyword", "live_comment", "story_reply"]
 
-        # v2 Re-Comment after Skip (Use Case 1 & 2): skip_for_now_no_final_dm → no Final DM on skip; on re-comment ask follow then email or email directly
+        # v2 Re-Comment / Re-Story after Skip (Use Case 1 & 2): skip_for_now_no_final_dm → no Final DM on skip; on re-comment or story reply ask follow then email or email directly
         skip_no_final_dm = config.get("skip_for_now_no_final_dm", True) or config.get("skipForNowNoFinalDm", True)
         if skip_no_final_dm and trigger_type in comment_triggers and state.get("email_skipped") and not state.get("email_received") and ask_for_email:
             sender_id_str = str(sender_id) if sender_id else None
@@ -873,8 +873,8 @@ async def process_pre_dm_actions(
                     "email": None,
                 }
 
-        # User commented again on post after "No" (exit) — ask only "Are you following me?" with Yes/No (loop until Yes).
-        # Only for comment triggers; for DM we handle "No" response below (send exit again).
+        # User commented again (or replied to story) after "No" (exit) — ask only "Are you following me?" with Yes/No (loop until Yes).
+        # Applies to comment and story_reply triggers; for plain DM we handle "No" response below (send exit again).
         if ask_to_follow and state.get("follow_exit_sent") and not state.get("follow_confirmed") and trigger_type in comment_triggers:
             raw = config.get("follow_recheck_message") or config.get("followRecheckMessage") or "Are you following me?"
             follow_recheck_msg = normalize_follow_recheck_message(raw)
