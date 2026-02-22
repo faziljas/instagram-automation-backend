@@ -3981,10 +3981,11 @@ async def execute_automation_action(
                     pre_dm_result_override.get("send_email_success", False) and
                     not skip_growth_steps
                 )
-                # VIP commenting again: skip early-return if VIP AND comment-based trigger (has comment_id)
-                # This includes: post_comment, live_comment, AND keyword triggers from comments
+                # VIP triggering again: skip early-return if VIP AND (comment or story) trigger — send primary DM only
+                # Comment: post_comment, live_comment, keyword (has comment_id). Story: story_reply (DM reply to story).
                 is_comment_trigger = comment_id and trigger_type in ("post_comment", "live_comment", "keyword")
-                vip_comment_again = skip_growth_steps and is_comment_trigger
+                is_story_trigger = trigger_type == "story_reply"
+                vip_comment_again = skip_growth_steps and (is_comment_trigger or is_story_trigger)
                 print(f"🔍 [EMAIL SUCCESS CHECK] primary_dm_sent={rule_state.get('primary_dm_sent')}, should_send_email_success_first={should_send_email_success_first}, vip_comment_again={vip_comment_again} (skip_growth_steps={skip_growth_steps}, trigger_type={trigger_type}, comment_id={comment_id})")
                 
                 if rule_state.get("primary_dm_sent") and not should_send_email_success_first and not vip_comment_again:
