@@ -151,21 +151,10 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
     response = _do_post()
     if response.status_code != 200:
         error_detail = response.text
-        # Retry once on Meta's generic "An unknown error has occurred." (OAuthException code 1).
-        # Only retry the same payload (with quick_replies if present) so we never send the message twice.
-        try:
-            err_json = response.json()
-            code = (err_json.get("error") or {}).get("code")
-            if code == 1:
-                print(f"⚠️ [PRIVATE REPLY] Meta returned code 1 (unknown error), retrying same request in 2s...")
-                time.sleep(2)
-                response = _do_post()
-        except Exception:
-            pass
-        if response.status_code != 200:
-            error_detail = response.text
-            print(f"❌ Failed to send private reply: {error_detail}")
-            raise Exception(f"Failed to send private reply: {error_detail}")
+        # Do NOT retry on Meta code 1 (unknown error): the message is often delivered before the error.
+        # Retrying would send a duplicate message.
+        print(f"❌ Failed to send private reply: {error_detail}")
+        raise Exception(f"Failed to send private reply: {error_detail}")
     
     result = response.json()
     print(f"✅ Private reply sent successfully: {result}")
