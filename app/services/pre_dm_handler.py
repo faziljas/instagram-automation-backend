@@ -821,7 +821,9 @@ async def process_pre_dm_actions(
     
     # Email is completed if: not asking for email, email received, OR email was skipped
     email_completed_for_flow = not ask_for_email or state.get("email_received", False) or state.get("email_skipped", False)
-    flow_has_completed = follow_completed_for_flow and email_completed_for_flow
+    # Phone is completed if: not asking for phone, phone received, OR phone was skipped (prevents phone flow completing without validation)
+    phone_completed_for_flow = not simple_dm_flow_phone or state.get("phone_received", False) or state.get("phone_skipped", False)
+    flow_has_completed = follow_completed_for_flow and email_completed_for_flow and phone_completed_for_flow
     
     if ask_to_follow or ask_for_email:
         comment_triggers = ["post_comment", "keyword", "live_comment", "story_reply"]
@@ -1297,11 +1299,14 @@ async def process_pre_dm_actions(
         follow_completed = not ask_to_follow or state.get("follow_confirmed", False) or (ask_to_follow and already_following)
         # Email is completed if: not asking for email, email received, OR email was skipped
         email_completed = not ask_for_email or state.get("email_received", False) or state.get("email_skipped", False)
-        flow_completed = follow_completed and email_completed
+        # Phone is completed if: not asking for phone, phone received, OR phone was skipped (prevents phone flow completing without validation)
+        ask_for_phone = simple_dm_flow_phone
+        phone_completed = not ask_for_phone or state.get("phone_received", False) or state.get("phone_skipped", False)
+        flow_completed = follow_completed and email_completed and phone_completed
         
         print(f"🔍 [PRE-DM DEBUG] trigger_type={trigger_type}, ask_to_follow={ask_to_follow}, ask_for_email={ask_for_email}")
         print(f"🔍 [PRE-DM DEBUG] state: follow_request_sent={state.get('follow_request_sent')}, follow_confirmed={state.get('follow_confirmed')}, email_request_sent={state.get('email_request_sent')}, email_received={state.get('email_received')}")
-        print(f"🔍 [PRE-DM DEBUG] flow_completed={flow_completed} (follow_completed={follow_completed}, email_completed={email_completed}, already_following={already_following})")
+        print(f"🔍 [PRE-DM DEBUG] flow_completed={flow_completed} (follow_completed={follow_completed}, email_completed={email_completed}, phone_completed={phone_completed}, already_following={already_following})")
         
         # If flow is completed, skip directly to primary DM
         if flow_completed:
@@ -1316,7 +1321,8 @@ async def process_pre_dm_actions(
                 "action": "send_primary",
                 "message": None,
                 "should_save_email": False,
-                "email": state.get("email")
+                "email": state.get("email"),
+                "phone": state.get("phone"),
             }
         
         # Step 1: Send Follow Request (if enabled and not sent yet OR not confirmed yet)
@@ -1374,9 +1380,9 @@ async def process_pre_dm_actions(
                 }
         
         # Step 3: Send Primary DM (if pre-DM actions are done)
-        # This should only happen if both follow and email are completed
-        if follow_completed and email_completed:
-            print(f"✅ [PRE-DM] Both follow and email completed - sending primary DM")
+        # This should only happen if follow, email, and phone (when required) are all completed
+        if follow_completed and email_completed and phone_completed:
+            print(f"✅ [PRE-DM] Follow, email, and phone (if required) completed - sending primary DM")
             update_pre_dm_state(sender_id, rule.id, {
                 "step": "primary"
                 # DO NOT set primary_dm_sent here - it will be set AFTER execute_automation_action successfully sends the DM
@@ -1385,7 +1391,8 @@ async def process_pre_dm_actions(
                 "action": "send_primary",
                 "message": None,
                 "should_save_email": False,
-                "email": state.get("email")
+                "email": state.get("email"),
+                "phone": state.get("phone"),
             }
         
         # If we reach here, something unexpected - wait for user action
