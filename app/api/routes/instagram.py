@@ -6029,24 +6029,23 @@ async def execute_automation_action(
                     
                     # Extract DM media attachment from rule config (image/video, voice message, or card)
                     _cfg = rule.config if isinstance(rule.config, dict) else {}
-                    dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or _cfg.get("lead_dm_media_url") or "").strip()
-                    _dt = _cfg.get("dm_type") or _cfg.get("dmType")
-                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(_dt)}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}, url_prefix={dm_media_url_val[:50] if dm_media_url_val else 'None'}...")
+                    # Add leadDmMediaUrl to ensure UI lead capture media is caught!
+                    dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or _cfg.get("lead_dm_media_url") or _cfg.get("leadDmMediaUrl") or "").strip()
+                    dm_type_val = (_cfg.get("dm_type") or _cfg.get("dmType") or "").strip().lower().replace(" ", "_")
+                    if dm_type_val in ("image/video", "image\\/video"):
+                        dm_type_val = "image_video"
+                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(dm_type_val)}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}, url_prefix={dm_media_url_val[:50] if dm_media_url_val else 'None'}...")
                     dm_voice_url_val = (_cfg.get("dm_voice_message_url") or _cfg.get("dmVoiceMessageUrl") or "").strip()
                     dm_card_image_val = (_cfg.get("dm_card_image_url") or _cfg.get("dmCardImageUrl") or "").strip()
                     dm_card_title_val = (_cfg.get("dm_card_title") or _cfg.get("dmCardTitle") or "").strip()
                     dm_card_subtitle_val = (_cfg.get("dm_card_subtitle") or _cfg.get("dmCardSubtitle") or "").strip()
                     dm_card_button_val = _cfg.get("dm_card_button") or _cfg.get("dmCardButton") or {}
-                    dm_type_val = (_cfg.get("dm_type") or _cfg.get("dmType") or "").strip().lower().replace(" ", "_")
-                    # Normalize display value "image/video" or "Image/Video" (after lower) to image_video
-                    if dm_type_val in ("image/video", "image\\/video"):
-                        dm_type_val = "image_video"
                     media_url_to_send = None
                     media_type_to_send = None
                     card_config = None
                     if dm_type_val == "image_video" and dm_media_url_val:
                         media_url_to_send = dm_media_url_val
-                        media_type_to_send = None  # infer image/video from URL
+                        media_type_to_send = None
                     elif dm_type_val == "voice_message" and dm_voice_url_val:
                         media_url_to_send = dm_voice_url_val
                         media_type_to_send = "audio"
@@ -6057,8 +6056,8 @@ async def execute_automation_action(
                             "subtitle": dm_card_subtitle_val,
                             "button": dm_card_button_val if (dm_card_button_val.get("text") and dm_card_button_val.get("url")) else None
                         }
-                    # Fallback: if dm_media_url is set but dm_type was not persisted (e.g. old rules), treat as image/video
-                    if not media_url_to_send and not card_config and dm_media_url_val and not dm_voice_url_val:
+                    # Bulletproof Fallback: if URL exists but dm_type didn't save correctly, FORCE it to send
+                    if not media_url_to_send and not card_config and dm_media_url_val:
                         media_url_to_send = dm_media_url_val
                         media_type_to_send = None
                     if media_url_to_send:
