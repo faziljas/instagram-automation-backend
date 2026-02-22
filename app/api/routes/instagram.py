@@ -4711,13 +4711,9 @@ async def execute_automation_action(
                                 await asyncio.sleep(1)
                             except Exception:
                                 pass
-                            try:
-                                send_private_reply(comment_id, follow_with_prompt, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
-                                print(f"✅ [Followers] First question sent via private reply to {sender_id}")
-                            except Exception as qr_err:
-                                print(f"⚠️ [Followers] Private reply with quick_replies failed ({str(qr_err)}), retrying as text-only...")
-                                send_private_reply(comment_id, follow_with_prompt, access_token, page_id_for_dm, quick_replies=None)
-                                print(f"✅ [Followers] First question sent via private reply (text-only fallback)")
+                            # Send follower question only once, with buttons (no text-only retry to avoid duplicate)
+                            send_private_reply(comment_id, follow_with_prompt, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
+                            print(f"✅ [Followers] First question sent via private reply to {sender_id} (with buttons)")
                         else:
                             send_dm_api(str(sender_id), follow_with_prompt, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
                             print(f"✅ [Followers] First question sent via DM to {sender_id}")
