@@ -201,11 +201,13 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
             inferred_type = media_type
             if not inferred_type:
                 lower = media_url_clean.lower()
-                if any(ext in lower for ext in (".mp4", ".mov", ".webm", ".ogg", ".avi")):
+                if any(ext in lower for ext in (".mp3", ".m4a", ".ogg", ".wav", ".aac")):
+                    inferred_type = "audio"
+                elif any(ext in lower for ext in (".mp4", ".mov", ".webm", ".avi")):
                     inferred_type = "video"
                 else:
                     inferred_type = "image"
-            if inferred_type not in ("image", "video"):
+            if inferred_type not in ("image", "video", "audio"):
                 inferred_type = "image"
             try:
                 media_payload = {

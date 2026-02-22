@@ -6023,12 +6023,20 @@ async def execute_automation_action(
                         # If detached, use None (not critical for DM sending)
                         page_id_for_dm = None
                     
-                    # Extract DM media attachment (image/video) from rule config if dm_type is image_video
+                    # Extract DM media attachment from rule config (image/video or voice message)
                     dm_media_url_val = (rule.config.get("dm_media_url") or rule.config.get("dmMediaUrl") or "").strip()
+                    dm_voice_url_val = (rule.config.get("dm_voice_message_url") or rule.config.get("dmVoiceMessageUrl") or "").strip()
                     dm_type_val = rule.config.get("dm_type") or rule.config.get("dmType") or ""
-                    media_url_to_send = dm_media_url_val if (dm_type_val == "image_video" and dm_media_url_val) else None
+                    media_url_to_send = None
+                    media_type_to_send = None
+                    if dm_type_val == "image_video" and dm_media_url_val:
+                        media_url_to_send = dm_media_url_val
+                        media_type_to_send = None  # infer image/video from URL
+                    elif dm_type_val == "voice_message" and dm_voice_url_val:
+                        media_url_to_send = dm_voice_url_val
+                        media_type_to_send = "audio"
                     if media_url_to_send:
-                        print(f"📎 DM media attachment configured: {media_url_to_send[:60]}...")
+                        print(f"📎 DM media attachment configured: {media_url_to_send[:60]}... (type={media_type_to_send or 'image/video'})")
                     
                     # CRITICAL FIX: For comment-based triggers, use Private Reply endpoint to bypass 24-hour window
                     # Comments don't count as DM initiation, so normal send_dm would fail
@@ -6071,7 +6079,7 @@ async def execute_automation_action(
                             from app.utils.instagram_api import send_dm
                             from app.utils.plan_enforcement import log_dm_sent
                             
-                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send)
+                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send, media_type=media_type_to_send)
                             print(f"✅ DM with buttons/quick replies sent to {sender_id}")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
@@ -6097,7 +6105,7 @@ async def execute_automation_action(
                             if media_url_to_send:
                                 try:
                                     from app.utils.instagram_api import send_dm
-                                    send_dm(sender_id, "", access_token, page_id_for_dm, media_url=media_url_to_send)
+                                    send_dm(sender_id, "", access_token, page_id_for_dm, media_url=media_url_to_send, media_type=media_type_to_send)
                                     print(f"✅ Media attachment sent to {sender_id}")
                                 except Exception as media_err:
                                     print(f"⚠️ Failed to send media attachment: {media_err}")
@@ -6129,7 +6137,7 @@ async def execute_automation_action(
                         from app.utils.instagram_api import send_dm
                         from app.utils.plan_enforcement import log_dm_sent
                         
-                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send)
+                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send, media_type=media_type_to_send)
                         print(f"✅ DM sent to {sender_id}")
                         
                         # Log DM sent (tracks in DmLog and increments global tracker)
