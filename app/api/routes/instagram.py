@@ -4706,16 +4706,25 @@ async def execute_automation_action(
                         follow_with_prompt = f"{follow_message}\n\n✅ Once you've followed, type 'done' or 'followed' to continue!\n\n🔗 Visit my profile: {profile_url}\n\nClick one of the options below:"
                         if is_comment_trigger:
                             from app.utils.instagram_api import send_private_reply
+                            from app.services.pre_dm_handler import update_pre_dm_state
                             try:
                                 send_private_reply(comment_id, "Hi! 👋", access_token, page_id_for_dm)
                                 await asyncio.sleep(1)
                             except Exception:
                                 pass
+                            # Mark follow request as sent BEFORE sending the long message so that webhook
+                            # retries or duplicate deliveries never resend (prevents duplicate follow DMs)
+                            update_pre_dm_state(str(sender_id), rule_id, {
+                                "follow_request_sent": True,
+                                "step": "follow",
+                            })
                             # Send follower question only once, with buttons (no text-only retry to avoid duplicate)
                             send_private_reply(comment_id, follow_with_prompt, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
                             print(f"✅ [Followers] First question sent via private reply to {sender_id} (with buttons)")
                         else:
+                            from app.services.pre_dm_handler import update_pre_dm_state
                             send_dm_api(str(sender_id), follow_with_prompt, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
+                            update_pre_dm_state(str(sender_id), rule_id, {"follow_request_sent": True, "step": "follow"})
                             print(f"✅ [Followers] First question sent via DM to {sender_id}")
                         try:
                             from app.utils.plan_enforcement import log_dm_sent
