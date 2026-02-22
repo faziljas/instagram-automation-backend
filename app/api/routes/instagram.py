@@ -6025,7 +6025,7 @@ async def execute_automation_action(
                     
                     # Extract DM media attachment from rule config (image/video, voice message, or card)
                     _cfg = rule.config if isinstance(rule.config, dict) else {}
-                    dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or "").strip()
+                    dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or _cfg.get("lead_dm_media_url") or "").strip()
                     _dt = _cfg.get("dm_type") or _cfg.get("dmType")
                     print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(_dt)}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}, url_prefix={dm_media_url_val[:50] if dm_media_url_val else 'None'}...")
                     dm_voice_url_val = (_cfg.get("dm_voice_message_url") or _cfg.get("dmVoiceMessageUrl") or "").strip()
@@ -6034,7 +6034,8 @@ async def execute_automation_action(
                     dm_card_subtitle_val = (_cfg.get("dm_card_subtitle") or _cfg.get("dmCardSubtitle") or "").strip()
                     dm_card_button_val = _cfg.get("dm_card_button") or _cfg.get("dmCardButton") or {}
                     dm_type_val = (_cfg.get("dm_type") or _cfg.get("dmType") or "").strip().lower().replace(" ", "_")
-                    if dm_type_val == "image/video":
+                    # Normalize display value "image/video" or "Image/Video" (after lower) to image_video
+                    if dm_type_val in ("image/video", "image\\/video"):
                         dm_type_val = "image_video"
                     media_url_to_send = None
                     media_type_to_send = None

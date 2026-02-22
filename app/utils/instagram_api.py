@@ -230,7 +230,11 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                     if not (message and str(message).strip()) and not buttons and not (quick_replies and len(quick_replies) > 0):
                         return resp.json()
                 else:
-                    print(f"⚠️ Failed to send media: {resp.status_code} {resp.text}")
+                    err_body = resp.text
+                    print(f"⚠️ Failed to send media: {resp.status_code} {err_body}")
+                    # Log so debugging attached media issues is easier (Instagram may reject URL or format)
+                    if resp.status_code >= 400:
+                        print(f"   Media URL (first 80 chars): {media_url_clean[:80]}...")
             except Exception as media_err:
                 print(f"⚠️ Error sending media attachment: {media_err}")
     
