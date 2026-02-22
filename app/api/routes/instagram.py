@@ -6026,6 +6026,7 @@ async def execute_automation_action(
                     # Extract DM media attachment from rule config (image/video, voice message, or card)
                     _cfg = rule.config if isinstance(rule.config, dict) else {}
                     dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or "").strip()
+                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(_cfg.get('dm_type') or _cfg.get('dmType'))}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}")
                     dm_voice_url_val = (_cfg.get("dm_voice_message_url") or _cfg.get("dmVoiceMessageUrl") or "").strip()
                     dm_card_image_val = (_cfg.get("dm_card_image_url") or _cfg.get("dmCardImageUrl") or "").strip()
                     dm_card_title_val = (_cfg.get("dm_card_title") or _cfg.get("dmCardTitle") or "").strip()
