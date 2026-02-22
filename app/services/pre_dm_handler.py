@@ -324,8 +324,14 @@ async def process_pre_dm_actions(
                 "email": None
             }
     
+    # Persist trigger type on first run so "No" button / postback can show correct exit message (Story reply again vs Comment again).
+    # Must run before skip_growth_steps so VIP users also get trigger_type stored.
+    state = get_pre_dm_state(sender_id, rule.id)
+    if trigger_type and not state.get("trigger_type"):
+        update_pre_dm_state(sender_id, rule.id, {"trigger_type": trigger_type})
+        state = get_pre_dm_state(sender_id, rule.id)
+    
     # VIP USER CHECK: If skip_growth_steps is True, skip directly to primary DM
-    # This MUST be checked FIRST before any other processing
     if skip_growth_steps:
         print(f"⭐ [VIP] Skipping ALL growth steps for rule {rule.id} - user is already converted (email + following)")
         print(f"⭐ [VIP] Returning send_primary action immediately - no follow/email requests will be sent")
