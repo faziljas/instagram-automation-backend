@@ -6051,6 +6051,10 @@ async def execute_automation_action(
                             "subtitle": dm_card_subtitle_val,
                             "button": dm_card_button_val if (dm_card_button_val.get("text") and dm_card_button_val.get("url")) else None
                         }
+                    # Fallback: if dm_media_url is set but dm_type was not persisted (e.g. old rules), treat as image/video
+                    if not media_url_to_send and not card_config and dm_media_url_val and not dm_voice_url_val:
+                        media_url_to_send = dm_media_url_val
+                        media_type_to_send = None
                     if media_url_to_send:
                         print(f"📎 DM media attachment configured: {media_url_to_send[:60]}... (type={media_type_to_send or 'image/video'})")
                     elif card_config:
