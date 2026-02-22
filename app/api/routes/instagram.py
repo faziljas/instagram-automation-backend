@@ -2554,14 +2554,9 @@ async def process_instagram_message(event: dict, db: Session):
                     # Fallback to single keyword for backward compatibility
                     keywords_list = [str(rule.config.get("keyword", "")).strip().lower()]
                 
-                # Story reply: keyword rule for this story triggers on ANY message (not only keyword match)
-                is_story_rule_for_this_story = bool(story_id and str(rule.media_id or "") == story_id)
-                if is_story_rule_for_this_story and message_text and message_text.strip():
-                    matched_keyword = "(story reply)"
-                else:
-                    matched_keyword = None
-                
-                if not matched_keyword and keywords_list:
+                # Story trigger = same as comment: message must match keyword (no "any message" trigger)
+                matched_keyword = None
+                if keywords_list:
                     message_text_lower = message_text.strip().lower()
                     # Check if message is EXACTLY any of the keywords (case-insensitive)
                     # Also check if message CONTAINS the keyword (for flexibility)
@@ -2583,46 +2578,47 @@ async def process_instagram_message(event: dict, db: Session):
                                 matched_keyword = keyword
                                 log_print(f"✅ Keyword '{matched_keyword}' found as whole word in message '{message_text}'")
                                 break
+                
+                # Trigger when message matches rule keyword (same as comment: keyword in comment vs keyword in story DM)
+                if matched_keyword:
+                    keyword_rule_matched = True
+                    if story_id:
+                        log_print(f"✅ [STORY DM] Keyword '{matched_keyword}' matches story reply. Rule: {rule.name} (ID: {rule.id})")
+                    else:
+                        log_print(f"✅ Keyword '{matched_keyword}' matches message, triggering keyword rule!")
+                        log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
                     
-                    if matched_keyword:
-                        keyword_rule_matched = True
-                        if matched_keyword == "(story reply)":
-                            log_print(f"✅ [STORY DM] Story reply triggers rule (any message on story). Rule: {rule.name} (ID: {rule.id})")
-                        else:
-                            log_print(f"✅ Keyword '{matched_keyword}' matches message, triggering keyword rule!")
-                            log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
-                        
-                        # FIX ISSUE 1: Check if primary DM was already sent (in-memory only; sender_primary_dm_complete already handles DB exit)
-                        from app.services.pre_dm_handler import get_pre_dm_state
-                        rule_state = get_pre_dm_state(sender_id, rule.id)
-                        if rule_state.get("primary_dm_sent"):
-                            log_print(f"🚫 [FIX] Skipping keyword rule {rule.id} - primary DM already sent to {sender_id}")
-                            log_print(f"   💬 Message will be handled by real user, not automation")
-                            break  # Skip this keyword rule
-                        
-                        # Check if this rule is already being processed for this message
-                        processing_key = f"{message_id}_{rule.id}"
-                        if processing_key in _processing_rules:
-                            print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
-                            break
-                        # Mark as processing
-                        _processing_rules[processing_key] = True
-                        # Clean cache if too large
-                        if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
-                            _processing_rules.clear()
-                        # Run in background task to avoid blocking webhook handler
-                        # Use story_reply when this was triggered by any message on a story (not keyword match)
-                        trigger_for_action = "story_reply" if matched_keyword == "(story reply)" else "keyword"
-                        asyncio.create_task(execute_automation_action(
-                            rule,
-                            sender_id,
-                            account,
-                            db,
-                            trigger_type=trigger_for_action,
-                            message_id=message_id,
-                            incoming_message=message_text if trigger_for_action == "story_reply" else None
-                        ))
-                        break  # Only trigger first matching keyword rule
+                    # For VIP: still run rule but only send primary DM (skip_growth_steps). Do not skip entirely.
+                    from app.services.pre_dm_handler import get_pre_dm_state
+                    rule_state = get_pre_dm_state(sender_id, rule.id)
+                    if rule_state.get("primary_dm_sent") and not is_vip_user:
+                        log_print(f"🚫 [FIX] Skipping keyword rule {rule.id} - primary DM already sent to {sender_id}")
+                        log_print(f"   💬 Message will be handled by real user, not automation")
+                        break  # Skip this keyword rule (non-VIP only)
+                    
+                    # Check if this rule is already being processed for this message
+                    processing_key = f"{message_id}_{rule.id}"
+                    if processing_key in _processing_rules:
+                        print(f"🚫 Rule {rule.id} already processing for message {message_id}, skipping duplicate")
+                        break
+                    # Mark as processing
+                    _processing_rules[processing_key] = True
+                    # Clean cache if too large
+                    if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
+                        _processing_rules.clear()
+                    # Run in background task. For VIP: send primary DM only (skip_growth_steps).
+                    trigger_for_action = "story_reply" if story_id else "keyword"
+                    asyncio.create_task(execute_automation_action(
+                        rule,
+                        sender_id,
+                        account,
+                        db,
+                        trigger_type=trigger_for_action,
+                        message_id=message_id,
+                        incoming_message=message_text if story_id else None,
+                        skip_growth_steps=is_vip_user  # VIP: primary DM only
+                    ))
+                    break  # Only trigger first matching keyword rule
         
         if not keyword_rule_matched and len(keyword_rules) > 0:
             log_print(f"❌ [DM] No keyword rules matched the message: '{message_text}'")
