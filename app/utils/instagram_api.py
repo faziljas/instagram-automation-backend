@@ -277,6 +277,11 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
             except Exception as card_err:
                 print(f"⚠️ Error sending card: {card_err}")
     
+    # Don't send empty text — Instagram returns "Empty text" (code 100, subcode 2534052)
+    if not (message and str(message).strip()) and not buttons and not (quick_replies and len(quick_replies) > 0):
+        print(f"⏭️ No text/buttons/quick_replies to send; skipping text message (media/card may have been sent above)")
+        return {}
+    
     # Build message payload
     # Instagram quick_replies only support text buttons (content_type: "text")
     # For URL buttons, we need to use a generic template format instead
