@@ -1154,7 +1154,8 @@ async def process_pre_dm_actions(
     # IMPORTANT: Only process emails from DMs, NOT from comments
     # Comments should only trigger resending the email question as a reminder
     if ask_for_email and incoming_message and state.get("email_request_sent") and not state.get("email_received"):
-        # Skip email processing for comment triggers - they should only resend email question
+        # Skip email processing for comment triggers (post/reel/live) - they should only resend email question via private reply.
+        # story_reply is intentionally excluded: user sends a DM, so we parse incoming_message as email (same as new_message).
         is_comment_trigger = trigger_type in ["post_comment", "keyword", "live_comment"]
         
         if is_comment_trigger:
