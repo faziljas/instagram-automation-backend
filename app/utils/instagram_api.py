@@ -148,7 +148,7 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
     return result
 
 
-def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None, quick_replies: list = None, media_url: str = None, media_type: str = None) -> dict:
+def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None, quick_replies: list = None, media_url: str = None, media_type: str = None, card_image_url: str = None, card_title: str = None, card_subtitle: str = None, card_button: dict = None) -> dict:
     """
     Send a direct message to an Instagram user with optional buttons/quick replies/media.
     
@@ -169,6 +169,10 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                       Maximum 13 quick replies, title max 20 characters
         media_url: Optional public URL for image or video attachment (must be accessible by Instagram servers)
         media_type: "image" or "video" when media_url is set; inferred from URL if not provided
+        card_image_url: Optional public URL for card image (generic template with image)
+        card_title: Title for card element (max 80 chars)
+        card_subtitle: Subtitle for card element (optional)
+        card_button: {"text": str, "url": str} for card button (optional)
         
     Returns:
         dict: API response
@@ -229,6 +233,49 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                     print(f"⚠️ Failed to send media: {resp.status_code} {resp.text}")
             except Exception as media_err:
                 print(f"⚠️ Error sending media attachment: {media_err}")
+    
+    # Card: generic template with image, title, subtitle, optional button
+    if card_image_url and str(card_image_url).strip():
+        card_url_clean = str(card_image_url).strip()
+        if "localhost" in card_url_clean or "127.0.0.1" in card_url_clean:
+            print(f"⚠️ Skipping card: image URL must be publicly accessible (localhost/127.0.0.1 not reachable by Instagram)")
+        else:
+            element = {
+                "image_url": card_url_clean,
+                "title": (card_title or "")[:80] or " ",
+                "subtitle": (card_subtitle or "")[:80] if card_subtitle else "",
+            }
+            template_buttons = []
+            if card_button and card_button.get("text") and card_button.get("url"):
+                template_buttons.append({
+                    "type": "web_url",
+                    "url": str(card_button["url"]),
+                    "title": str(card_button["text"])[:20]
+                })
+            if template_buttons:
+                element["buttons"] = template_buttons
+            try:
+                card_payload = {
+                    "recipient": {"id": recipient_id},
+                    "message": {
+                        "attachment": {
+                            "type": "template",
+                            "payload": {
+                                "template_type": "generic",
+                                "elements": [element]
+                            }
+                        }
+                    }
+                }
+                resp = requests.post(api_url, json=card_payload, headers=headers)
+                if resp.status_code == 200:
+                    print(f"✅ Card sent successfully")
+                    if not (message and str(message).strip()) and not (quick_replies and len(quick_replies) > 0):
+                        return resp.json()
+                else:
+                    print(f"⚠️ Failed to send card: {resp.status_code} {resp.text}")
+            except Exception as card_err:
+                print(f"⚠️ Error sending card: {card_err}")
     
     # Build message payload
     # Instagram quick_replies only support text buttons (content_type: "text")
