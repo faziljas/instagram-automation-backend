@@ -1843,7 +1843,8 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     # Handle "Are you following me?" recheck with Yes/No buttons
                     if pre_dm_result["action"] == "send_follow_recheck":
-                        follow_recheck_msg = normalize_follow_recheck_message(pre_dm_result.get("message") or "Are you following me?")
+                        from app.services.pre_dm_handler import normalize_follow_recheck_message as _norm_follow_recheck
+                        follow_recheck_msg = _norm_follow_recheck(pre_dm_result.get("message") or "Are you following me?")
                         log_print(f"💬 Sending follow recheck question to {sender_id}: {follow_recheck_msg}")
                         
                         from app.utils.encryption import decrypt_credentials
