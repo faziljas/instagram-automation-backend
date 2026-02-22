@@ -3,14 +3,14 @@ Instagram platform limits for automation rule config validation.
 Used to enforce DM length, public comment length, trigger keyword count/length, and button text.
 """
 
-# Maximum characters per Instagram direct message (safe for mobile & API).
-INSTAGRAM_DM_MAX_CHARS = 1000
+# Maximum characters for primary DM messages (variations for randomization).
+INSTAGRAM_DM_MAX_CHARS = 140
 
-# Maximum characters per Instagram public comment.
-INSTAGRAM_PUBLIC_COMMENT_MAX_CHARS = 2200
+# Maximum characters for Public Acknowledgement Reply (public comment).
+INSTAGRAM_PUBLIC_COMMENT_MAX_CHARS = 140
 
 # Maximum number of trigger keywords per automation.
-INSTAGRAM_TRIGGER_KEYWORDS_MAX_COUNT = 50
+INSTAGRAM_TRIGGER_KEYWORDS_MAX_COUNT = 10
 
 # Maximum characters per single trigger keyword.
 INSTAGRAM_TRIGGER_KEYWORD_MAX_LENGTH = 100
@@ -18,7 +18,10 @@ INSTAGRAM_TRIGGER_KEYWORD_MAX_LENGTH = 100
 # Maximum characters for quick reply / CTA button text.
 INSTAGRAM_BUTTON_TEXT_MAX_CHARS = 20
 
-# Config keys that hold DM-length text (each value must be <= INSTAGRAM_DM_MAX_CHARS).
+# Maximum characters for First message (follow + ask for email/phone/followers).
+INSTAGRAM_PRE_DM_MESSAGE_MAX_CHARS = 220
+
+# Config keys that hold pre-DM / first message text (each value <= INSTAGRAM_PRE_DM_MESSAGE_MAX_CHARS).
 DM_TEXT_KEYS = (
     "message_template",
     "ask_to_follow_message",
@@ -97,13 +100,13 @@ def validate_automation_config(config: dict) -> list[str]:
                         errors,
                     )
 
-    # Single DM-text fields
+    # Pre-DM / first message text fields (follow + email/phone/followers)
     for key in DM_TEXT_KEYS:
         val = config.get(key)
         if isinstance(val, str):
             _check_str(
                 val,
-                INSTAGRAM_DM_MAX_CHARS,
+                INSTAGRAM_PRE_DM_MESSAGE_MAX_CHARS,
                 key.replace("_", " ").title(),
                 errors,
             )
