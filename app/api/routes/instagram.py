@@ -6029,12 +6029,17 @@ async def execute_automation_action(
                     
                     # Extract DM media attachment from rule config (image/video, voice message, or card)
                     _cfg = rule.config if isinstance(rule.config, dict) else {}
-                    # Add leadDmMediaUrl to ensure UI lead capture media is caught!
-                    dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or _cfg.get("lead_dm_media_url") or _cfg.get("leadDmMediaUrl") or "").strip()
+                    # FIXED: Added leadDmMediaUrl to safely catch the frontend payload (lead capture uses camelCase)
+                    dm_media_url_val = (
+                        _cfg.get("dm_media_url") or
+                        _cfg.get("dmMediaUrl") or
+                        _cfg.get("lead_dm_media_url") or
+                        _cfg.get("leadDmMediaUrl") or
+                        ""
+                    ).strip()
                     dm_type_val = (_cfg.get("dm_type") or _cfg.get("dmType") or "").strip().lower().replace(" ", "_")
                     if dm_type_val in ("image/video", "image\\/video"):
                         dm_type_val = "image_video"
-                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(dm_type_val)}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}, url_prefix={dm_media_url_val[:50] if dm_media_url_val else 'None'}...")
                     dm_voice_url_val = (_cfg.get("dm_voice_message_url") or _cfg.get("dmVoiceMessageUrl") or "").strip()
                     dm_card_image_val = (_cfg.get("dm_card_image_url") or _cfg.get("dmCardImageUrl") or "").strip()
                     dm_card_title_val = (_cfg.get("dm_card_title") or _cfg.get("dmCardTitle") or "").strip()
@@ -6060,6 +6065,7 @@ async def execute_automation_action(
                     if not media_url_to_send and not card_config and dm_media_url_val:
                         media_url_to_send = dm_media_url_val
                         media_type_to_send = None
+                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(dm_type_val)}, dm_media_url present={bool(media_url_to_send)}, url={media_url_to_send[:50] if media_url_to_send else 'None'}...")
                     if media_url_to_send:
                         print(f"📎 DM media attachment configured: {media_url_to_send[:60]}... (type={media_type_to_send or 'image/video'})")
                     elif card_config:
