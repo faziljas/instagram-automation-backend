@@ -761,8 +761,9 @@ async def process_instagram_message(event: dict, db: Session):
                                 pre_dm_result_override={"action": "send_primary"}
                             ))
                     else:
-                        # User said No — send exit message. Pre-DM state is in-memory so may be missing on another worker; use one message that works for both.
-                        _default_exit = "No problem! Reply again anytime when you'd like the guide. 📩"
+                        # User said No — send exit message. Use comment vs story reply text based on how they entered (stored when we sent "Are you following me?")
+                        _trigger = (state or {}).get("follow_recheck_trigger_type") or "post_comment"
+                        _default_exit = "No problem! Story reply again anytime when you'd like the guide. 📩" if _trigger == "story_reply" else "No problem! Comment again anytime when you'd like the guide. 📩"
                         exit_msg = (rule.config or {}).get("follow_no_exit_message") or (rule.config or {}).get("followNoExitMessage") or _default_exit
                         update_pre_dm_state(str(sender_id), rule.id, {
                             "follow_recheck_sent": False,
@@ -1866,7 +1867,9 @@ async def process_instagram_message(event: dict, db: Session):
                             
                             send_dm(sender_id, follow_recheck_msg, access_token, page_id, buttons=None, quick_replies=yes_no_quick_replies)
                             log_print(f"✅ 'Are you following me?' question sent with Yes/No buttons")
-                            
+                            # Store how they entered so "No" quick reply can show Comment again vs Story reply again
+                            _recheck_trigger = "story_reply" if story_id else "post_comment"
+                            update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_trigger_type": _recheck_trigger})
                             # Log DM sent
                             try:
                                 from app.utils.plan_enforcement import log_dm_sent
@@ -4281,6 +4284,7 @@ async def execute_automation_action(
                     follow_recheck_msg = normalize_follow_recheck_message(pre_dm_result.get("message") or "Are you following me?")
                     from app.utils.instagram_api import send_dm as send_dm_api
                     from app.utils.encryption import decrypt_credentials
+                    from app.services.pre_dm_handler import update_pre_dm_state
                     try:
                         if account.encrypted_page_token:
                             _tok = decrypt_credentials(account.encrypted_page_token)
@@ -4299,6 +4303,8 @@ async def execute_automation_action(
                         else:
                             send_dm_api(str(sender_id), follow_recheck_msg, _tok, page_id_for_dm, buttons=None, quick_replies=yes_no_quick_replies)
                         print(f"✅ 'Are you following me?' sent with Yes/No buttons")
+                        # Store how they entered so "No" quick reply can show Comment again vs Story reply again
+                        update_pre_dm_state(str(sender_id), rule_id, {"follow_recheck_trigger_type": trigger_type})
                         try:
                             from app.utils.plan_enforcement import log_dm_sent
                             log_dm_sent(user_id=user_id, instagram_account_id=account_id, recipient_username=str(sender_id), message=follow_recheck_msg, db=db, instagram_username=username, instagram_igsid=account_igsid)
