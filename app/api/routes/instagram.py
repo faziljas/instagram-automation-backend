@@ -6039,52 +6039,10 @@ async def execute_automation_action(
                         # If detached, use None (not critical for DM sending)
                         page_id_for_dm = None
                     
-                    # Extract DM media attachment from rule config
-                    _cfg = rule.config if isinstance(rule.config, dict) else {}
-                    # ADDED leadDmMediaUrl to safely catch the frontend payload
-                    dm_media_url_val = (
-                        _cfg.get("dm_media_url") or
-                        _cfg.get("dmMediaUrl") or
-                        _cfg.get("lead_dm_media_url") or
-                        _cfg.get("leadDmMediaUrl") or
-                        ""
-                    ).strip()
-                    dm_type_val = (_cfg.get("dm_type") or _cfg.get("dmType") or "").strip().lower().replace(" ", "_")
-                    if dm_type_val in ("image/video", "image\\/video"):
-                        dm_type_val = "image_video"
-                    dm_voice_url_val = (_cfg.get("dm_voice_message_url") or _cfg.get("dmVoiceMessageUrl") or "").strip()
-                    dm_card_image_val = (_cfg.get("dm_card_image_url") or _cfg.get("dmCardImageUrl") or "").strip()
-                    dm_card_title_val = (_cfg.get("dm_card_title") or _cfg.get("dmCardTitle") or "").strip()
-                    dm_card_subtitle_val = (_cfg.get("dm_card_subtitle") or _cfg.get("dmCardSubtitle") or "").strip()
-                    dm_card_button_val = _cfg.get("dm_card_button") or _cfg.get("dmCardButton") or {}
+                    # DM automation supports text and text+button only (no image/video/card/voice)
                     media_url_to_send = None
-                    media_type_to_send = None
                     card_config = None
-                    if dm_type_val == "image_video" and dm_media_url_val:
-                        media_url_to_send = dm_media_url_val
-                        media_type_to_send = None
-                    elif dm_type_val == "voice_message" and dm_voice_url_val:
-                        media_url_to_send = dm_voice_url_val
-                        media_type_to_send = "audio"
-                    elif dm_type_val == "card" and dm_card_image_val:
-                        card_config = {
-                            "image_url": dm_card_image_val,
-                            "title": dm_card_title_val,
-                            "subtitle": dm_card_subtitle_val,
-                            "button": dm_card_button_val if (dm_card_button_val.get("text") and dm_card_button_val.get("url")) else None
-                        }
-                    # Bulletproof Fallback: if URL exists but dm_type didn't save correctly, FORCE it to send
-                    if not media_url_to_send and not card_config and dm_media_url_val:
-                        media_url_to_send = dm_media_url_val
-                        media_type_to_send = None
-                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(dm_type_val)}, dm_media_url present={bool(media_url_to_send)}, url={media_url_to_send[:50] if media_url_to_send else 'None'}...")
-                    if media_url_to_send:
-                        print(f"📎 DM media attachment configured: {media_url_to_send[:60]}... (type={media_type_to_send or 'image/video'})")
-                    elif card_config:
-                        print(f"📎 DM card configured: {card_config['image_url'][:60]}... (title={card_config['title'][:30] or 'Card'}...)")
-                    else:
-                        print(f"🔍 [DM MEDIA] rule.config dm_type={repr(_cfg.get('dm_type') or _cfg.get('dmType'))}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}")
-                    
+
                     # CRITICAL FIX: For comment-based triggers, use Private Reply endpoint to bypass 24-hour window
                     # Comments don't count as DM initiation, so normal send_dm would fail
                     # Private replies use comment_id instead of user_id and bypass the restriction
@@ -6121,12 +6079,11 @@ async def execute_automation_action(
                             # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
                             message_timestamp = datetime.utcnow() + timedelta(hours=8)
                             
-                            # Now send the actual message with buttons/quick replies (and optional media/card)
+                            # Now send the actual message with buttons/quick replies (text only)
                             print(f"📤 Sending DM with buttons/quick replies...")
                             from app.utils.instagram_api import send_dm
                             from app.utils.plan_enforcement import log_dm_sent
-                            _msg = "" if card_config else message_template
-                            send_dm(sender_id, _msg, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send, media_type=media_type_to_send, card_image_url=card_config.get("image_url") if card_config else None, card_title=card_config.get("title") if card_config else None, card_subtitle=card_config.get("subtitle") if card_config else None, card_button=card_config.get("button") if card_config else None)
+                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
                             print(f"✅ DM with buttons/quick replies sent to {sender_id}")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
@@ -6148,19 +6105,6 @@ async def execute_automation_action(
                             message_timestamp = datetime.utcnow() + timedelta(hours=8)
                             send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
                             print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
-                            # Private replies don't support media/card; send as follow-up DM if configured
-                            if media_url_to_send or card_config:
-                                print(f"📎 [FOLLOW-UP] Sending media/card DM to {sender_id} (media_url_to_send={bool(media_url_to_send)}, card_config={bool(card_config)})")
-                                try:
-                                    from app.utils.instagram_api import send_dm
-                                    send_dm(sender_id, "", access_token, page_id_for_dm, media_url=media_url_to_send, media_type=media_type_to_send, card_image_url=card_config.get("image_url") if card_config else None, card_title=card_config.get("title") if card_config else None, card_subtitle=card_config.get("subtitle") if card_config else None, card_button=card_config.get("button") if card_config else None)
-                                    print(f"✅ Media/card attachment sent to {sender_id}")
-                                except Exception as media_err:
-                                    print(f"⚠️ Failed to send media attachment: {media_err}")
-                                    import traceback
-                                    traceback.print_exc()
-                            else:
-                                print(f"⏭️ [FOLLOW-UP] No media_url_to_send or card_config for rule {rule.id} — only text DM sent (check rule has dm_type=image_video and dm_media_url saved)")
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             # Note: Private replies are counted as DMs for tracking purposes
                             try:
@@ -6188,8 +6132,7 @@ async def execute_automation_action(
                         # Import send_dm and call it with quick_replies
                         from app.utils.instagram_api import send_dm
                         from app.utils.plan_enforcement import log_dm_sent
-                        _msg = "" if card_config else message_template
-                        send_dm(sender_id, _msg, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send, media_type=media_type_to_send, card_image_url=card_config.get("image_url") if card_config else None, card_title=card_config.get("title") if card_config else None, card_subtitle=card_config.get("subtitle") if card_config else None, card_button=card_config.get("button") if card_config else None)
+                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
                         print(f"✅ DM sent to {sender_id}")
                         
                         # Log DM sent (tracks in DmLog and increments global tracker)
