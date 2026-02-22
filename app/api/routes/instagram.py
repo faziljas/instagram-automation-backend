@@ -6023,6 +6023,13 @@ async def execute_automation_action(
                         # If detached, use None (not critical for DM sending)
                         page_id_for_dm = None
                     
+                    # Extract DM media attachment (image/video) from rule config if dm_type is image_video
+                    dm_media_url_val = (rule.config.get("dm_media_url") or rule.config.get("dmMediaUrl") or "").strip()
+                    dm_type_val = rule.config.get("dm_type") or rule.config.get("dmType") or ""
+                    media_url_to_send = dm_media_url_val if (dm_type_val == "image_video" and dm_media_url_val) else None
+                    if media_url_to_send:
+                        print(f"📎 DM media attachment configured: {media_url_to_send[:60]}...")
+                    
                     # CRITICAL FIX: For comment-based triggers, use Private Reply endpoint to bypass 24-hour window
                     # Comments don't count as DM initiation, so normal send_dm would fail
                     # Private replies use comment_id instead of user_id and bypass the restriction
@@ -6059,12 +6066,12 @@ async def execute_automation_action(
                             # Instagram displays times in UTC+8, so we add 8 hours to match Instagram's display
                             message_timestamp = datetime.utcnow() + timedelta(hours=8)
                             
-                            # Now send the actual message with buttons/quick replies
+                            # Now send the actual message with buttons/quick replies (and optional media)
                             print(f"📤 Sending DM with buttons/quick replies...")
                             from app.utils.instagram_api import send_dm
                             from app.utils.plan_enforcement import log_dm_sent
                             
-                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
+                            send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send)
                             print(f"✅ DM with buttons/quick replies sent to {sender_id}")
                             
                             # Log DM sent (tracks in DmLog and increments global tracker)
@@ -6086,7 +6093,14 @@ async def execute_automation_action(
                             message_timestamp = datetime.utcnow() + timedelta(hours=8)
                             send_private_reply(comment_id, message_template, access_token, page_id_for_dm)
                             print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
-                            
+                            # Private replies don't support media; send media as follow-up DM if configured
+                            if media_url_to_send:
+                                try:
+                                    from app.utils.instagram_api import send_dm
+                                    send_dm(sender_id, "", access_token, page_id_for_dm, media_url=media_url_to_send)
+                                    print(f"✅ Media attachment sent to {sender_id}")
+                                except Exception as media_err:
+                                    print(f"⚠️ Failed to send media attachment: {media_err}")
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             # Note: Private replies are counted as DMs for tracking purposes
                             try:
@@ -6115,7 +6129,7 @@ async def execute_automation_action(
                         from app.utils.instagram_api import send_dm
                         from app.utils.plan_enforcement import log_dm_sent
                         
-                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies)
+                        send_dm(sender_id, message_template, access_token, page_id_for_dm, buttons, quick_replies, media_url=media_url_to_send)
                         print(f"✅ DM sent to {sender_id}")
                         
                         # Log DM sent (tracks in DmLog and increments global tracker)

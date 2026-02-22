@@ -148,9 +148,9 @@ def send_private_reply(comment_id: str, message: str, page_access_token: str, pa
     return result
 
 
-def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None, quick_replies: list = None) -> dict:
+def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: str = None, buttons: list = None, quick_replies: list = None, media_url: str = None, media_type: str = None) -> dict:
     """
-    Send a direct message to an Instagram user with optional buttons/quick replies.
+    Send a direct message to an Instagram user with optional buttons/quick replies/media.
     
     Note: This requires the recipient to have messaged you first, or you need
     to be within the 24-hour messaging window for standard messaging.
@@ -167,6 +167,8 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
                  Maximum 3 buttons for generic template, text max 20 characters
         quick_replies: Optional list of quick reply objects with format: [{"content_type": "text", "title": "Button Text", "payload": "PAYLOAD"}]
                       Maximum 13 quick replies, title max 20 characters
+        media_url: Optional public URL for image or video attachment (must be accessible by Instagram servers)
+        media_type: "image" or "video" when media_url is set; inferred from URL if not provided
         
     Returns:
         dict: API response
@@ -177,15 +179,54 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
     # For Instagram Business Login flow, use Instagram Graph API
     # Use page_id if provided, otherwise use 'me' (works with Instagram Business Account token)
     endpoint = f"{page_id}/messages" if page_id else "me/messages"
-    url = f"https://graph.instagram.com/v21.0/{endpoint}"
+    api_url = f"https://graph.instagram.com/v21.0/{endpoint}"
     
     # Debug logging
     token_preview = page_access_token[:10] + "..." if page_access_token else "None"
     print(f"📤 Sending DM via Instagram Graph API:")
-    print(f"   URL: {url}")
+    print(f"   URL: {api_url}")
     print(f"   Using Token: {token_preview}")
     print(f"   Recipient ID: {recipient_id}")
     print(f"   Message: {message[:50]}..." if len(message) > 50 else f"   Message: {message}")
+    
+    headers = {"Authorization": f"Bearer {page_access_token}"}
+    
+    # Send media attachment first if provided (must be publicly accessible URL - not localhost)
+    if media_url and str(media_url).strip():
+        media_url_clean = str(media_url).strip()
+        if "localhost" in media_url_clean or "127.0.0.1" in media_url_clean:
+            print(f"⚠️ Skipping media attachment: URL must be publicly accessible (localhost/127.0.0.1 not reachable by Instagram)")
+        else:
+            # Infer media_type from URL if not provided (common extensions)
+            inferred_type = media_type
+            if not inferred_type:
+                lower = media_url_clean.lower()
+                if any(ext in lower for ext in (".mp4", ".mov", ".webm", ".ogg", ".avi")):
+                    inferred_type = "video"
+                else:
+                    inferred_type = "image"
+            if inferred_type not in ("image", "video"):
+                inferred_type = "image"
+            try:
+                media_payload = {
+                    "recipient": {"id": recipient_id},
+                    "message": {
+                        "attachment": {
+                            "type": inferred_type,
+                            "payload": {"url": media_url_clean}
+                        }
+                    }
+                }
+                resp = requests.post(api_url, json=media_payload, headers=headers)
+                if resp.status_code == 200:
+                    print(f"✅ Media ({inferred_type}) sent successfully")
+                    # If no text/buttons/quick_replies, we're done
+                    if not (message and str(message).strip()) and not buttons and not (quick_replies and len(quick_replies) > 0):
+                        return resp.json()
+                else:
+                    print(f"⚠️ Failed to send media: {resp.status_code} {resp.text}")
+            except Exception as media_err:
+                print(f"⚠️ Error sending media attachment: {media_err}")
     
     # Build message payload
     # Instagram quick_replies only support text buttons (content_type: "text")
@@ -335,11 +376,7 @@ def send_dm(recipient_id: str, message: str, page_access_token: str, page_id: st
         "message": message_payload
     }
     
-    headers = {
-        "Authorization": f"Bearer {page_access_token}"
-    }
-    
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(api_url, json=payload, headers=headers)
     
     if response.status_code != 200:
         error_detail = response.text

@@ -88,7 +88,10 @@ async def upload_dm_media(
     # Public URL: use API base URL from env so Instagram/backend can fetch the file
     base_url = os.getenv("API_PUBLIC_URL", "").rstrip("/")
     if not base_url:
-        base_url = os.getenv("BASE_URL", "http://localhost:8000").rstrip("/")
+        base_url = os.getenv("BASE_URL", "").rstrip("/")
+    if not base_url:
+        # Fallback: NEXT_PUBLIC_API_URL (often set on Render) points to backend
+        base_url = os.getenv("NEXT_PUBLIC_API_URL", "http://localhost:8000").rstrip("/").rstrip("/api")
     relative_path = f"uploads/dm-media/{user_id}/{unique_name}"
     url = f"{base_url}/{relative_path}"
 
