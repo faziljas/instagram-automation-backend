@@ -6026,7 +6026,8 @@ async def execute_automation_action(
                     # Extract DM media attachment from rule config (image/video, voice message, or card)
                     _cfg = rule.config if isinstance(rule.config, dict) else {}
                     dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or "").strip()
-                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(_cfg.get('dm_type') or _cfg.get('dmType'))}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}")
+                    _dt = _cfg.get("dm_type") or _cfg.get("dmType")
+                    print(f"🔍 [DM MEDIA] Rule {rule.id}: dm_type={repr(_dt)}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}, url_prefix={dm_media_url_val[:50] if dm_media_url_val else 'None'}...")
                     dm_voice_url_val = (_cfg.get("dm_voice_message_url") or _cfg.get("dmVoiceMessageUrl") or "").strip()
                     dm_card_image_val = (_cfg.get("dm_card_image_url") or _cfg.get("dmCardImageUrl") or "").strip()
                     dm_card_title_val = (_cfg.get("dm_card_title") or _cfg.get("dmCardTitle") or "").strip()
@@ -6127,12 +6128,17 @@ async def execute_automation_action(
                             print(f"✅ Private reply sent to comment {comment_id} from user {sender_id}")
                             # Private replies don't support media/card; send as follow-up DM if configured
                             if media_url_to_send or card_config:
+                                print(f"📎 [FOLLOW-UP] Sending media/card DM to {sender_id} (media_url_to_send={bool(media_url_to_send)}, card_config={bool(card_config)})")
                                 try:
                                     from app.utils.instagram_api import send_dm
                                     send_dm(sender_id, "", access_token, page_id_for_dm, media_url=media_url_to_send, media_type=media_type_to_send, card_image_url=card_config.get("image_url") if card_config else None, card_title=card_config.get("title") if card_config else None, card_subtitle=card_config.get("subtitle") if card_config else None, card_button=card_config.get("button") if card_config else None)
                                     print(f"✅ Media/card attachment sent to {sender_id}")
                                 except Exception as media_err:
                                     print(f"⚠️ Failed to send media attachment: {media_err}")
+                                    import traceback
+                                    traceback.print_exc()
+                            else:
+                                print(f"⏭️ [FOLLOW-UP] No media_url_to_send or card_config for rule {rule.id} — only text DM sent (check rule has dm_type=image_video and dm_media_url saved)")
                             # Log DM sent (tracks in DmLog and increments global tracker)
                             # Note: Private replies are counted as DMs for tracking purposes
                             try:
