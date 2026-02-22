@@ -6024,13 +6024,16 @@ async def execute_automation_action(
                         page_id_for_dm = None
                     
                     # Extract DM media attachment from rule config (image/video, voice message, or card)
-                    dm_media_url_val = (rule.config.get("dm_media_url") or rule.config.get("dmMediaUrl") or "").strip()
-                    dm_voice_url_val = (rule.config.get("dm_voice_message_url") or rule.config.get("dmVoiceMessageUrl") or "").strip()
-                    dm_card_image_val = (rule.config.get("dm_card_image_url") or rule.config.get("dmCardImageUrl") or "").strip()
-                    dm_card_title_val = (rule.config.get("dm_card_title") or rule.config.get("dmCardTitle") or "").strip()
-                    dm_card_subtitle_val = (rule.config.get("dm_card_subtitle") or rule.config.get("dmCardSubtitle") or "").strip()
-                    dm_card_button_val = rule.config.get("dm_card_button") or rule.config.get("dmCardButton") or {}
-                    dm_type_val = rule.config.get("dm_type") or rule.config.get("dmType") or ""
+                    _cfg = rule.config if isinstance(rule.config, dict) else {}
+                    dm_media_url_val = (_cfg.get("dm_media_url") or _cfg.get("dmMediaUrl") or "").strip()
+                    dm_voice_url_val = (_cfg.get("dm_voice_message_url") or _cfg.get("dmVoiceMessageUrl") or "").strip()
+                    dm_card_image_val = (_cfg.get("dm_card_image_url") or _cfg.get("dmCardImageUrl") or "").strip()
+                    dm_card_title_val = (_cfg.get("dm_card_title") or _cfg.get("dmCardTitle") or "").strip()
+                    dm_card_subtitle_val = (_cfg.get("dm_card_subtitle") or _cfg.get("dmCardSubtitle") or "").strip()
+                    dm_card_button_val = _cfg.get("dm_card_button") or _cfg.get("dmCardButton") or {}
+                    dm_type_val = (_cfg.get("dm_type") or _cfg.get("dmType") or "").strip().lower().replace(" ", "_")
+                    if dm_type_val == "image/video":
+                        dm_type_val = "image_video"
                     media_url_to_send = None
                     media_type_to_send = None
                     card_config = None
@@ -6049,8 +6052,10 @@ async def execute_automation_action(
                         }
                     if media_url_to_send:
                         print(f"📎 DM media attachment configured: {media_url_to_send[:60]}... (type={media_type_to_send or 'image/video'})")
-                    if card_config:
+                    elif card_config:
                         print(f"📎 DM card configured: {card_config['image_url'][:60]}... (title={card_config['title'][:30] or 'Card'}...)")
+                    else:
+                        print(f"🔍 [DM MEDIA] rule.config dm_type={repr(_cfg.get('dm_type') or _cfg.get('dmType'))}, dm_media_url present={bool(dm_media_url_val)}, len={len(dm_media_url_val)}")
                     
                     # CRITICAL FIX: For comment-based triggers, use Private Reply endpoint to bypass 24-hour window
                     # Comments don't count as DM initiation, so normal send_dm would fail
