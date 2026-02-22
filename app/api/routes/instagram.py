@@ -1794,9 +1794,10 @@ async def process_instagram_message(event: dict, db: Session):
                         # Continue to check other rules
                         continue
                     
-                    # Handle Followers-only "No" exit (no primary DM; next comment asks "Are you following me?" again)
+                    # Handle Followers-only "No" exit (no primary DM; next comment/story reply asks "Are you following me?" again)
                     if pre_dm_result["action"] == "send_follow_no_exit":
-                        exit_msg = pre_dm_result.get("message", "No problem! Comment again anytime when you'd like the guide. 📩")
+                        _default_exit = "No problem! Story reply again anytime when you'd like the guide. 📩" if trigger_type == "story_reply" else "No problem! Comment again anytime when you'd like the guide. 📩"
+                        exit_msg = pre_dm_result.get("message", _default_exit)
                         log_print(f"📩 [FOLLOWERS] Sending exit message (no primary DM) to {sender_id}")
                         from app.services.pre_dm_handler import update_pre_dm_state
                         update_pre_dm_state(str(sender_id), rule.id, {
@@ -4245,9 +4246,10 @@ async def execute_automation_action(
                         print(f"❌ Failed to send re-engagement follow check: {str(e)}")
                     return
 
-                # Followers-only: "No" → exit message (no primary DM); next comment will ask "Are you following me?" again
+                # Followers-only: "No" → exit message (no primary DM); next comment/story reply will ask "Are you following me?" again
                 if pre_dm_result and pre_dm_result["action"] == "send_follow_no_exit":
-                    exit_msg = pre_dm_result.get("message", "No problem! Comment again anytime when you'd like the guide. 📩")
+                    _default_exit = "No problem! Story reply again anytime when you'd like the guide. 📩" if trigger_type == "story_reply" else "No problem! Comment again anytime when you'd like the guide. 📩"
+                    exit_msg = pre_dm_result.get("message", _default_exit)
                     from app.services.pre_dm_handler import update_pre_dm_state
                     update_pre_dm_state(str(sender_id), rule_id, {"follow_recheck_sent": False, "follow_exit_sent": True, "follow_request_sent": True})
                     from app.utils.instagram_api import send_dm as send_dm_api

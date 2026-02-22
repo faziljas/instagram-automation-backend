@@ -1095,10 +1095,9 @@ async def process_pre_dm_actions(
                         "should_save_email": False,
                         "email": None
                     }
-                # Rule 5: No / negative / rubbish / gibberish → exit message, EXIT (loop continues when they comment again)
-                exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or (
-                    "No problem! Comment again anytime when you'd like the guide. 📩"
-                )
+                # Rule 5: No / negative / rubbish / gibberish → exit message, EXIT (loop continues when they comment/reply to story again)
+                _default_exit = "No problem! Story reply again anytime when you'd like the guide. 📩" if trigger_type == "story_reply" else "No problem! Comment again anytime when you'd like the guide. 📩"
+                exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or _default_exit
                 update_pre_dm_state(sender_id, rule.id, {
                     "follow_recheck_sent": False,
                     "follow_exit_sent": True,
@@ -1134,9 +1133,8 @@ async def process_pre_dm_actions(
                         "email": None,
                     }
                 # Rule 3: Any other reply to initial message (no, negative, random, rubbish, gibberish) → exit message, EXIT
-                exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or (
-                    "No problem! Comment again anytime when you'd like the guide. 📩"
-                )
+                _default_exit = "No problem! Story reply again anytime when you'd like the guide. 📩" if trigger_type == "story_reply" else "No problem! Comment again anytime when you'd like the guide. 📩"
+                exit_msg = config.get("follow_no_exit_message") or config.get("followNoExitMessage") or _default_exit
                 update_pre_dm_state(sender_id, rule.id, {
                     "follow_recheck_sent": False,
                     "follow_exit_sent": True,
