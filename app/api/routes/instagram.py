@@ -761,10 +761,9 @@ async def process_instagram_message(event: dict, db: Session):
                                 pre_dm_result_override={"action": "send_primary"}
                             ))
                     else:
-                        # User said No — always send exit message so they see "No problem! Comment again..." every time
-                        exit_msg = (rule.config or {}).get("follow_no_exit_message") or (rule.config or {}).get("followNoExitMessage") or (
-                            "No problem! Comment again anytime when you'd like the guide. 📩"
-                        )
+                        # User said No — send exit message. Pre-DM state is in-memory so may be missing on another worker; use one message that works for both.
+                        _default_exit = "No problem! Reply again anytime when you'd like the guide. 📩"
+                        exit_msg = (rule.config or {}).get("follow_no_exit_message") or (rule.config or {}).get("followNoExitMessage") or _default_exit
                         update_pre_dm_state(str(sender_id), rule.id, {
                             "follow_recheck_sent": False,
                             "follow_exit_sent": True,
