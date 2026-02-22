@@ -1119,7 +1119,15 @@ async def process_instagram_message(event: dict, db: Session):
                         from app.services.pre_dm_handler import normalize_follow_recheck_message as _norm_recheck
                         raw = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
                         follow_recheck_msg = _norm_recheck(raw)
-                        update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True})
+                        # Store how they entered so "No" shows Comment again vs Story reply again (story from message.reply_to or existing state)
+                        _story_id = (message or {}).get("reply_to", {}).get("story", {}).get("id")
+                        _recheck_trigger = "story_reply" if _story_id else "post_comment"
+                        if not _story_id:
+                            from app.services.pre_dm_handler import get_pre_dm_state
+                            _existing = get_pre_dm_state(str(sender_id), rule.id)
+                            if _existing.get("follow_recheck_trigger_type") == "story_reply":
+                                _recheck_trigger = "story_reply"  # Keep story context (e.g. quick reply payload may not include reply_to)
+                        update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True, "follow_recheck_trigger_type": _recheck_trigger})
                         from app.utils.encryption import decrypt_credentials
                         from app.utils.instagram_api import send_dm as send_dm_api
                         try:
@@ -3064,7 +3072,10 @@ async def process_postback_event(event: dict, db: Session):
                         from app.services.pre_dm_handler import update_pre_dm_state
                         raw = (rule.config or {}).get("follow_recheck_message") or (rule.config or {}).get("followRecheckMessage") or "Are you following me?"
                         follow_recheck_msg = normalize_follow_recheck_message(raw)
-                        update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True})
+                        # Store how they entered so "No" shows Comment again vs Story reply again
+                        _story_id = (event.get("message") or {}).get("reply_to", {}).get("story", {}).get("id")
+                        _recheck_trigger = "story_reply" if _story_id else "post_comment"
+                        update_pre_dm_state(str(sender_id), rule.id, {"follow_recheck_sent": True, "follow_recheck_trigger_type": _recheck_trigger})
                         from app.utils.encryption import decrypt_credentials
                         from app.utils.instagram_api import send_dm
                         try:
@@ -4214,7 +4225,7 @@ async def execute_automation_action(
                 if pre_dm_result and pre_dm_result["action"] == "send_reengagement_follow_check":
                     from app.services.pre_dm_handler import update_pre_dm_state
                     reengagement_msg = normalize_follow_recheck_message(pre_dm_result.get("message") or "Are you following me?")
-                    update_pre_dm_state(str(sender_id), rule_id, {"follow_request_sent": True, "step": "follow"})
+                    update_pre_dm_state(str(sender_id), rule_id, {"follow_request_sent": True, "step": "follow", "follow_recheck_trigger_type": trigger_type})
                     if comment_id:
                         update_pre_dm_state(str(sender_id), rule_id, {"comment_id": comment_id})
                     from app.utils.instagram_api import send_dm as send_dm_api
@@ -4701,7 +4712,7 @@ async def execute_automation_action(
                         from app.services.pre_dm_handler import update_pre_dm_state
                         from app.utils.instagram_api import send_dm as send_dm_api
                         from app.utils.encryption import decrypt_credentials
-                        state_updates = {"follow_request_sent": True, "step": "follow"}
+                        state_updates = {"follow_request_sent": True, "step": "follow", "follow_recheck_trigger_type": trigger_type}
                         if comment_id:
                             state_updates["comment_id"] = comment_id
                         update_pre_dm_state(str(sender_id), rule_id, state_updates)
@@ -4737,6 +4748,7 @@ async def execute_automation_action(
                             update_pre_dm_state(str(sender_id), rule_id, {
                                 "follow_request_sent": True,
                                 "step": "follow",
+                                "follow_recheck_trigger_type": trigger_type,
                             })
                             # Send follower question only once, with buttons (no text-only retry to avoid duplicate)
                             send_private_reply(comment_id, follow_with_prompt, access_token, page_id_for_dm, quick_replies=follow_quick_reply)
@@ -4744,7 +4756,7 @@ async def execute_automation_action(
                         else:
                             from app.services.pre_dm_handler import update_pre_dm_state
                             send_dm_api(str(sender_id), follow_with_prompt, access_token, page_id_for_dm, buttons=None, quick_replies=follow_quick_reply)
-                            update_pre_dm_state(str(sender_id), rule_id, {"follow_request_sent": True, "step": "follow"})
+                            update_pre_dm_state(str(sender_id), rule_id, {"follow_request_sent": True, "step": "follow", "follow_recheck_trigger_type": trigger_type})
                             print(f"✅ [Followers] First question sent via DM to {sender_id}")
                         try:
                             from app.utils.plan_enforcement import log_dm_sent
