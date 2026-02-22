@@ -2352,12 +2352,13 @@ async def process_instagram_message(event: dict, db: Session):
                     keywords_info = f" | Keyword: {rule.config.get('keyword')}"
             print(f"   - Rule: {rule.name or 'Unnamed'} | Trigger: {rule.trigger_type} | Active: {rule.is_active}{media_info}{keywords_info}")
         
-        # VIP USER CHECK: If user is already converted, skip ALL regular rule processing (keyword, new_message, story rules)
-        # This must be BEFORE processing keyword/new_message rules to prevent duplicate primary DMs
-        # VIP users already got primary DM from pre_dm_rules section above
-        if is_vip_user:
-            log_print(f"⭐ [VIP] User is already converted, skipping ALL regular rule processing (keyword, new_message, story) to prevent duplicate primary DMs")
+        # VIP USER CHECK: If user is already converted, skip regular rule processing to prevent duplicate primary DMs.
+        # Exception: for story replies (story_id set), allow story-specific rules to run so story automations work.
+        if is_vip_user and story_id is None:
+            log_print(f"⭐ [VIP] User is already converted, skipping ALL regular rule processing (keyword, new_message) to prevent duplicate primary DMs")
             return
+        if is_vip_user and story_id:
+            log_print(f"⭐ [VIP] User is converted; processing only story-specific rules for story_id={story_id} (no global keyword/new_message)")
         
         # Get all active rules for this account (used for primary-DM-complete check and lead capture)
         all_active_rules = db.query(AutomationRule).filter(
@@ -2541,6 +2542,9 @@ async def process_instagram_message(event: dict, db: Session):
         # If keyword rule matches, ONLY trigger that rule, skip new_message rules
         keyword_rule_matched = False
         for rule in keyword_rules:
+            # For VIP + story reply: only process rules for this story (skip global keyword rules)
+            if is_vip_user and story_id and (rule.media_id is None or str(rule.media_id or "") != story_id):
+                continue
             if rule.config:
                 # Check keywords array first (new format), fallback to single keyword (old format)
                 keywords_list = []
@@ -2550,11 +2554,17 @@ async def process_instagram_message(event: dict, db: Session):
                     # Fallback to single keyword for backward compatibility
                     keywords_list = [str(rule.config.get("keyword", "")).strip().lower()]
                 
-                if keywords_list:
+                # Story reply: keyword rule for this story triggers on ANY message (not only keyword match)
+                is_story_rule_for_this_story = bool(story_id and str(rule.media_id or "") == story_id)
+                if is_story_rule_for_this_story and message_text and message_text.strip():
+                    matched_keyword = "(story reply)"
+                else:
+                    matched_keyword = None
+                
+                if not matched_keyword and keywords_list:
                     message_text_lower = message_text.strip().lower()
                     # Check if message is EXACTLY any of the keywords (case-insensitive)
                     # Also check if message CONTAINS the keyword (for flexibility)
-                    matched_keyword = None
                     for keyword in keywords_list:
                         keyword_clean = keyword.strip().lower()
                         message_clean = message_text_lower.strip()
@@ -2576,8 +2586,11 @@ async def process_instagram_message(event: dict, db: Session):
                     
                     if matched_keyword:
                         keyword_rule_matched = True
-                        log_print(f"✅ Keyword '{matched_keyword}' matches message, triggering keyword rule!")
-                        log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
+                        if matched_keyword == "(story reply)":
+                            log_print(f"✅ [STORY DM] Story reply triggers rule (any message on story). Rule: {rule.name} (ID: {rule.id})")
+                        else:
+                            log_print(f"✅ Keyword '{matched_keyword}' matches message, triggering keyword rule!")
+                            log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
                         
                         # FIX ISSUE 1: Check if primary DM was already sent (in-memory only; sender_primary_dm_complete already handles DB exit)
                         from app.services.pre_dm_handler import get_pre_dm_state
@@ -2598,13 +2611,16 @@ async def process_instagram_message(event: dict, db: Session):
                         if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                             _processing_rules.clear()
                         # Run in background task to avoid blocking webhook handler
+                        # Use story_reply when this was triggered by any message on a story (not keyword match)
+                        trigger_for_action = "story_reply" if matched_keyword == "(story reply)" else "keyword"
                         asyncio.create_task(execute_automation_action(
                             rule,
                             sender_id,
                             account,
                             db,
-                            trigger_type="keyword",
-                            message_id=message_id
+                            trigger_type=trigger_for_action,
+                            message_id=message_id,
+                            incoming_message=message_text if trigger_for_action == "story_reply" else None
                         ))
                         break  # Only trigger first matching keyword rule
         
