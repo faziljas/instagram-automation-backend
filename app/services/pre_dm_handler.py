@@ -1422,8 +1422,29 @@ async def process_pre_dm_actions(
     }
 
 
-def reset_pre_dm_state_for_rule(rule_id: int):
-    """Reset all pre-DM states for a specific rule (useful when rule is updated)."""
-    keys_to_remove = [k for k in _pre_dm_states.keys() if k.endswith(f"_{rule_id}")]
-    for key in keys_to_remove:
-        del _pre_dm_states[key]
+def reset_pre_dm_state_for_rule(rule_id: int, new_config: Optional[Dict[str, Any]] = None):
+    """
+    Reset pre-DM state for a rule when config is updated.
+    If switching to phone-only: keep senders who were waiting for email (never sent) as "waiting for phone"
+    so the next DM (e.g. user sends email) still gets the "We need your phone, not your email" retry.
+    """
+    is_phone_only = new_config and (
+        new_config.get("simple_dm_flow_phone") or new_config.get("simpleDmFlowPhone")
+    ) and not (new_config.get("simple_dm_flow") or new_config.get("simpleDmFlow"))
+    suffix = f"_{rule_id}"
+    keys_for_rule = [k for k in _pre_dm_states.keys() if k.endswith(suffix)]
+    for key in keys_for_rule:
+        state = _pre_dm_states[key]
+        if is_phone_only and state.get("email_request_sent") and not state.get("email_received"):
+            # Was waiting for email; now phone — keep them in flow so we can reply to their next DM
+            _pre_dm_states[key] = {
+                "step": "phone",
+                "follow_request_sent": True,
+                "phone_request_sent": True,
+                "email_request_sent": False,
+                "email_received": False,
+                "phone_received": False,
+                "primary_dm_sent": False,
+            }
+        else:
+            del _pre_dm_states[key]

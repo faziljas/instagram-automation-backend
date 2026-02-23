@@ -194,13 +194,13 @@ def update_automation_rule(
     db.commit()
     db.refresh(rule)
 
-    # When rule config changes (e.g. follower → email or phone), clear in-memory pre-DM state
-    # so the next comment/DM runs the new flow from scratch (all three flows work consistently).
+    # When rule config changes (e.g. follower → email or phone), reset pre-DM state.
+    # If switching to phone: keep senders who were waiting for email so we still reply with "We need your phone, not your email".
     if rule_update.config is not None:
         try:
             from app.services.pre_dm_handler import reset_pre_dm_state_for_rule
-            reset_pre_dm_state_for_rule(rule_id)
-            print(f"✅ Cleared pre-DM state for rule {rule_id} after config update — next trigger will use new flow")
+            reset_pre_dm_state_for_rule(rule_id, new_config=rule.config)
+            print(f"✅ Reset pre-DM state for rule {rule_id} after config update — next trigger will use new flow")
         except Exception as e:
             print(f"⚠️ Failed to reset pre-DM state for rule {rule_id}: {e}")
 
