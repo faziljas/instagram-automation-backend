@@ -1,4 +1,4 @@
-# Alembic Migration Guidelines
+ # Alembic Migration Guidelines
 
 ## ⚠️ CRITICAL: Preventing Migration Failures
 
