@@ -1577,17 +1577,13 @@ async def process_instagram_message(event: dict, db: Session):
                     continue
                 
                 # CRITICAL FIX: Ensure rules only process responses matching their flow type
-                # Reel A (phone) shouldn't process email responses, Reel B (email) shouldn't process phone responses
+                # Reel A (phone) shouldn't accept email as valid; Reel B (email) shouldn't accept phone as valid
                 config = rule.config or {}
                 simple_dm_flow = config.get("simple_dm_flow", False) or config.get("simpleDmFlow", False)
                 simple_dm_flow_phone = config.get("simple_dm_flow_phone", False) or config.get("simpleDmFlowPhone", False)
                 
-                # If this is a phone flow rule, skip if message looks like an email
-                if simple_dm_flow_phone and message_text:
-                    is_email, _ = check_if_email_response(message_text)
-                    if is_email:
-                        log_print(f"⏭️ Rule {rule.id} (phone flow) skipping email response '{message_text[:50]}...' - this rule only processes phone numbers")
-                        continue
+                # Phone flow: do NOT skip when user sends email — we need to process and send "We need your phone, not your email" retry
+                # (If we skip here, we never call process_pre_dm_actions and the bot never replies.)
                 
                 # If this is an email flow rule, skip if message looks like a phone number
                 if simple_dm_flow and not simple_dm_flow_phone and message_text:
@@ -7400,8 +7396,8 @@ async def get_conversation_messages(
                 Message.instagram_account_id == account_id,
                 Message.user_id == user_id
             )
-            
-            if combined_condition:
+            # Use "is not None" — never use a SQLAlchemy clause in a boolean context (raises "Boolean value of this clause is not defined")
+            if combined_condition is not None:
                 query = query.filter(combined_condition)
             
             raw = query.order_by(Message.created_at.desc()).offset(offset).limit(limit + 1).all()
