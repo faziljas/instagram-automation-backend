@@ -2537,7 +2537,7 @@ async def process_instagram_message(event: dict, db: Session):
                     _processing_rules.clear()
                 # Run in background task to avoid blocking webhook handler
                 # Use trigger_type="story_reply" so pre-DM flow runs per Story separately from Post/Reel.
-                # Pass incoming_message so "done"/email etc. in the Story thread are handled by process_pre_dm_actions.
+                # Story replies (Default DM / Keyword DM): send ONLY UI-configured primary DM — no email/phone/followers.
                 asyncio.create_task(execute_automation_action(
                     rule, 
                     sender_id, 
@@ -2545,7 +2545,8 @@ async def process_instagram_message(event: dict, db: Session):
                     db,
                     trigger_type="story_reply",  # Isolate Story flow from post_comment (Post/Reel)
                     message_id=message_id,
-                    incoming_message=message_text
+                    incoming_message=message_text,
+                    skip_growth_steps=True  # Stories: no follow/email/phone, only primary DM per UI
                 ))
                 story_rule_matched = True
                 break  # Only trigger first matching story rule
@@ -2618,7 +2619,7 @@ async def process_instagram_message(event: dict, db: Session):
                     # Clean cache if too large
                     if len(_processing_rules) > _MAX_PROCESSING_CACHE_SIZE:
                         _processing_rules.clear()
-                    # Run in background task. For VIP: send primary DM only (skip_growth_steps).
+                    # Run in background task. For story replies: send ONLY primary DM (no follow/email/phone per UI).
                     trigger_for_action = "story_reply" if story_id else "keyword"
                     asyncio.create_task(execute_automation_action(
                         rule,
@@ -2628,7 +2629,7 @@ async def process_instagram_message(event: dict, db: Session):
                         trigger_type=trigger_for_action,
                         message_id=message_id,
                         incoming_message=message_text if story_id else None,
-                        skip_growth_steps=is_vip_user  # VIP: primary DM only
+                        skip_growth_steps=True if story_id else is_vip_user  # Story: always primary DM only; non-story: VIP only
                     ))
                     break  # Only trigger first matching keyword rule
         
@@ -3959,10 +3960,16 @@ async def execute_automation_action(
                 rule_id = rule.id
                 print(f"🔍 [EXECUTE] Stored values - user_id: {user_id}, account_id: {account_id}, username: {username}, rule_id: {rule_id}")
                 
+                # Story replies (Default DM / Keyword DM): UI has no email/phone/follow — send ONLY primary DM
+                if trigger_type == "story_reply":
+                    skip_growth_steps = True
+                    print(f"🔍 [EXECUTE] Story reply: forcing skip_growth_steps=True (no follow/email/phone for stories)")
+                
                 # Flow-type aware VIP: only skip growth steps when we have what THIS rule needs
+                # Story replies: never run follow/email/phone — always primary DM only (do not override skip_growth_steps)
                 from app.services.pre_dm_handler import get_pre_dm_state
                 rule_state = get_pre_dm_state(str(sender_id), rule_id)
-                if skip_growth_steps:
+                if skip_growth_steps and trigger_type != "story_reply":
                     cfg = rule.config or {}
                     simple_dm_flow_phone = cfg.get("simple_dm_flow_phone", False) or cfg.get("simpleDmFlowPhone", False)
                     simple_dm_flow = cfg.get("simple_dm_flow", False) or cfg.get("simpleDmFlow", False)
