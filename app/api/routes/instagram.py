@@ -1382,14 +1382,14 @@ async def process_instagram_message(event: dict, db: Session):
             pre_dm_rules = filtered_rules
             
             # CRITICAL: After primary DM is sent to this user, bot must not reply to any further *DMs* — UNLESS
-            # another rule has an active flow (waiting for phone/email). Then we must still process so we can send retry.
+            # (1) another rule has an active flow (waiting for phone/email), or (2) this is a story reply (story rules should still reply).
             from app.services.pre_dm_handler import get_pre_dm_state
             has_active_flow = any(
                 (get_pre_dm_state(sender_id, r.id).get("phone_request_sent") and not get_pre_dm_state(sender_id, r.id).get("phone_received"))
                 or (get_pre_dm_state(sender_id, r.id).get("email_request_sent") and not get_pre_dm_state(sender_id, r.id).get("email_received"))
                 for r in pre_dm_rules
             )
-            if not has_active_flow:
+            if not has_active_flow and not story_id:
                 for _r in pre_dm_rules:
                     _state = get_pre_dm_state(sender_id, _r.id)
                     if _state.get("primary_dm_sent"):
@@ -1532,6 +1532,9 @@ async def process_instagram_message(event: dict, db: Session):
                 # If this is a Story reply, only process rules that match this Story.
                 # Post/Reel rules (different media_id) would return "ignore" and block the Story flow.
                 if story_id is not None and str(rule.media_id or "") != story_id:
+                    continue
+                # Story rules: handle only in main handler (keyword/post_comment for story) so they get skip_growth_steps and can reply even if primary_dm_sent once before.
+                if story_id is not None and str(rule.media_id or "") == story_id:
                     continue
 
                 _rule_cfg = rule.config or {}
