@@ -1381,15 +1381,20 @@ async def process_instagram_message(event: dict, db: Session):
             
             pre_dm_rules = filtered_rules
             
-            # CRITICAL: After primary DM is sent to this user, bot must not reply to any further *DMs* in this thread.
-            # This applies only to incoming messaging events (DMs). Comments are handled by process_comment_event
-            # and will still trigger primary DM when user comments again (email already collected / VIP).
+            # CRITICAL: After primary DM is sent to this user, bot must not reply to any further *DMs* — UNLESS
+            # another rule has an active flow (waiting for phone/email). Then we must still process so we can send retry.
             from app.services.pre_dm_handler import get_pre_dm_state
-            for _r in pre_dm_rules:
-                _state = get_pre_dm_state(sender_id, _r.id)
-                if _state.get("primary_dm_sent"):
-                    log_print(f"🚫 [FIX] Primary DM already sent to {sender_id} (rule {_r.id}). Skipping all automation — bot will not reply.")
-                    return
+            has_active_flow = any(
+                (get_pre_dm_state(sender_id, r.id).get("phone_request_sent") and not get_pre_dm_state(sender_id, r.id).get("phone_received"))
+                or (get_pre_dm_state(sender_id, r.id).get("email_request_sent") and not get_pre_dm_state(sender_id, r.id).get("email_received"))
+                for r in pre_dm_rules
+            )
+            if not has_active_flow:
+                for _r in pre_dm_rules:
+                    _state = get_pre_dm_state(sender_id, _r.id)
+                    if _state.get("primary_dm_sent"):
+                        log_print(f"🚫 [FIX] Primary DM already sent to {sender_id} (rule {_r.id}). Skipping all automation — bot will not reply.")
+                        return
             
             # CRITICAL FIX: Only process rules that have an active state for this sender
             # This prevents rules from different reels/posts from interfering with each other
