@@ -2506,6 +2506,30 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"✅ [LEAD CAPTURE] Lead capture processed, skipping further rule processing")
             return
         
+        # When user sends a story DM: reset/stop any ongoing email or phone flow (comment/reel) for this sender.
+        # Next time they comment on the reel/post, the flow will start fresh (follow + email/phone ask again).
+        if story_id and all_active_rules:
+            from app.services.pre_dm_handler import get_pre_dm_state, update_pre_dm_state
+            for rule in all_active_rules:
+                if str(rule.media_id or "") == str(story_id):
+                    continue  # story rule itself — don't reset
+                state = get_pre_dm_state(sender_id, rule.id)
+                in_email_flow = state.get("email_request_sent") and not state.get("email_received")
+                in_phone_flow = state.get("phone_request_sent") and not state.get("phone_received")
+                if in_email_flow or in_phone_flow:
+                    update_pre_dm_state(sender_id, rule.id, {
+                        "step": "initial",
+                        "follow_request_sent": False,
+                        "follow_confirmed": False,
+                        "email_request_sent": False,
+                        "email_received": False,
+                        "email": None,
+                        "phone_request_sent": False,
+                        "phone_received": False,
+                        "phone": None,
+                    })
+                    log_print(f"🔄 [STORY DM] Reset ongoing {'email' if in_email_flow else 'phone'} flow for rule {rule.id} ({rule.name}) — next comment will start fresh")
+        
         # For story DMs, first check if any story-specific post_comment rule should trigger (any comment/DM on that story)
         story_rule_matched = False
         if story_id and story_post_comment_rules:
