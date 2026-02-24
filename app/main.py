@@ -79,6 +79,24 @@ async def startup_event():
     import sys
     from sqlalchemy import text
 
+    # Run free_tier schema first so column exists before any User query (avoids UndefinedColumn on first request)
+    try:
+        print("🔄 Ensuring users.free_tier_used and free_tier_usage table...", file=sys.stderr)
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS free_tier_used BOOLEAN NOT NULL DEFAULT false"
+            ))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS free_tier_usage (
+                    email_normalized VARCHAR(255) PRIMARY KEY,
+                    used_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+        print("✅ users.free_tier_used and free_tier_usage verified", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ free_tier schema check: {e}", file=sys.stderr)
+
     try:
         print("🔄 Creating database tables...", file=sys.stderr)
         Base.metadata.create_all(bind=engine)
@@ -151,33 +169,6 @@ async def startup_event():
             print("✅ users notify_product_updates, notify_billing columns verified", file=sys.stderr)
     except Exception as e:
         print(f"⚠️ Notification preference columns check warning: {str(e)}", file=sys.stderr)
-
-    # Ensure free_tier_used column exists (backup if free-tier migration didn't run)
-    try:
-        print("🔄 Checking users.free_tier_used column...", file=sys.stderr)
-        with engine.connect() as conn:
-            conn.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS free_tier_used BOOLEAN NOT NULL DEFAULT false"
-            ))
-            conn.commit()
-            print("✅ users.free_tier_used column verified", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ free_tier_used column check warning: {str(e)}", file=sys.stderr)
-
-    # Ensure free_tier_usage table exists (backup if free-tier migration didn't run)
-    try:
-        print("🔄 Checking free_tier_usage table...", file=sys.stderr)
-        with engine.connect() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS free_tier_usage (
-                    email_normalized VARCHAR(255) PRIMARY KEY,
-                    used_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-                )
-            """))
-            conn.commit()
-            print("✅ free_tier_usage table verified", file=sys.stderr)
-    except Exception as e:
-        print(f"⚠️ free_tier_usage table check warning: {str(e)}", file=sys.stderr)
 
     # Ensure invoices.amount is NUMERIC so 11.81 is stored correctly (not rounded to 12) so 11.81 is stored correctly (not rounded to 12)
     try:
