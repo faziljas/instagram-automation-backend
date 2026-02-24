@@ -12,6 +12,8 @@ class User(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     profile_picture_url = Column(String, nullable=True)  # Profile picture URL (base64 data URL or external URL)
+    notify_product_updates = Column(Boolean, default=True, nullable=False)  # Email for product/news
+    notify_billing = Column(Boolean, default=True, nullable=False)  # Email for billing/invoices
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     plan_tier = Column(String, default="free", nullable=False)

@@ -70,6 +70,10 @@ def get_current_user(
             detail="User not found"
         )
     
+    # Notification preferences (columns ensured by startup migration; safe fallback for legacy DBs)
+    notify_product_updates = getattr(user, "notify_product_updates", True)
+    notify_billing = getattr(user, "notify_billing", True)
+
     return {
         "id": user.id,
         "email": user.email,
@@ -79,7 +83,9 @@ def get_current_user(
         "plan_tier": user.plan_tier,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
-        "created_at": user.created_at.isoformat() if user.created_at else None
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "notify_product_updates": notify_product_updates,
+        "notify_billing": notify_billing,
     }
 
 
@@ -116,10 +122,19 @@ def update_user_profile(
                 detail="Email already in use"
             )
         user.email = user_data.email.lower()
-    
+
+    # Notification preferences (only update if columns exist and payload has them)
+    if hasattr(User, "notify_product_updates") and user_data.notify_product_updates is not None:
+        user.notify_product_updates = user_data.notify_product_updates
+    if hasattr(User, "notify_billing") and user_data.notify_billing is not None:
+        user.notify_billing = user_data.notify_billing
+
     db.commit()
     db.refresh(user)
-    
+
+    notify_product_updates = getattr(user, "notify_product_updates", True)
+    notify_billing = getattr(user, "notify_billing", True)
+
     return {
         "id": user.id,
         "email": user.email,
@@ -129,7 +144,9 @@ def update_user_profile(
         "plan_tier": user.plan_tier,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
-        "created_at": user.created_at.isoformat() if user.created_at else None
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "notify_product_updates": notify_product_updates,
+        "notify_billing": notify_billing,
     }
 
 

@@ -28,7 +28,9 @@ class UserResponse(BaseModel):
     is_active: bool
     is_verified: bool
     created_at: Optional[str] = None
-    
+    notify_product_updates: Optional[bool] = None  # Email preferences; None = use default/legacy
+    notify_billing: Optional[bool] = None
+
     class Config:
         from_attributes = True
 
@@ -38,6 +40,8 @@ class UserUpdate(BaseModel):
     last_name: Optional[str] = None
     email: Optional[EmailStr] = None
     profile_picture_url: Optional[str] = None
+    notify_product_updates: Optional[bool] = None
+    notify_billing: Optional[bool] = None
 
 
 class PasswordChange(BaseModel):
