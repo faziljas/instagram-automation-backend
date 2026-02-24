@@ -328,10 +328,9 @@ def get_subscription(
     )
     
     try:
-        cached = _get_subscription_cached(user_id)
-        if cached is not None:
-            return cached
-
+        # Do not use in-memory cache for subscription: it is process-local, so after
+        # cancellation a refresh can hit another instance that still has stale "active"
+        # data and the cancellation appears to revert. Always read from DB.
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             # Be defensive for brand‑new auth users who might not
@@ -475,7 +474,6 @@ def get_subscription(
                 dms_sent_this_month=dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
             )
         )
-        _set_subscription_cached(user_id, resp)
         return resp
     except HTTPException:
         # Re-raise HTTP exceptions (like 401, 404) as-is so frontend can handle them properly
