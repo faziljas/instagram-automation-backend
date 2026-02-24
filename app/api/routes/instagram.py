@@ -2601,9 +2601,15 @@ async def process_instagram_message(event: dict, db: Session):
                     # Fallback to single keyword for backward compatibility
                     keywords_list = [str(rule.config.get("keyword", "")).strip().lower()]
                 
-                # Story trigger = same as comment: message must match keyword (no "any message" trigger)
-                matched_keyword = None
-                if keywords_list:
+                # Default DM for story: no keywords configured → match any story reply for this story
+                is_story_rule_for_this_story = story_id and str(rule.media_id or "") == story_id
+                if is_story_rule_for_this_story and not keywords_list:
+                    matched_keyword = "(default dm)"
+                else:
+                    matched_keyword = None
+                
+                # Story trigger = same as comment: message must match keyword (unless Default DM above)
+                if keywords_list and matched_keyword is None:
                     message_text_lower = message_text.strip().lower()
                     # Check if message is EXACTLY any of the keywords (case-insensitive)
                     # Also check if message CONTAINS the keyword (for flexibility)
@@ -2630,7 +2636,10 @@ async def process_instagram_message(event: dict, db: Session):
                 if matched_keyword:
                     keyword_rule_matched = True
                     if story_id:
-                        log_print(f"✅ [STORY DM] Keyword '{matched_keyword}' matches story reply. Rule: {rule.name} (ID: {rule.id})")
+                        if matched_keyword == "(default dm)":
+                            log_print(f"✅ [STORY DM] Default DM (no keywords) matches story reply. Rule: {rule.name} (ID: {rule.id})")
+                        else:
+                            log_print(f"✅ [STORY DM] Keyword '{matched_keyword}' matches story reply. Rule: {rule.name} (ID: {rule.id})")
                     else:
                         log_print(f"✅ Keyword '{matched_keyword}' matches message, triggering keyword rule!")
                         log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
