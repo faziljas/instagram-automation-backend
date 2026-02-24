@@ -489,6 +489,19 @@ def get_subscription(
         return default_response
 
 
+async def _background_sync_invoices(user_id: int) -> None:
+    """Run Dodo invoice sync in a separate DB session so list_invoices can return immediately."""
+    from app.db.session import SessionLocal
+    from app.api.routes.dodo import _sync_invoices_from_dodo_api
+    db = SessionLocal()
+    try:
+        await _sync_invoices_from_dodo_api(db, user_id, raise_on_error=False)
+    except Exception as e:
+        print(f"[Invoices] Background sync error: {str(e)}")
+    finally:
+        db.close()
+
+
 @router.get("/invoices")
 async def list_invoices(
     db: Session = Depends(get_db),
@@ -497,28 +510,20 @@ async def list_invoices(
     """
     List invoices for the current user (most recent first).
 
-    Invoices come from:
-    1. Dodo `payment.succeeded` / `payment.failed` webhooks (when user pays).
-    2. Automatic fetch from Dodo API on every request (ensures latest invoices
-       appear without manual sync, including if webhooks were missed).
+    Returns DB invoices immediately so the page loads fast. Sync from Dodo API
+    runs in the background; next request or refresh will see updated data.
     """
-    # Always sync invoices from Dodo API so they appear automatically after payment
-    try:
-        from app.api.routes.dodo import _sync_invoices_from_dodo_api
-        sync_result = await _sync_invoices_from_dodo_api(db, user_id, raise_on_error=False)
-        if sync_result:
-            print(f"[Invoices] Synced {sync_result.get('synced', 0)} invoices for user {user_id}")
-    except Exception as e:
-        print(f"[Invoices] Error syncing from Dodo (non-critical): {str(e)}")
-        import traceback
-        traceback.print_exc()
-
+    # Return invoices from DB immediately (no wait for Dodo API — avoids ~15s lag on refresh)
     invoices = (
         db.query(Invoice)
         .filter(Invoice.user_id == user_id)
         .order_by(Invoice.paid_at.desc().nullslast(), Invoice.created_at.desc())
         .all()
     )
+
+    # Sync from Dodo in background (fire-and-forget; use new session so request session is not held)
+    import asyncio
+    asyncio.create_task(_background_sync_invoices(user_id))
 
     return [
         {
