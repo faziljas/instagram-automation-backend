@@ -27,10 +27,17 @@ class UserResponse(BaseModel):
     plan_tier: str
     is_active: bool
     is_verified: bool
+    notify_product_updates: Optional[bool] = True
+    notify_billing: Optional[bool] = True
     created_at: Optional[str] = None
     
     class Config:
         from_attributes = True
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    notify_product_updates: Optional[bool] = None
+    notify_billing: Optional[bool] = None
 
 
 class UserUpdate(BaseModel):
