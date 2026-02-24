@@ -114,7 +114,7 @@ async def dodo_webhook(request: Request, db: Session = Depends(get_db)):
     customer_email = customer.get("email")
 
     if event_type in ("subscription.active", "subscription.updated"):
-        _handle_subscription_active(db, obj, user_id, customer_email, sub_id, customer_id)
+        _handle_subscription_active(db, obj, user_id, customer_email, sub_id, customer_id, meta)
     elif event_type == "subscription.cancelled":
         _handle_subscription_cancelled(db, obj, sub_id)
     elif event_type in ("payment.succeeded", "payment.failed"):
@@ -130,10 +130,15 @@ def _handle_subscription_active(
     customer_email: str | None,
     sub_id: str | None,
     customer_id: str | None,
+    meta: dict | None = None,
 ) -> None:
     """Handle subscription.active – user has an active Pro subscription."""
     if not sub_id:
         return
+
+    meta = meta or {}
+    plan = (meta.get("plan") or "").lower()
+    billing_interval = "yearly" if plan == "yearly" else "monthly"
 
     user = None
 
@@ -164,12 +169,14 @@ def _handle_subscription_active(
         subscription.dodo_subscription_id = str(sub_id)
         subscription.dodo_customer_id = customer_id
         subscription.status = status_val
+        subscription.billing_interval = billing_interval
     else:
         subscription = Subscription(
             user_id=user_id_int,
             dodo_subscription_id=str(sub_id),
             dodo_customer_id=customer_id,
             status=status_val,
+            billing_interval=billing_interval,
         )
         db.add(subscription)
 

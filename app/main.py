@@ -155,6 +155,18 @@ async def startup_event():
         print(f"⚠️ profile_picture_url column check warning: {str(e)}", file=sys.stderr)
         # Don't fail startup if this doesn't work - migration should handle it
 
+    # Ensure subscriptions.billing_interval exists (monthly vs yearly for cancellation end date)
+    try:
+        print("🔄 Checking subscriptions.billing_interval column...", file=sys.stderr)
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS billing_interval VARCHAR(20) DEFAULT 'monthly'"
+            ))
+            conn.commit()
+            print("✅ subscriptions.billing_interval verified", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ billing_interval column check warning: {str(e)}", file=sys.stderr)
+
     # Ensure notification preference columns exist (backup if Alembic 013/015 didn't run, e.g. on Render)
     try:
         print("🔄 Checking users notification preference columns...", file=sys.stderr)

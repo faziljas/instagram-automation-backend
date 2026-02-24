@@ -197,6 +197,7 @@ async def create_checkout_session(
             "return_url": f"{FRONTEND_URL}/dashboard/subscription",
             "metadata": {
                 "user_id": str(user_id),
+                "plan": requested_plan,  # "monthly" or "yearly" for cancellation end date
             },
         }
 

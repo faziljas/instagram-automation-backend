@@ -431,14 +431,16 @@ def get_subscription(
         if subscription and subscription.billing_cycle_start_date:
             try:
                 from datetime import datetime, timedelta
+                from app.utils.plan_enforcement import get_subscription_cycle_days
                 cycle_start = subscription.billing_cycle_start_date
                 now = datetime.utcnow()
+                cycle_days = get_subscription_cycle_days(subscription)
                 days_since_start = (now - cycle_start).days
                 
-                # Calculate current cycle end (30 days from cycle start)
-                cycles_passed = days_since_start // 30
-                current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
-                current_cycle_end = current_cycle_start + timedelta(days=30)
+                # Calculate current cycle end (30 days for monthly, 365 for yearly)
+                cycles_passed = days_since_start // cycle_days
+                current_cycle_start = cycle_start + timedelta(days=cycles_passed * cycle_days)
+                current_cycle_end = current_cycle_start + timedelta(days=cycle_days)
                 
                 # If still within paid Pro cycle period
                 if now < current_cycle_end:
@@ -558,18 +560,18 @@ def cancel_subscription(
     # Plan will automatically downgrade after billing cycle ends (handled by webhook or cycle logic)
     # DON'T clear billing_cycle_start_date - needed to calculate when Pro access ends
     
-    # Calculate when Pro access ends (30 days from billing cycle start)
+    # Calculate when Pro access ends (30 days for monthly, 365 for yearly from cycle start)
     cancellation_end_date = None
     if subscription.billing_cycle_start_date:
         from datetime import timedelta
+        from app.utils.plan_enforcement import get_subscription_cycle_days
         cycle_start = subscription.billing_cycle_start_date
         now = datetime.utcnow()
+        cycle_days = get_subscription_cycle_days(subscription)
         days_since_start = (now - cycle_start).days
-        
-        # Calculate current cycle end (30 days from cycle start)
-        cycles_passed = days_since_start // 30
-        current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
-        cancellation_end_date = current_cycle_start + timedelta(days=30)
+        cycles_passed = days_since_start // cycle_days
+        current_cycle_start = cycle_start + timedelta(days=cycles_passed * cycle_days)
+        cancellation_end_date = current_cycle_start + timedelta(days=cycle_days)
     
     print(f"✅ User {user_id} cancelled subscription - keeping Pro access until {cancellation_end_date}")
     

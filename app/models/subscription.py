@@ -14,6 +14,7 @@ class Subscription(Base):
     dodo_subscription_id = Column(String, unique=True, nullable=True)
     dodo_customer_id = Column(String, unique=False, nullable=True)
     status = Column(String, nullable=False, default="inactive")
-    billing_cycle_start_date = Column(DateTime, nullable=True)  # For Pro users: 30-day billing cycle start
+    billing_cycle_start_date = Column(DateTime, nullable=True)  # For Pro users: cycle start from upgrade
+    billing_interval = Column(String, nullable=True, default="monthly")  # "monthly" (30d) or "yearly" (365d)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

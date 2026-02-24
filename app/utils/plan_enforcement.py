@@ -16,6 +16,13 @@ from app.services.instagram_usage_tracker import (
 )
 
 
+def get_subscription_cycle_days(subscription) -> int:
+    """Return billing cycle length in days: 365 for yearly, 30 for monthly (default)."""
+    if subscription and getattr(subscription, "billing_interval", None) == "yearly":
+        return 365
+    return 30
+
+
 def get_billing_cycle_start(user_id: int, db: Session) -> datetime:
     """
     Get the billing cycle start date for Pro/Enterprise users.
@@ -37,23 +44,24 @@ def get_billing_cycle_start(user_id: int, db: Session) -> datetime:
     if subscription and subscription.billing_cycle_start_date:
         cycle_start = subscription.billing_cycle_start_date
         now = datetime.utcnow()
+        cycle_days = get_subscription_cycle_days(subscription)
         
         # Calculate how many days since the original Pro cycle started
         days_since_start = (now - cycle_start).days
         
-        # For Pro/Enterprise users, use Pro cycle logic (30-day cycles)
+        # For Pro/Enterprise users, use Pro cycle logic (30-day or 365-day cycles)
         if user.plan_tier in ["pro", "enterprise"]:
-            # Find the most recent cycle start date (every 30 days)
-            cycles_passed = days_since_start // 30
-            current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
+            # Find the most recent cycle start date
+            cycles_passed = days_since_start // cycle_days
+            current_cycle_start = cycle_start + timedelta(days=cycles_passed * cycle_days)
             return current_cycle_start
         
         # For Free/Basic users: Check if still within their current Pro cycle period
         # User paid for Pro subscription, so they should get Pro benefits until current cycle ends
         # Calculate which cycle they're in and when it ends
-        cycles_passed = days_since_start // 30
-        current_cycle_start = cycle_start + timedelta(days=cycles_passed * 30)
-        current_cycle_end = current_cycle_start + timedelta(days=30)
+        cycles_passed = days_since_start // cycle_days
+        current_cycle_start = cycle_start + timedelta(days=cycles_passed * cycle_days)
+        current_cycle_end = current_cycle_start + timedelta(days=cycle_days)
         
         # If still within the current Pro cycle (before cycle end), use Pro cycle logic
         if now < current_cycle_end:
