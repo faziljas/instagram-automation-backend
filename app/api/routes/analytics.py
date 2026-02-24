@@ -55,13 +55,25 @@ def _set_cached_response(cache_key: str, data: dict):
 
 
 def invalidate_analytics_cache_for_user(user_id: int):
-    """Remove cached analytics for a user so dashboard shows fresh data after new events."""
+    """Remove cached analytics for a user so dashboard and automations show fresh data.
+
+    This invalidates:
+    - Dashboard summary caches (get_analytics_dashboard)
+    - Media analytics caches (get_media_analytics), which use a different key format
+    """
+    # Invalidate dashboard summary caches that use _get_cache_key
     common_days = (7, 14, 30, 90)
     for days in common_days:
         for rule_id in (None,):
             for ig_id in (None,):
                 cache_key = _get_cache_key(user_id, days, rule_id, ig_id)
                 _analytics_cache.pop(cache_key, None)
+
+    # Invalidate media analytics caches (keys look like "media_analytics_{user_id}_{days}_{instagram_account_id}")
+    media_prefix = f"media_analytics_{user_id}_"
+    keys_to_delete = [k for k in _analytics_cache.keys() if k.startswith(media_prefix)]
+    for k in keys_to_delete:
+        _analytics_cache.pop(k, None)
 
 
 def _is_instagram_profile_url(url: str) -> bool:

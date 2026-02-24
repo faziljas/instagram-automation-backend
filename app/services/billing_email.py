@@ -8,7 +8,8 @@ from datetime import datetime
 from typing import Optional
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
-FROM_EMAIL = os.getenv("BILLING_FROM_EMAIL", "LogicDM <billing@logicdm.app>")
+# Use same sender as Supabase auth (signup/forgot password); override with BILLING_FROM_EMAIL if you add billing@ later
+FROM_EMAIL = os.getenv("BILLING_FROM_EMAIL", "LogicDM <admin@logicdm.app>")
 APP_NAME = os.getenv("APP_NAME", "LogicDM")
 
 
