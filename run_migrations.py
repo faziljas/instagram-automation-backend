@@ -27,6 +27,7 @@ MIGRATIONS = [
     "update_high_volume_limits_migration",
     "update_pro_plan_limits_migration",
     "add_profile_picture",
+    "add_notification_preferences_migration",
 ]
 
 
