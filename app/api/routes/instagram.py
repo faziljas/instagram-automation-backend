@@ -3394,6 +3394,16 @@ async def process_comment_event(change: dict, igsid: str, db: Session):
             
             # Check if auto-reply to comments is enabled for this rule
             is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
+            # Backend safety: only treat as lead-capture if there is an email/phone flow configured.
+            # This keeps "Simply reply" rules (which don't configure ask_for_email/simple_dm_flow) out of lead-capture logic
+            # even if the UI accidentally sends is_lead_capture=true.
+            cfg = rule.config or {}
+            if is_lead_capture and not (
+                cfg.get("ask_for_email") or cfg.get("askForEmail") or
+                cfg.get("simple_dm_flow") or cfg.get("simpleDmFlow") or
+                cfg.get("simple_dm_flow_phone") or cfg.get("simpleDmFlowPhone")
+            ):
+                is_lead_capture = False
             
             if is_lead_capture:
                 # Check both snake_case and camelCase formats for backward compatibility
@@ -4057,6 +4067,14 @@ async def execute_automation_action(
                 if rule_state.get("primary_dm_sent") and not should_send_email_success_first and not vip_comment_again:
                     # Primary DM was already sent - check if lead capture flow is also completed
                     is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
+                    # Backend safety: only treat as lead-capture if an email/phone flow is configured.
+                    cfg = rule.config or {}
+                    if is_lead_capture and not (
+                        cfg.get("ask_for_email") or cfg.get("askForEmail") or
+                        cfg.get("simple_dm_flow") or cfg.get("simpleDmFlow") or
+                        cfg.get("simple_dm_flow_phone") or cfg.get("simpleDmFlowPhone")
+                    ):
+                        is_lead_capture = False
                     # FIX ISSUE 1: Check for simple reply rules (not lead capture)
                     # Helper to get config with camelCase/snake_case fallback
                     def get_cfg(key_snake, key_camel=None, default=None):
@@ -4634,6 +4652,14 @@ async def execute_automation_action(
                                     # Send public comment reply IMMEDIATELY after follow-up message (not waiting for email)
                                     if comment_id:
                                         is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
+                                        # Backend safety: only treat as lead-capture if an email/phone flow is configured.
+                                        cfg = rule.config or {}
+                                        if is_lead_capture and not (
+                                            cfg.get("ask_for_email") or cfg.get("askForEmail") or
+                                            cfg.get("simple_dm_flow") or cfg.get("simpleDmFlow") or
+                                            cfg.get("simple_dm_flow_phone") or cfg.get("simpleDmFlowPhone")
+                                        ):
+                                            is_lead_capture = False
                                         
                                         # Determine which comment reply fields to use based on rule type
                                         # Helper to get config with camelCase/snake_case fallback
@@ -5641,6 +5667,14 @@ async def execute_automation_action(
             # Check if this is a lead capture flow
             # Support both camelCase (from frontend) and snake_case (legacy) formats
             is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
+            # Backend safety: only treat as lead-capture if an email/phone flow is configured.
+            cfg = rule.config or {}
+            if is_lead_capture and not (
+                cfg.get("ask_for_email") or cfg.get("askForEmail") or
+                cfg.get("simple_dm_flow") or cfg.get("simpleDmFlow") or
+                cfg.get("simple_dm_flow_phone") or cfg.get("simpleDmFlowPhone")
+            ):
+                is_lead_capture = False
             
             # Process lead capture flow if:
             # 1. It's a lead capture rule AND we're not coming from pre-DM with send_primary, OR
@@ -6017,6 +6051,14 @@ async def execute_automation_action(
                 # Check for comment reply settings - support both old format and new simple/lead format
                 # Support both camelCase (from frontend) and snake_case (legacy) formats
                 is_lead_capture = rule.config.get("is_lead_capture", False) or rule.config.get("isLeadCapture", False)
+                # Backend safety: only treat as lead-capture if an email/phone flow is configured.
+                cfg = rule.config or {}
+                if is_lead_capture and not (
+                    cfg.get("ask_for_email") or cfg.get("askForEmail") or
+                    cfg.get("simple_dm_flow") or cfg.get("simpleDmFlow") or
+                    cfg.get("simple_dm_flow_phone") or cfg.get("simpleDmFlowPhone")
+                ):
+                    is_lead_capture = False
                 
                 # Determine which comment reply fields to use based on rule type
                 # Helper to get config with camelCase/snake_case fallback for backward compatibility
