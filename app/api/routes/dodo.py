@@ -24,14 +24,24 @@ DODO_API_KEY = (
     or os.getenv("DODO_API_KEY", "")
 ).strip()
 DODO_WEBHOOK_SECRET = os.getenv("DODO_WEBHOOK_SECRET", "")
-DODO_PRODUCT_OR_PLAN_ID = os.getenv("DODO_PRODUCT_OR_PLAN_ID", "")  # Pro plan in test mode
-DODO_BASE_URL = os.getenv("DODO_BASE_URL", "").rstrip("/")  # Test base URL, e.g. https://test.dodopayments.com
+
+# Separate product IDs for monthly and yearly billing cycles.
+# These should be configured for both test and live environments.
+DODO_MONTHLY_PRODUCT_ID = os.getenv("DODO_MONTHLY_PRODUCT_ID", "")
+DODO_YEARLY_PRODUCT_ID = os.getenv("DODO_YEARLY_PRODUCT_ID", "")
+
+# Base URL is environment-specific (test vs live).
+DODO_BASE_URL = os.getenv("DODO_BASE_URL", "").rstrip("/")  # e.g. https://test.dodopayments.com
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
 def _dodo_configured() -> bool:
-    # Dodo only requires API key, base URL, and product/plan ID for checkout.
-    return bool(DODO_API_KEY and DODO_BASE_URL and DODO_PRODUCT_OR_PLAN_ID)
+    # Dodo requires API key, base URL, and at least one product ID for checkout.
+    return bool(
+        DODO_API_KEY
+        and DODO_BASE_URL
+        and (DODO_MONTHLY_PRODUCT_ID or DODO_YEARLY_PRODUCT_ID)
+    )
 
 
 def _dodo_missing_config_message() -> str:
@@ -41,13 +51,34 @@ def _dodo_missing_config_message() -> str:
         missing_parts.append("API_KEY")
     if not DODO_BASE_URL:
         missing_parts.append("BASE_URL")
-    if not DODO_PRODUCT_OR_PLAN_ID:
-        missing_parts.append("PRODUCT_ID")
+    if not DODO_MONTHLY_PRODUCT_ID:
+        missing_parts.append("MONTHLY_PRODUCT_ID")
+    if not DODO_YEARLY_PRODUCT_ID:
+        missing_parts.append("YEARLY_PRODUCT_ID")
     missing = " ".join(missing_parts) if missing_parts else "UNKNOWN"
     return (
         "Payment system not configured. Missing: "
         f"{missing}"
     )
+
+
+def _dodo_product_id_for_plan(plan: str) -> str:
+    """Return the configured Dodo product ID for the given billing cycle."""
+    normalized = (plan or "").lower()
+    if normalized == "monthly":
+        return DODO_MONTHLY_PRODUCT_ID
+    # Default/fallback is yearly
+    return DODO_YEARLY_PRODUCT_ID
+
+
+def _dodo_plan_missing_message(plan: str) -> str:
+    """More specific message when a given plan is missing its product ID env var."""
+    normalized = (plan or "").lower()
+    if normalized == "monthly":
+        env_name = "DODO_MONTHLY_PRODUCT_ID"
+    else:
+        env_name = "DODO_YEARLY_PRODUCT_ID"
+    return f"Payment system not configured for {normalized or 'yearly'} plan. Missing: {env_name}"
 
 
 @router.get("/check-config")
@@ -58,13 +89,15 @@ async def check_dodo_config():
         "api_key_length": len(DODO_API_KEY) if DODO_API_KEY else 0,
         "api_key_prefix": DODO_API_KEY[:15] if DODO_API_KEY else "NOT_SET",
         "base_url": DODO_BASE_URL or "NOT_SET",
-        "product_id": DODO_PRODUCT_OR_PLAN_ID or "NOT_SET",
+        "monthly_product_id": DODO_MONTHLY_PRODUCT_ID or "NOT_SET",
+        "yearly_product_id": DODO_YEARLY_PRODUCT_ID or "NOT_SET",
         "webhook_secret_exists": bool(DODO_WEBHOOK_SECRET),
         "all_env_vars": {
             "DODO_PAYMENTS_API_KEY": bool(os.getenv("DODO_PAYMENTS_API_KEY")),
             "DODO_API_KEY": bool(os.getenv("DODO_API_KEY")),
             "DODO_BASE_URL": bool(os.getenv("DODO_BASE_URL")),
-            "DODO_PRODUCT_OR_PLAN_ID": bool(os.getenv("DODO_PRODUCT_OR_PLAN_ID")),
+            "DODO_MONTHLY_PRODUCT_ID": bool(os.getenv("DODO_MONTHLY_PRODUCT_ID")),
+            "DODO_YEARLY_PRODUCT_ID": bool(os.getenv("DODO_YEARLY_PRODUCT_ID")),
         },
     }
 
@@ -85,7 +118,8 @@ async def create_checkout_session(
         f"api_key_loaded={bool(DODO_API_KEY)}, "
         f"key_prefix={DODO_API_KEY[:5] if DODO_API_KEY else 'None'}, "
         f"base_url={DODO_BASE_URL}, "
-        f"product_set={bool(DODO_PRODUCT_OR_PLAN_ID)}"
+        f"monthly_product_set={bool(DODO_MONTHLY_PRODUCT_ID)}, "
+        f"yearly_product_set={bool(DODO_YEARLY_PRODUCT_ID)}"
     )
 
     if not _dodo_configured():
@@ -115,8 +149,26 @@ async def create_checkout_session(
 
     request_email = body.get("email")
     request_name = body.get("name")
+    requested_plan = (body.get("plan") or "yearly").lower()
+
+    if requested_plan not in ("monthly", "yearly"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid plan. Must be 'monthly' or 'yearly'.",
+        )
+
+    product_id = _dodo_product_id_for_plan(requested_plan)
+    if not product_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_dodo_plan_missing_message(requested_plan),
+        )
+
     effective_email = request_email or user.email
-    print(f"[Dodo] Creating checkout for user: {effective_email}")
+    print(
+        f"[Dodo] Creating checkout for user: {effective_email}, "
+        f"plan={requested_plan}, product_id={product_id}"
+    )
     if body:
         print(f"[Dodo] Raw request body: {body}")
 
@@ -134,7 +186,7 @@ async def create_checkout_session(
         payload = {
             "product_cart": [
                 {
-                    "product_id": DODO_PRODUCT_OR_PLAN_ID,
+                    "product_id": product_id,
                     "quantity": 1,
                 }
             ],
