@@ -165,11 +165,22 @@ def _handle_subscription_active(
     if status_val == "canceled":
         status_val = "cancelled"
 
+    # If we've already marked the subscription as cancelled locally (user clicked
+    # "cancel at period end"), don't let a later "active"/"updated" webhook flip
+    # it back to active. Dodo keeps subscriptions active until the end of the
+    # paid period even after cancellation is requested, but our UX needs to
+    # remember that the user has cancelled.
     if subscription:
+        previous_status = subscription.status
         subscription.dodo_subscription_id = str(sub_id)
         subscription.dodo_customer_id = customer_id
-        subscription.status = status_val
         subscription.billing_interval = billing_interval
+
+        if previous_status == "cancelled" and status_val == "active":
+            # Preserve local "cancelled" flag while still syncing other fields.
+            subscription.status = previous_status
+        else:
+            subscription.status = status_val
     else:
         subscription = Subscription(
             user_id=user_id_int,
@@ -180,7 +191,7 @@ def _handle_subscription_active(
         )
         db.add(subscription)
 
-    if status_val == "active":
+    if subscription.status == "active":
         user.plan_tier = "pro"
         if not subscription.billing_cycle_start_date:
             subscription.billing_cycle_start_date = datetime.utcnow()
