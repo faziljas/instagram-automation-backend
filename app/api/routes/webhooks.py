@@ -182,6 +182,8 @@ def _handle_subscription_active(
         reset_tracker_for_pro_upgrade(user_id_int, db)
 
     db.commit()
+    from app.api.routes.users import invalidate_subscription_cache
+    invalidate_subscription_cache(user_id_int)
 
 
 def _handle_subscription_cancelled(
@@ -203,6 +205,8 @@ def _handle_subscription_cancelled(
 
     subscription.status = "cancelled"
     db.commit()
+    from app.api.routes.users import invalidate_subscription_cache
+    invalidate_subscription_cache(subscription.user_id)
 
 
 def _handle_payment_event(

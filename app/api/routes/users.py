@@ -30,6 +30,32 @@ from datetime import datetime, timedelta
 
 router = APIRouter()
 
+# In-memory cache for subscription (60s TTL) - reduces repeated DB work when multiple components request subscription
+_subscription_cache: dict[int, tuple] = {}
+_SUBSCRIPTION_CACHE_TTL_SECONDS = 60
+
+
+def _get_subscription_cached(user_id: int):
+    if user_id not in _subscription_cache:
+        return None
+    data, ts = _subscription_cache[user_id]
+    if (datetime.utcnow() - ts).total_seconds() >= _SUBSCRIPTION_CACHE_TTL_SECONDS:
+        del _subscription_cache[user_id]
+        return None
+    return data
+
+
+def _set_subscription_cached(user_id: int, data) -> None:
+    _subscription_cache[user_id] = (data, datetime.utcnow())
+    if len(_subscription_cache) > 5000:
+        oldest = min(_subscription_cache.keys(), key=lambda k: _subscription_cache[k][1])
+        del _subscription_cache[oldest]
+
+
+def invalidate_subscription_cache(user_id: int) -> None:
+    """Call when subscription or plan changes so next request gets fresh data."""
+    _subscription_cache.pop(user_id, None)
+
 
 @router.get("/me", response_model=UserResponse)
 def get_current_user(
@@ -284,6 +310,10 @@ def get_subscription(
     )
     
     try:
+        cached = _get_subscription_cached(user_id)
+        if cached is not None:
+            return cached
+
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             # Be defensive for brand‑new auth users who might not
@@ -320,20 +350,28 @@ def get_subscription(
         # Only calculate usage if user has connected accounts
         if all_user_accounts:
             user_account_ids = [acc.id for acc in all_user_accounts]
-            
-            # Rules count: Use tracker's rules_created_count (total rules ever created, even if deleted)
-            # This ensures the count persists even after deletion, matching the limit enforcement
+            igsids = [acc.igsid for acc in all_user_accounts if acc.igsid]
+
+            # OPTIMIZED: Batch-fetch trackers in one query, then create only missing ones
             max_rules_created = 0
-            for account in all_user_accounts:
-                if account.igsid:
-                    try:
-                        tracker = get_or_create_tracker(user_id, account.igsid, db)
-                        if tracker.rules_created_count > max_rules_created:
-                            max_rules_created = tracker.rules_created_count
-                    except Exception as e:
-                        # If tracker doesn't exist or error, fall back to counting active rules
-                        print(f"⚠️ Error getting tracker for account {account.igsid}: {str(e)}")
-            
+            if igsids:
+                trackers = db.query(InstagramGlobalTracker).filter(
+                    InstagramGlobalTracker.user_id == user_id,
+                    InstagramGlobalTracker.instagram_id.in_(igsids)
+                ).all()
+                tracker_by_igsid = {t.instagram_id: t for t in trackers}
+                for account in all_user_accounts:
+                    if not account.igsid:
+                        continue
+                    tracker = tracker_by_igsid.get(account.igsid)
+                    if not tracker:
+                        try:
+                            tracker = get_or_create_tracker(user_id, account.igsid, db)
+                        except Exception as e:
+                            print(f"⚠️ Error getting tracker for account {account.igsid}: {str(e)}")
+                            continue
+                    if tracker.rules_created_count > max_rules_created:
+                        max_rules_created = tracker.rules_created_count
             rules_count = max_rules_created
             
             # DMs count: Count DMs sent by this user in current billing cycle (user-based tracking)
@@ -407,7 +445,7 @@ def get_subscription(
                 print(f"⚠️ Error processing subscription cycle for user {user_id}: {str(e)}")
                 # Continue with default values if cycle calculation fails
         
-        return SubscriptionResponse(
+        resp = SubscriptionResponse(
             plan_tier=user.plan_tier or "free",
             effective_plan_tier=effective_plan_tier,  # Use this for display limits
             status=status_value,
@@ -419,6 +457,8 @@ def get_subscription(
                 dms_sent_this_month=dms_display_count  # DMs sent by this user in current billing cycle (user-based tracking)
             )
         )
+        _set_subscription_cached(user_id, resp)
+        return resp
     except HTTPException:
         # Re-raise HTTP exceptions (like 401, 404) as-is so frontend can handle them properly
         raise
@@ -517,6 +557,8 @@ def cancel_subscription(
     
     print(f"✅ User {user_id} cancelled subscription - keeping Pro access until {cancellation_end_date}")
     
+    invalidate_subscription_cache(user_id)
+
     db.commit()
     
     return {

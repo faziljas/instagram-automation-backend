@@ -362,6 +362,9 @@ async def cancel_dodo_subscription(
         subscription.status = "cancelled"
         db.commit()
 
+        from app.api.routes.users import invalidate_subscription_cache
+        invalidate_subscription_cache(user_id)
+
         return {"message": "Subscription cancellation requested with Dodo."}
     except HTTPException:
         raise
