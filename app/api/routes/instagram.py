@@ -2427,6 +2427,10 @@ async def process_instagram_message(event: dict, db: Session):
                         else:
                             lead_matches_flow = True
                     if existing_lead and lead_matches_flow:
+                        # For story reply: do NOT stop automation when lead was captured for a different rule (e.g. Reel).
+                        # Only stop when this rule is for the current story; otherwise story reply should still get a response.
+                        if story_id and str(rule.media_id or "") != story_id:
+                            continue  # Lead captured for different context (e.g. Reel); allow story reply to be handled
                         # FIX: Lead already captured for this flow type - flow is complete, stop ALL automation
                         log_print(f"🚫 [FIX] Lead already captured for rule {rule.id}, stopping automation completely")
                         log_print(f"   💬 All further messages will be handled by real user, not automation")
