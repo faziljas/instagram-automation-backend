@@ -278,6 +278,15 @@ def upgrade() -> None:
 5. **Push fix** - Deploy will retry automatically
 6. **Monitor** - Ensure migration completes successfully
 
+### "column users.notify_product_updates does not exist"
+
+If you see this error, the `users` table is missing notification preference columns. The app startup now adds them automatically (after Alembic). If you need to fix immediately without redeploying, run this in your database (Supabase SQL Editor or `psql`):
+
+```sql
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_product_updates BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_billing BOOLEAN NOT NULL DEFAULT true;
+```
+
 ## Future Improvements
 
 Consider:

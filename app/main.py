@@ -137,7 +137,22 @@ async def startup_event():
         print(f"⚠️ profile_picture_url column check warning: {str(e)}", file=sys.stderr)
         # Don't fail startup if this doesn't work - migration should handle it
 
-    # Ensure invoices.amount is NUMERIC so 11.81 is stored correctly (not rounded to 12)
+    # Ensure notification preference columns exist (backup if Alembic 013/015 didn't run, e.g. on Render)
+    try:
+        print("🔄 Checking users notification preference columns...", file=sys.stderr)
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_product_updates BOOLEAN NOT NULL DEFAULT true"
+            ))
+            conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_billing BOOLEAN NOT NULL DEFAULT true"
+            ))
+            conn.commit()
+            print("✅ users notify_product_updates, notify_billing columns verified", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠️ Notification preference columns check warning: {str(e)}", file=sys.stderr)
+
+    # Ensure invoices.amount is NUMERIC so 11.81 is stored correctly (not rounded to 12) so 11.81 is stored correctly (not rounded to 12)
     try:
         print("🔄 Checking invoices.amount column type...", file=sys.stderr)
         with engine.connect() as conn:

@@ -8,17 +8,17 @@ def run_migration():
     """Add notification preference columns if they don't exist."""
     try:
         with engine.connect() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_product_updates BOOLEAN NOT NULL DEFAULT true"
+            with conn.begin():
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_product_updates BOOLEAN NOT NULL DEFAULT true"
+                    )
                 )
-            )
-            conn.execute(
-                text(
-                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_billing BOOLEAN NOT NULL DEFAULT true"
+                conn.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_billing BOOLEAN NOT NULL DEFAULT true"
+                    )
                 )
-            )
-            conn.commit()
         print("✅ Notification preference columns ensured (notify_product_updates, notify_billing)")
         return True
     except Exception as e:
