@@ -419,27 +419,35 @@ def get_current_user_id(
         # Use a more robust approach: double-check user doesn't exist before creating
         # This handles race conditions where another request created the user between checks
         from app.utils.auth import hash_password
+        from app.models.free_tier_usage import FreeTierUsage
         import time
-        
+
+        # If this email already used free tier (e.g. after account deletion), do not re-grant free benefits
+        normalized_email = email.lower().strip()
+        free_tier_already_used = db.query(FreeTierUsage).filter(
+            FreeTierUsage.email_normalized == normalized_email
+        ).first() is not None
+
         # Double-check user doesn't exist (race condition protection)
         user = db.query(User).filter(User.email.ilike(email)).first()
         if user:
             print(f"[AUTH] User found on second check (race condition): {user.id}")
             return user.id
-        
+
         user_by_supabase = db.query(User).filter(User.supabase_id == supabase_user_id).first()
         if user_by_supabase:
             print(f"[AUTH] User found by supabase_id on second check: {user_by_supabase.id}")
             return user_by_supabase.id
-        
+
         placeholder_password = hash_password(f"supabase_user_{supabase_user_id}")
-        
+
         new_user = User(
             email=email.lower(),
             hashed_password=placeholder_password,
             supabase_id=supabase_user_id,
             is_verified=True,  # Supabase handles email verification
             plan_tier="free",  # Explicitly set plan_tier for new users
+            free_tier_used=free_tier_already_used,
         )
         
         try:
@@ -515,13 +523,14 @@ def get_current_user_id(
             # This is a last resort to prevent breaking the frontend
             try:
                 print(f"[AUTH] Last resort: Attempting to create user one more time...")
-                # Create a new user object
+                # free_tier_already_used was set above when we first tried to create the user
                 final_new_user = User(
                     email=email.lower(),
                     hashed_password=placeholder_password,
                     supabase_id=supabase_user_id,
                     is_verified=True,
                     plan_tier="free",
+                    free_tier_used=free_tier_already_used,
                 )
                 db.add(final_new_user)
                 db.commit()

@@ -17,5 +17,6 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     plan_tier = Column(String, default="free", nullable=False)
+    free_tier_used = Column(Boolean, default=False, nullable=False)  # True if re-signup after delete (no free DMs/accounts)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

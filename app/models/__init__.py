@@ -12,6 +12,7 @@ from app.models.conversation import Conversation
 from app.models.instagram_audience import InstagramAudience
 from app.models.instagram_global_tracker import InstagramGlobalTracker
 from app.models.invoice import Invoice
+from app.models.free_tier_usage import FreeTierUsage
 
 __all__ = [
     "User",
@@ -29,4 +30,5 @@ __all__ = [
     "InstagramAudience",
     "InstagramGlobalTracker",
     "Invoice",
+    "FreeTierUsage",
 ]

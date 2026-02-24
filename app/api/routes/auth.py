@@ -6,6 +6,7 @@ from app.models.instagram_account import InstagramAccount
 from app.models.automation_rule import AutomationRule
 from app.models.dm_log import DmLog
 from app.models.subscription import Subscription
+from app.models.free_tier_usage import FreeTierUsage
 from app.schemas.auth import ForgotPasswordRequest, UserSyncRequest
 from app.dependencies.auth import verify_supabase_token
 from app.utils.disposable_email import is_disposable_email
@@ -191,11 +192,15 @@ def sync_user(
             )
         
         # Create new user
-        # Use a placeholder password since auth is handled by Supabase
-        # The password field is required but won't be used for authentication
+        # If this email already used free tier (e.g. after account deletion), do not re-grant free benefits
+        normalized_email = user_data.email.lower().strip()
+        free_tier_already_used = db.query(FreeTierUsage).filter(
+            FreeTierUsage.email_normalized == normalized_email
+        ).first() is not None
+
         from app.utils.auth import hash_password
         placeholder_password = hash_password(f"supabase_user_{user_data.id}")
-        
+
         new_user = User(
             email=user_data.email.lower(),
             hashed_password=placeholder_password,
@@ -203,6 +208,7 @@ def sync_user(
             first_name=user_data.first_name,  # Sync from Supabase metadata if available
             last_name=user_data.last_name,  # Sync from Supabase metadata if available
             is_verified=True,  # Supabase handles email verification
+            free_tier_used=free_tier_already_used,
         )
         
         try:

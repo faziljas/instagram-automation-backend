@@ -83,6 +83,9 @@ def check_account_limit(user_id: int, db: Session) -> bool:
         )
 
     max_accounts = get_plan_limit(user.plan_tier, "max_accounts")
+    # Re-signup after account deletion: no free Instagram account slot
+    if user.plan_tier == "free" and getattr(user, "free_tier_used", False):
+        max_accounts = 0
     current_accounts = db.query(InstagramAccount).filter(
         InstagramAccount.user_id == user_id
     ).count()
@@ -254,6 +257,10 @@ def check_dm_limit(user_id: int, db: Session, instagram_account_id: int = None) 
     if user.plan_tier == "pro":
         return True
 
+    # Re-signup after account deletion: no free DMs
+    if user.plan_tier == "free" and getattr(user, "free_tier_used", False):
+        return False
+
     max_dms = get_plan_limit(user.plan_tier, "max_dms_per_month")
     
     # If max_dms is -1, unlimited DMs allowed - skip limit check
@@ -358,6 +365,10 @@ def get_remaining_dms(user_id: int, db: Session) -> int:
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
+        return 0
+
+    # Re-signup after account deletion: no free DMs remaining
+    if user.plan_tier == "free" and getattr(user, "free_tier_used", False):
         return 0
 
     max_dms = get_plan_limit(user.plan_tier, "max_dms_per_month")

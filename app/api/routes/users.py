@@ -16,6 +16,7 @@ from app.models.follower import Follower
 from app.models.instagram_audience import InstagramAudience
 from app.models.instagram_global_tracker import InstagramGlobalTracker
 from app.models.invoice import Invoice
+from app.models.free_tier_usage import FreeTierUsage
 from app.schemas.auth import (
     UserResponse,
     DashboardStatsResponse,
@@ -646,6 +647,16 @@ def delete_user_account(
         except Exception as e:
             print(f"[DELETE] Error deleting from Supabase Auth: {e}")
             # Continue with backend deletion even if Supabase deletion fails
+
+    # Record email in free_tier_usage so re-signup with same email does not get free benefits again
+    try:
+        normalized_email = user.email.lower().strip()
+        existing = db.query(FreeTierUsage).filter(FreeTierUsage.email_normalized == normalized_email).first()
+        if not existing:
+            db.add(FreeTierUsage(email_normalized=normalized_email))
+            db.flush()
+    except Exception as e:
+        print(f"[DELETE] Could not record free_tier_usage (table may not exist yet): {e}")
 
     # Wrap all database operations in try-catch to handle any errors gracefully
     try:
