@@ -2205,8 +2205,10 @@ async def process_instagram_message(event: dict, db: Session):
                             pre_dm_result_override=override,
                             incoming_message=message_text,
                         )
-                        # Only mark primary_dm_sent after we actually sent (so future messages don't re-trigger)
-                        update_pre_dm_state(sender_id, r.id, {"primary_dm_sent": True})
+                        # Only mark primary_dm_sent after we actually sent (so future messages don't re-trigger).
+                        # Do NOT set for story_reply: story reply should always get primary DM and must not block comment-based automation.
+                        if not story_id:
+                            update_pre_dm_state(sender_id, r.id, {"primary_dm_sent": True})
                         processed_rules_count += 1
                     except Exception as e:
                         log_print(f"❌ Failed to send primary DM for rule {r.id}: {e}", "ERROR")
@@ -2630,9 +2632,10 @@ async def process_instagram_message(event: dict, db: Session):
                         log_print(f"   Message: '{message_text}' | Keyword: '{matched_keyword}' | Rule: {rule.name} (ID: {rule.id})")
                     
                     # For VIP: still run rule but only send primary DM (skip_growth_steps). Do not skip entirely.
+                    # Story reply: always send primary DM (every time user replies to story); do not skip based on primary_dm_sent so story and comment flows stay separate.
                     from app.services.pre_dm_handler import get_pre_dm_state
                     rule_state = get_pre_dm_state(sender_id, rule.id)
-                    if rule_state.get("primary_dm_sent") and not is_vip_user:
+                    if rule_state.get("primary_dm_sent") and not is_vip_user and not story_id:
                         log_print(f"🚫 [FIX] Skipping keyword rule {rule.id} - primary DM already sent to {sender_id}")
                         log_print(f"   💬 Message will be handled by real user, not automation")
                         break  # Skip this keyword rule (non-VIP only)
@@ -6226,9 +6229,11 @@ async def execute_automation_action(
                         except Exception as log_err:
                             print(f"⚠️ Failed to log DM: {str(log_err)}")
                     
-                    # Mark primary DM sent so further messages from this user are not auto-replied (endpoint = primary DM)
+                    # Mark primary DM sent so further messages from this user are not auto-replied (endpoint = primary DM).
+                    # Do NOT set for story_reply: every story reply should get primary DM; keep story and comment automation separate.
                     from app.services.pre_dm_handler import update_pre_dm_state
-                    update_pre_dm_state(str(sender_id), rule.id, {"primary_dm_sent": True})
+                    if trigger_type != "story_reply":
+                        update_pre_dm_state(str(sender_id), rule.id, {"primary_dm_sent": True})
                     
                     # Update stats
                     from app.services.lead_capture import update_automation_stats

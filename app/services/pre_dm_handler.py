@@ -1291,8 +1291,9 @@ async def process_pre_dm_actions(
     # Initial trigger - start pre-DM sequence
     # Also handle timeout trigger (5 seconds after follow button sent)
     # Handle email_timeout trigger (5 seconds after email request sent)
-    # story_reply = user replying to story via DM (each flow separate from post_comment)
-    if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout", "story_reply"] and not state.get("primary_dm_sent"):
+    # story_reply = user replying to story via DM (each flow separate from post_comment).
+    # For story_reply, always allow primary DM (do not block on primary_dm_sent) so story and comment automation stay separate.
+    if trigger_type in ["post_comment", "keyword", "new_message", "timeout", "email_timeout", "story_reply"] and (not state.get("primary_dm_sent") or trigger_type == "story_reply"):
         # Check if flow is COMPLETED (both follow confirmed AND email received if required)
         # Only skip to primary DM if flow was completed in a previous interaction
         # Cross-reel: if user already follows (from another reel / Follower table), treat as follow_completed for this rule too
