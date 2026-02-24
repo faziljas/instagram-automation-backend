@@ -565,10 +565,13 @@ def get_analytics_dashboard(
                 }
 
         # Build daily breakdown array (fill in missing days with zeros)
+        # Use calendar days ending with TODAY so the graph shows up to the current date (not yesterday)
+        # e.g. "Last 7 days" = today + 6 previous days (7 buckets including today)
         daily_breakdown = []
+        end_day = end_date.date()  # today in UTC
+        first_day = end_day - timedelta(days=days - 1)
         for i in range(days):
-            day_start = start_date + timedelta(days=i)
-            day_date = day_start.date()
+            day_date = first_day + timedelta(days=i)
             lookup_key = _date_key(day_date)
 
             stats = daily_stats_map.get(lookup_key, {"triggers": 0, "dms_sent": 0, "leads": 0})
@@ -576,9 +579,9 @@ def get_analytics_dashboard(
             day_dms = stats["dms_sent"]
             day_leads = stats["leads"]
             
-            # Format date for display
-            date_str = day_start.strftime('%b %d')
-            date_label = day_start.strftime('%m/%d')
+            # Format date for display (day_date is a date object)
+            date_str = day_date.strftime('%b %d')
+            date_label = day_date.strftime('%m/%d')
             
             daily_breakdown.append({
                 "date": date_str,  # "Jan 18"
