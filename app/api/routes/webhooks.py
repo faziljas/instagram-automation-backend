@@ -359,3 +359,16 @@ def _handle_payment_event(
         import traceback
         traceback.print_exc()
         raise
+
+    # Send receipt email when payment succeeded and user has "Billing & invoices" toggle on
+    if event_type == "payment.succeeded" and status == "succeeded":
+        notify_billing = getattr(user, "notify_billing", True)
+        if notify_billing and user.email:
+            from app.services.billing_email import send_invoice_receipt_email
+            send_invoice_receipt_email(
+                to_email=user.email,
+                amount=amount_major,
+                currency=currency,
+                invoice_url=invoice_url,
+                paid_at=paid_at,
+            )
