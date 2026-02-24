@@ -5797,9 +5797,9 @@ async def execute_automation_action(
                         else:
                             print(f"⚠️ lead_dm_messages is empty, trying fallback to message_variations")
                     
-                    # If still no template, try message_variations (shared or simple reply messages)
+                    # If still no template, try message_variations or dm_messages (shared or simple reply messages)
                     if not message_template:
-                        message_variations = rule.config.get("message_variations", [])
+                        message_variations = rule.config.get("message_variations") or rule.config.get("dm_messages") or []
                         print(f"🔍 [DEBUG] Loading message template: message_variations={message_variations}, type={type(message_variations)}")
                         if message_variations and isinstance(message_variations, list) and len(message_variations) > 0:
                             # Filter out empty messages
