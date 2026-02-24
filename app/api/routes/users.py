@@ -23,7 +23,6 @@ from app.schemas.auth import (
     SubscriptionUsage,
     UserUpdate,
     PasswordChange,
-    NotificationPreferencesUpdate,
 )
 from app.utils.auth import hash_password, verify_password
 from app.dependencies.auth import get_current_user_id
@@ -80,42 +79,6 @@ def get_current_user(
         "plan_tier": user.plan_tier,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
-        "notify_product_updates": getattr(user, "notify_product_updates", True),
-        "notify_billing": getattr(user, "notify_billing", True),
-        "created_at": user.created_at.isoformat() if user.created_at else None
-    }
-
-
-@router.patch("/me/notification-preferences", response_model=UserResponse)
-def update_notification_preferences(
-    payload: NotificationPreferencesUpdate,
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id),
-):
-    """Update current user's notification preferences."""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    if payload.notify_product_updates is not None:
-        user.notify_product_updates = payload.notify_product_updates
-    if payload.notify_billing is not None:
-        user.notify_billing = payload.notify_billing
-    db.commit()
-    db.refresh(user)
-    return {
-        "id": user.id,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "profile_picture_url": user.profile_picture_url,
-        "plan_tier": user.plan_tier,
-        "is_active": user.is_active,
-        "is_verified": user.is_verified,
-        "notify_product_updates": user.notify_product_updates,
-        "notify_billing": user.notify_billing,
         "created_at": user.created_at.isoformat() if user.created_at else None
     }
 
@@ -166,8 +129,6 @@ def update_user_profile(
         "plan_tier": user.plan_tier,
         "is_active": user.is_active,
         "is_verified": user.is_verified,
-        "notify_product_updates": getattr(user, "notify_product_updates", True),
-        "notify_billing": getattr(user, "notify_billing", True),
         "created_at": user.created_at.isoformat() if user.created_at else None
     }
 
