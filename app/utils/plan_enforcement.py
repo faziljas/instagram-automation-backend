@@ -89,11 +89,21 @@ def check_account_limit(user_id: int, db: Session) -> bool:
     current_accounts = db.query(InstagramAccount).filter(
         InstagramAccount.user_id == user_id
     ).count()
-
+    
     if current_accounts >= max_accounts:
+        # Show a clearer message for users who already consumed their free Instagram slot
+        # so they understand why they can't connect another account on Free.
+        if user.plan_tier == "free" and getattr(user, "free_tier_used", False):
+            detail_message = (
+                "You’ve already used your free Instagram account slot with this email. "
+                "To connect another Instagram account, please upgrade to Pro."
+            )
+        else:
+            detail_message = "Upgrade to Pro to connect more accounts."
+        
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Upgrade to Pro to connect more accounts."
+            detail=detail_message
         )
 
     return True
