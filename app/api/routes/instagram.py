@@ -271,14 +271,19 @@ async def process_instagram_message(event: dict, db: Session):
         
         # Check if message has attachments (images, videos, etc.)
         attachments = message.get("attachments", [])
+        # Previously, messages that contained only attachments (no text) were ignored entirely.
+        # That caused stats like "messages_received" to under-count and prevented the Messages
+        # UI from showing media-only DMs that Instagram users still see in their inbox.
+        # We now *store* these messages (with a "[Media]" preview) while still treating them
+        # as "non-text" for strict lead-capture flows.
         if attachments and not message_text:
-            log_print(f"🚫 [STRICT MODE] Ignoring message with only attachments (no text) - mid: {message_id}")
-            return
+            log_print(f"ℹ️ [STRICT MODE] Message has only attachments (no text) - storing for inbox/stats but ignoring for lead capture where text is required (mid: {message_id})")
         
-        # STRICT MODE: If message has attachments WITH text, still ignore in strict mode flow
-        # User should only send text for follow confirmations and emails
+        # STRICT MODE: If message has attachments WITH text, still treat attachments as non-input
+        # for lead capture (user should only send text for follow confirmations and emails),
+        # but we still store the full message for the inbox UI and stats.
         if attachments:
-            log_print(f"🚫 [STRICT MODE] Message has attachments - will check if waiting for follow/email before ignoring")
+            log_print(f"ℹ️ [STRICT MODE] Message has attachments - will treat text as input but ignore media for validation")
             # Continue processing to check if we're in strict mode flow
         
         # Check for echo messages (messages sent by the bot itself) FIRST before processing
