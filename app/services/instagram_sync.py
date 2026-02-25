@@ -1,6 +1,7 @@
 """
 Service for syncing Instagram conversations and messages from Instagram Graph API.
 """
+import time
 import requests
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
@@ -177,22 +178,42 @@ def sync_instagram_conversations(
                         # Follow pagination to pull as many recent messages as the API allows,
                         # but cap per-conversation to avoid unbounded sync time.
                         MAX_MESSAGES_PER_CONVERSATION = 100
+                        MAX_RETRIES_403 = 3
+                        retry_delays = [5, 15, 45]  # seconds
                         while current_url and len(all_messages) < MAX_MESSAGES_PER_CONVERSATION:
-                            try:
-                                messages_response = requests.get(
-                                    current_url,
-                                    params=current_params,
-                                    timeout=30,
-                                )
-                            finally:
-                                # After first call, subsequent paging URLs already include params
-                                current_params = None
-                            
-                            if messages_response.status_code != 200:
+                            messages_response = None
+                            for attempt in range(MAX_RETRIES_403 + 1):
+                                try:
+                                    messages_response = requests.get(
+                                        current_url,
+                                        params=current_params,
+                                        timeout=30,
+                                    )
+                                finally:
+                                    current_params = None
+                                if messages_response.status_code == 200:
+                                    break
+                                if messages_response.status_code == 403:
+                                    try:
+                                        err = messages_response.json()
+                                        if err.get("error", {}).get("is_transient") is True:
+                                            if attempt < MAX_RETRIES_403:
+                                                delay = retry_delays[min(attempt, len(retry_delays) - 1)]
+                                                print(
+                                                    f"⏳ Rate limit (403 transient) for conversation {conversation_id}, "
+                                                    f"retry {attempt + 1}/{MAX_RETRIES_403} in {delay}s..."
+                                                )
+                                                time.sleep(delay)
+                                                current_params = messages_params
+                                                continue
+                                    except Exception:
+                                        pass
                                 print(
                                     f"⚠️ Failed to fetch messages for conversation {conversation_id}: "
                                     f"{messages_response.status_code} - {messages_response.text}"
                                 )
+                                break
+                            if messages_response is None or messages_response.status_code != 200:
                                 break
                             
                             messages_data = messages_response.json()
@@ -376,11 +397,19 @@ def sync_instagram_conversations(
         
         print(f"📊 Total unique participants: {len(participants_map)}")
         
+        # Never create/update a conversation where the participant is our own account
+        account_igsid_str = str(igsid) if igsid else None
+        account_username_str = (account.username or "").strip()
+        
         # Create/update Conversation records
         conversations_created = 0
         conversations_updated = 0
         
         for participant_id, data in participants_map.items():
+            # Skip self: participant must not be our Instagram account
+            if account_igsid_str and participant_id == account_igsid_str:
+                print(f"⏭️ Skipping self as participant (participant_id={participant_id} == account IGSID)")
+                continue
             # Resolve username if not available
             participant_name = data['participant_name']
             if not participant_name:
@@ -388,6 +417,10 @@ def sync_instagram_conversations(
                 participant_name = resolve_username(participant_id, access_token)
                 if participant_name:
                     print(f"✅ Resolved username: @{participant_name}")
+            # Skip self by username (e.g. webhook uses different IGSID than stored)
+            if account_username_str and participant_name and (participant_name.strip() == account_username_str):
+                print(f"⏭️ Skipping self as participant (participant_name={participant_name} == account username)")
+                continue
             
             # Find or create conversation
             conversation = db.query(Conversation).filter(
