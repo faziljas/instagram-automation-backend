@@ -286,17 +286,11 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"ℹ️ [STRICT MODE] Message has attachments - will treat text as input but ignore media for validation")
             # Continue processing to check if we're in strict mode flow
         
-        # Check for echo messages (messages sent by the bot itself) FIRST before processing
+        # Echo flag indicates a message sent by our own account (Meta "echo" events).
+        # We still want to store these in the inbox/stats, but they must NOT trigger automations
+        # to avoid infinite loops. We handle storage later, after resolving the account.
         is_echo = message.get("is_echo", False) or event.get("is_echo", False)
-        if is_echo:
-            log_print(f"🚫 Ignoring bot's own message (echo flag)")
-            if message_id:
-                _processed_message_ids.add(message_id)
-                # Clean cache if it gets too large
-                if len(_processed_message_ids) > _MAX_CACHE_SIZE:
-                    _processed_message_ids.clear()
-            return
-
+        
         # DEDUPLICATION: Skip if we've already processed this message_id (Meta can retry events)
         if message_id:
             if message_id in _processed_message_ids:
@@ -349,24 +343,90 @@ async def process_instagram_message(event: dict, db: Session):
             log_print(f"❌ [DM] No active Instagram accounts found", "ERROR")
             return
         
-        # Store incoming message in Message table (for Messages UI)
+        # Store message in Message table (for Messages UI).
+        # For echo messages (sent by our own account from Instagram app), we store them as
+        # is_from_bot=True but skip all automation/lead-capture processing below.
         try:
             from app.models.message import Message
-            # Try to get sender username from event if available
+            # Try to get sender/recipient usernames from event if available
             sender_username = None
             if "sender" in event:
                 sender_username = event["sender"].get("username")
+            recipient_username = None
+            if "recipient" in event:
+                recipient_username = event["recipient"].get("username")
             
-            # Get recipient username (our account)
-            recipient_username = account.username
+            if recipient_username is None:
+                # Fallback: our connected account username
+                recipient_username = account.username
             
-            # Check if message already exists (deduplication)
+            # Check if message already exists (deduplication by message_id)
             existing_message = None
             if message_id:
                 existing_message = db.query(Message).filter(
                     Message.message_id == message_id
                 ).first()
             
+            # Determine timestamp once so both incoming and echo paths use identical logic
+            if instagram_timestamp:
+                message_timestamp = instagram_timestamp
+                log_print(f"✅ Using Instagram webhook timestamp (UTC+8): {message_timestamp.isoformat()}")
+            else:
+                message_timestamp = datetime.utcnow() + timedelta(hours=8)
+                log_print(f"⚠️ Instagram timestamp not available, using current time (UTC+8): {message_timestamp.isoformat()}")
+            
+            # Echo messages (sent by our own account)
+            if is_echo:
+                log_print(f"ℹ️ Storing echo message from our own account for inbox/stats (no automations).")
+                # For echo events, sender is usually our account; treat the other user as participant
+                account_igsid = account.igsid
+                other_participant_id = sender_id
+                other_participant_name = sender_username
+                if account_igsid and sender_id == account_igsid:
+                    other_participant_id = str(recipient_id)
+                    other_participant_name = recipient_username
+                
+                conversation = get_or_create_conversation(
+                    db=db,
+                    user_id=account.user_id,
+                    account_id=account.id,
+                    participant_id=other_participant_id,
+                    participant_name=other_participant_name,
+                )
+                
+                # Update conversation preview
+                message_preview = message_text or "[Media]"
+                if len(message_preview) > 100:
+                    message_preview = message_preview[:100] + "..."
+                conversation.last_message = message_preview
+                conversation.updated_at = message_timestamp
+                
+                if not existing_message:
+                    outgoing_message = Message(
+                        user_id=account.user_id,
+                        instagram_account_id=account.id,
+                        conversation_id=conversation.id,
+                        sender_id=str(sender_id),
+                        sender_username=sender_username or account.username,
+                        recipient_id=str(recipient_id),
+                        recipient_username=recipient_username,
+                        message_text=message_text,
+                        content=message_text,
+                        message_id=message_id,
+                        platform_message_id=message_id,
+                        is_from_bot=True,
+                        has_attachments=len(attachments) > 0,
+                        attachments=attachments if attachments else None,
+                        created_at=message_timestamp,
+                    )
+                    db.add(outgoing_message)
+                
+                db.commit()
+                log_print(f"💾 Stored outgoing echo message (conversation_id: {conversation.id})")
+                # Do NOT run automation for echo events
+                return
+            
+            # Non-echo: incoming message from user
             if not existing_message:
                 # PREVENT SELF-CONVERSATIONS: Skip if sender matches account's own IGSID or username
                 account_igsid = account.igsid
@@ -379,7 +439,7 @@ async def process_instagram_message(event: dict, db: Session):
                     log_print(f"🚫 Ignoring self-message (sender_username={sender_username} matches account username)")
                     return
                 
-                # Get or create conversation for this participant
+                # Get or create conversation for this participant (the other user)
                 conversation = get_or_create_conversation(
                     db=db,
                     user_id=account.user_id,
@@ -393,18 +453,7 @@ async def process_instagram_message(event: dict, db: Session):
                 if len(message_preview) > 100:
                     message_preview = message_preview[:100] + "..."
                 conversation.last_message = message_preview
-                conversation.updated_at = datetime.utcnow()
-                
-                # Use Instagram's timestamp from webhook (matches Instagram DM timing exactly)
-                # Instagram timestamps are already adjusted to UTC+8 in the extraction above
-                # For fallback, add 8 hours to UTC time to match Instagram's display
-                if instagram_timestamp:
-                    message_timestamp = instagram_timestamp
-                    log_print(f"✅ Using Instagram webhook timestamp (UTC+8) for incoming message: {message_timestamp.isoformat()}")
-                else:
-                    # Fallback: add 8 hours to UTC to match Instagram's display timezone
-                    message_timestamp = datetime.utcnow() + timedelta(hours=8)
-                    log_print(f"⚠️ Instagram timestamp not available, using current time (UTC+8): {message_timestamp.isoformat()}")
+                conversation.updated_at = message_timestamp
                 
                 incoming_message = Message(
                     user_id=account.user_id,
@@ -427,7 +476,7 @@ async def process_instagram_message(event: dict, db: Session):
                 db.commit()
                 log_print(f"💾 Stored incoming message from {sender_username or sender_id} (conversation_id: {conversation.id})")
         except Exception as store_err:
-            log_print(f"⚠️ Failed to store incoming message: {str(store_err)}")
+            log_print(f"⚠️ Failed to store message: {str(store_err)}")
             db.rollback()
             # Don't fail the whole process if message storage fails
         
