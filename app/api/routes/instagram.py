@@ -375,17 +375,13 @@ async def process_instagram_message(event: dict, db: Session):
                 message_timestamp = datetime.utcnow() + timedelta(hours=8)
                 log_print(f"⚠️ Instagram timestamp not available, using current time (UTC+8): {message_timestamp.isoformat()}")
             
-            # Echo messages (sent by our own account)
+            # Echo messages (sent by our own account from mobile/app)
             if is_echo:
                 log_print(f"ℹ️ Storing echo message from our own account for inbox/stats (no automations).")
-                # For echo events, sender is usually our account; treat the other user as participant
-                account_igsid = account.igsid
-                other_participant_id = sender_id
-                other_participant_name = sender_username
-                if account_igsid and sender_id == account_igsid:
-                    other_participant_id = str(recipient_id)
-                    other_participant_name = recipient_username
-                
+                # For echo: sender = us, recipient = the other party. Always use recipient so the
+                # message lands in the same conversation as their incoming messages (participant_id).
+                other_participant_id = str(recipient_id)
+                other_participant_name = recipient_username
                 conversation = get_or_create_conversation(
                     db=db,
                     user_id=account.user_id,
