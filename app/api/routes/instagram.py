@@ -6913,6 +6913,11 @@ async def get_instagram_conversations(
     limit: int = Query(CONVERSATIONS_LIMIT_DEFAULT, ge=1, le=CONVERSATIONS_LIMIT_MAX, description="Conversations per page (max 100)"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     sync: bool = Query(False, description="Whether to sync conversations from API"),
+    auto_sync: bool = Query(
+        True,
+        description="If true, automatically sync when no conversations exist. "
+        "Set to false for fast, DB-only reads from high-traffic UIs.",
+    ),
     user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
@@ -7012,9 +7017,11 @@ async def get_instagram_conversations(
         # Debug: Log conversation count
         print(f"📋 Found {len(conversations_list)} conversations in Conversation table for account {account_id}")
         
-        # Auto-sync if no conversations exist (first time or after migration)
-        # This will build conversations from existing messages in the database
-        if len(conversations_list) == 0 and not sync:
+        # Auto-sync if no conversations exist (first time or after migration).
+        # IMPORTANT: This is now opt-in via the auto_sync flag so that high-traffic
+        # UIs (like the live DMs dashboard) can perform fast, DB-only reads without
+        # waiting on potentially slow external sync work.
+        if auto_sync and len(conversations_list) == 0 and not sync:
             print(f"🔄 No conversations found for account {account_id}, auto-syncing from existing messages...")
             try:
                 from app.services.instagram_sync import sync_instagram_conversations
