@@ -59,10 +59,15 @@ def get_instagram_auth_url(user_id: int = Depends(get_current_user_id)):
         )
     
     # Instagram Business Login scopes (2025)
+    # Match competitor: profile/media + comments + messages
+    # This produces three toggles:
+    # - View profile and access media (required)
+    # - Access and manage comments
+    # - Access and manage messages
     scopes = [
         "instagram_business_basic",
-        "instagram_business_manage_messages",
         "instagram_business_manage_comments",
+        "instagram_business_manage_messages",
     ]
     
     # Construct frontend callback URL (popup redirects here to close window)
@@ -122,7 +127,8 @@ def get_instagram_auth_url_popup(user_id: int = Depends(get_current_user_id)):
         )
         print(f"🔗 Instagram OAuth URL with config_id: {config_id}")
     else:
-        # Fallback: Use scope-based flow
+        # Fallback: Use scope-based flow with comments + messages,
+        # equivalent to the Instagram Business Login scopes above.
         scopes = [
             "instagram_basic",
             "instagram_manage_comments",
@@ -131,7 +137,7 @@ def get_instagram_auth_url_popup(user_id: int = Depends(get_current_user_id)):
             "pages_read_engagement",
             "pages_manage_metadata",
             "business_management",
-            "pages_messaging"
+            "pages_messaging",
         ]
         oauth_url = (
             f"https://www.facebook.com/{FACEBOOK_API_VERSION}/dialog/oauth"
@@ -882,139 +888,100 @@ async def exchange_instagram_code(
             print(f"⚠️ Failed to fetch user info: {error_detail}")
             # Continue anyway, we'll use the user_id from token
         
-        # Step 3.5: Subscribe Instagram Business Account to webhooks
-        # This is CRITICAL - without this, the bot cannot receive messages
-        # We subscribe the Instagram Business Account directly (not the Facebook Page)
+        # Step 3.5: Subscribe to webhooks so the bot can receive messages
+        # IMPORTANT: Instagram messaging webhooks are delivered via the linked Facebook Page.
+        # graph.instagram.com/{ig-user-id}/subscribed_apps with POST returns
+        # "Unsupported request method type: post" (IGApiException 100) for many apps.
+        # So we subscribe at Page level first (graph.facebook.com/{page-id}/subscribed_apps);
+        # that is what Meta recommends for Instagram messaging.
+        subscribed_fields_page = "messages,messaging_postbacks,messaging_optins,message_reactions,message_edit,standby,comments,live_comments"
+        webhook_subscription_ok = False
         
-        # ------------------------------------------------------------------
-        # CORRECT FORMAT: A single string with comma-separated values.
-        # DO NOT put quotes around the individual words.
-        # Valid fields: messages, messaging_postbacks, messaging_optins, 
-        # message_reactions, message_edit, standby, comments, live_comments, mentions
-        # NOTE: message_deliveries and message_reads are NOT valid fields!
-        # ------------------------------------------------------------------
-        subscribed_fields = "messages,messaging_postbacks,messaging_optins,message_reactions,message_edit,standby,comments,live_comments"
-        
-        webhook_subscribe_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
-        
-        print(f"🔄 Step 3.5: Subscribing Instagram Business Account to webhooks...")
-        print(f"   Endpoint: {webhook_subscribe_url}")
-        print(f"   Fields: {subscribed_fields}")
-        
+        # --- 3.5a: Get connected Facebook Page and subscribe at Page level (preferred) ---
+        print(f"🔄 Step 3.5: Subscribing to webhooks (Page-level for messaging)...")
         try:
-            # Pass it to the API
-            webhook_response = requests.post(
-                webhook_subscribe_url,
-                params={
-                    "subscribed_fields": subscribed_fields,
-                    "access_token": long_lived_token
-                }
-            )
-            
-            if webhook_response.status_code == 200:
-                print(f"✅ Subscribed IG User {user_id_from_token} to Webhooks")
-                webhook_result = webhook_response.json()
-                print(f"   Response: {webhook_result}")
-                
-                # Verify subscription by checking what fields were actually subscribed
-                print(f"🔄 Verifying webhook subscription...")
-                verify_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
-                verify_params = {
-                    "access_token": long_lived_token
-                }
-                verify_response = requests.get(verify_url, params=verify_params)
-                
-                if verify_response.status_code == 200:
-                    verify_result = verify_response.json()
-                    subscribed = verify_result.get("data", [])
-                    if subscribed:
-                        for sub in subscribed:
-                            fields = sub.get("subscribed_fields", [])
-                            print(f"   ✅ Verified: Subscribed fields: {', '.join(fields)}")
-                            if "messages" not in fields:
-                                print(f"   ⚠️ WARNING: 'messages' field is NOT in subscribed fields!")
-                                print(f"   ⚠️ This means new message webhooks will NOT be received!")
-                            else:
-                                print(f"   ✅ 'messages' field is subscribed - new message webhooks should work!")
-                    else:
-                        print(f"   ⚠️ No subscription data found in verification response")
-                else:
-                    print(f"   ⚠️ Could not verify subscription: {verify_response.text}")
-                
-                # CRITICAL: For 'messages' webhooks, Instagram might require Page-level subscription
-                # Try to get the associated Facebook Page and subscribe there as well
-                # This is required because 'messages' webhooks often need Page-level subscription
-                print(f"🔄 Attempting Page-level webhook subscription for 'messages' field...")
-                try:
-                    # Try to get connected Facebook Page using Instagram Business Account
-                    # Query: GET /{ig-user-id}?fields=connected_facebook_page
-                    page_lookup_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}"
-                    page_lookup_params = {
-                        "fields": "connected_facebook_page{id,name,access_token}",
-                        "access_token": long_lived_token
-                    }
-                    
-                    page_response = requests.get(page_lookup_url, params=page_lookup_params)
-                    
-                    if page_response.status_code == 200:
-                        page_data = page_response.json()
-                        connected_page = page_data.get("connected_facebook_page")
-                        
-                        if connected_page and isinstance(connected_page, dict):
-                            page_id = connected_page.get("id")
-                            page_token = connected_page.get("access_token")
-                            
-                            if page_id and page_token:
-                                print(f"   ✅ Found connected Facebook Page: {page_id}")
-                                
-                                # Subscribe Page to messages webhook
-                                page_subscribe_url = f"https://graph.facebook.com/v21.0/{page_id}/subscribed_apps"
-                                page_subscribe_params = {
-                                    "subscribed_fields": "messages",
-                                    "access_token": page_token
-                                }
-                                
-                                page_webhook_response = requests.post(page_subscribe_url, params=page_subscribe_params)
-                                
-                                if page_webhook_response.status_code == 200:
-                                    print(f"   ✅ Successfully subscribed Page {page_id} to 'messages' webhook")
-                                    page_result = page_webhook_response.json()
-                                    print(f"      Response: {page_result}")
-                                else:
-                                    print(f"   ⚠️ Page-level subscription failed: {page_webhook_response.text}")
-                            else:
-                                print(f"   ⚠️ No Page ID or token found in connected_page: {connected_page}")
-                        elif connected_page:
-                            # Sometimes it's just an ID
-                            page_id = str(connected_page)
-                            print(f"   ⚠️ Found Page ID but no token (ID only): {page_id}")
-                            print(f"   ⚠️ Cannot subscribe at Page level without Page access token")
+            page_lookup_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}"
+            page_lookup_params = {
+                "fields": "connected_facebook_page{id,name,access_token}",
+                "access_token": long_lived_token
+            }
+            page_response = requests.get(page_lookup_url, params=page_lookup_params, timeout=15)
+            if page_response.status_code == 200:
+                page_data = page_response.json()
+                connected_page = page_data.get("connected_facebook_page")
+                if connected_page and isinstance(connected_page, dict):
+                    page_id = connected_page.get("id")
+                    page_token = connected_page.get("access_token")
+                    if page_id and page_token:
+                        print(f"   Found connected Facebook Page: {page_id}, subscribing...")
+                        page_subscribe_url = f"https://graph.facebook.com/v21.0/{page_id}/subscribed_apps"
+                        page_webhook_response = requests.post(
+                            page_subscribe_url,
+                            params={
+                                "subscribed_fields": subscribed_fields_page,
+                                "access_token": page_token
+                            },
+                            timeout=15
+                        )
+                        if page_webhook_response.status_code == 200:
+                            print(f"✅ Subscribed Page {page_id} to webhooks (messages, comments, etc.)")
+                            webhook_subscription_ok = True
                         else:
-                            print(f"   ⚠️ No connected Facebook Page found")
-                            print(f"   ⚠️ 'messages' webhooks might not work without Page-level subscription")
+                            print(f"   ⚠️ Page subscribed_apps response: {page_webhook_response.status_code} - {page_webhook_response.text}")
                     else:
-                        print(f"   ⚠️ Could not fetch connected Facebook Page: {page_response.text}")
-                except Exception as e:
-                    print(f"   ⚠️ Error attempting Page-level subscription: {str(e)}")
-                    # Don't fail the whole flow - continue anyway
+                        print(f"   ⚠️ No Page ID or access_token in connected_facebook_page")
+                else:
+                    print(f"   ⚠️ No connected Facebook Page (Instagram account may not be linked to a Page)")
             else:
-                error_detail = webhook_response.text
-                print(f"❌ CRITICAL: Webhook subscription failed (status {webhook_response.status_code}): {error_detail}")
-                # Raise exception - without webhooks, the bot cannot receive messages
+                print(f"   ⚠️ Could not fetch connected_facebook_page: {page_response.status_code} - {page_response.text}")
+        except Exception as e:
+            print(f"   ⚠️ Page-level subscription error: {e}")
+        
+        # --- 3.5b: Optionally try Instagram user-level subscribed_apps (often returns "Unsupported request method: post") ---
+        if not webhook_subscription_ok:
+            ig_subscribe_url = f"https://graph.instagram.com/v21.0/{user_id_from_token}/subscribed_apps"
+            subscribed_fields_ig = "messages,messaging_postbacks,messaging_optins,message_reactions,message_edit,standby,comments,live_comments"
+            try:
+                webhook_response = requests.post(
+                    ig_subscribe_url,
+                    params={"subscribed_fields": subscribed_fields_ig, "access_token": long_lived_token},
+                    timeout=15
+                )
+                if webhook_response.status_code == 200:
+                    print(f"✅ Subscribed IG User {user_id_from_token} to Webhooks")
+                    webhook_subscription_ok = True
+                else:
+                    err_text = webhook_response.text or ""
+                    if "Unsupported request method type" in err_text or "IGApiException" in err_text:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=(
+                                "Webhook subscription failed: Instagram requires a Facebook Page linked to your account for messaging. "
+                                "Link your Instagram Business/Creator account to a Facebook Page in Meta Business Suite (Settings → Linked accounts), "
+                                "then try connecting again."
+                            )
+                        )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to subscribe Instagram account to webhooks. This is required for the bot to receive messages. Error: {err_text}"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                err_msg = str(e)
+                if "Unsupported request method" in err_msg or "post" in err_msg.lower():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "Webhook subscription failed: Instagram requires a Facebook Page linked to your account for messaging. "
+                            "Link your Instagram Business/Creator account to a Facebook Page in Meta Business Suite (Settings → Linked accounts), "
+                            "then try connecting again."
+                        )
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to subscribe Instagram account to webhooks. This is required for the bot to receive messages. Error: {error_detail}"
+                    detail=f"Failed to subscribe Instagram account to webhooks. This is required for the bot to receive messages. Error: {err_msg}"
                 )
-        except HTTPException:
-            raise
-        except Exception as e:
-            error_msg = str(e)
-            print(f"❌ CRITICAL: Webhook subscription error: {error_msg}")
-            # Raise exception - without webhooks, the bot cannot receive messages
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to subscribe Instagram account to webhooks. This is required for the bot to receive messages. Error: {error_msg}"
-            )
         
         # Step 4: Check account limit BEFORE connecting
         try:
