@@ -956,9 +956,8 @@ async def exchange_instagram_code(
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=(
-                                "Webhook subscription failed: Instagram requires a Facebook Page linked to your account for messaging. "
-                                "Link your Instagram Business/Creator account to a Facebook Page in Meta Business Suite (Settings → Linked accounts), "
-                                "then try connecting again."
+                                "To finish connecting, link this Instagram Business or Creator account to a Facebook Page in Meta Business Suite "
+                                "(Settings → Linked accounts), then try again."
                             )
                         )
                     raise HTTPException(
@@ -973,9 +972,8 @@ async def exchange_instagram_code(
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=(
-                            "Webhook subscription failed: Instagram requires a Facebook Page linked to your account for messaging. "
-                            "Link your Instagram Business/Creator account to a Facebook Page in Meta Business Suite (Settings → Linked accounts), "
-                            "then try connecting again."
+                            "To finish connecting, link this Instagram Business or Creator account to a Facebook Page in Meta Business Suite "
+                            "(Settings → Linked accounts), then try again."
                         )
                     )
                 raise HTTPException(
