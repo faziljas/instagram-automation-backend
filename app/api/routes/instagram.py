@@ -571,10 +571,11 @@ async def process_instagram_message(event: dict, db: Session):
                 from app.services.lead_capture import validate_email, update_automation_stats
                 
                 # Validate the email
-                is_valid, _ = validate_email(user_email)
-                if not is_valid:
+                is_valid, _, normalized_email = validate_email(user_email)
+                if not is_valid or not normalized_email:
                     log_print(f"⚠️ Invalid email from quick reply button: {user_email}", "WARNING")
                     return
+                user_email = normalized_email
                 
                 # Find active rules that have email enabled
                 rules = db.query(AutomationRule).filter(

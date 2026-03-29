@@ -269,9 +269,9 @@ def check_if_email_response(message_text: str) -> Tuple[bool, Optional[str]]:
     if matches:
         # Validate the first email found
         email = matches[0]
-        is_valid, _ = validate_email(email)
-        if is_valid:
-            return True, email
+        is_valid, _, normalized = validate_email(email)
+        if is_valid and normalized:
+            return True, normalized
     
     return False, None
 

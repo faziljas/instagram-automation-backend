@@ -2,8 +2,11 @@
 Lead Capture Service
 Handles multi-step lead capture flows for automation rules.
 """
+import os
 import re
 from typing import Dict, Any, Optional, Tuple
+
+from email_validator import EmailNotValidError, validate_email as validate_email_rfc
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models.automation_rule import AutomationRule
@@ -12,90 +15,144 @@ from app.models.automation_rule_stats import AutomationRuleStats
 from app.models.instagram_account import InstagramAccount
 
 
-def validate_email(email: str) -> Tuple[bool, str]:
+def _email_check_deliverability() -> bool:
+    """DNS MX/A check via email-validator (no third-party HTTP APIs). Disabled in tests via env."""
+    return os.getenv("EMAIL_CHECK_DELIVERABILITY", "true").lower() in ("1", "true", "yes")
+
+
+def _email_dns_timeout_sec() -> int:
+    return max(3, min(30, int(os.getenv("EMAIL_DNS_TIMEOUT_SEC", "8"))))
+
+
+_VOWELS = frozenset("aeiouyAEIOUY")
+
+
+def _max_consonant_run(local_ascii: str) -> int:
+    max_run = 0
+    run = 0
+    for ch in local_ascii:
+        if ch.isalpha():
+            if ch in _VOWELS:
+                run = 0
+            else:
+                run += 1
+                max_run = max(max_run, run)
+        else:
+            run = 0
+    return max_run
+
+
+def _vowel_ratio_letters_only(local: str) -> float:
+    letters = [c for c in local if c.isalpha()]
+    if not letters:
+        return 1.0
+    vowels = sum(1 for c in letters if c in _VOWELS)
+    return vowels / len(letters)
+
+
+def _local_part_looks_like_keyboard_mash(local: str) -> bool:
     """
-    Validate email format with strict rules.
-    Returns: (is_valid: bool, error_message: str)
+    Heuristic: random-keyboard locals often have long consonant runs and few vowels (e.g. Hjdhjej).
+    Require both so real words like "rhythm" (y as vowel) are not blocked. No external services.
+    """
+    if len(local) < 6:
+        return False
+    if not re.match(r"^[a-zA-Z]+$", local):
+        return False
+    if _vowel_ratio_letters_only(local) >= 0.22:
+        return False
+    return _max_consonant_run(local) >= 5
+
+
+def validate_email(email: str) -> Tuple[bool, str, Optional[str]]:
+    """
+    Validate email for lead capture: RFC syntax + optional DNS deliverability + light heuristics.
+    No third-party verification APIs.
+
+    Returns: (is_valid, error_message, normalized_email_or_none)
     """
     if not email or not email.strip():
-        return False, "Email cannot be empty."
-    
-    email = email.strip().lower()
-    
-    # Basic format check
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    if not re.match(pattern, email):
-        return False, "Please enter a valid email address (e.g., example@domain.com)"
-    
-    # Check for common mistakes
-    if email.startswith('.') or email.startswith('@'):
-        return False, "Email cannot start with a dot or @ symbol."
-    
-    if email.count('@') != 1:
-        return False, "Email must contain exactly one @ symbol."
-    
-    if '..' in email:
-        return False, "Email cannot contain consecutive dots."
-    
-    # Check domain part
-    local_part, domain = email.split('@')
-    
-    # STRICT: Local part must be at least 4 characters (reject very short emails like "Abc", "Xyz")
+        return False, "Email cannot be empty.", None
+
+    raw = email.strip()
+    check_mx = _email_check_deliverability()
+    timeout = _email_dns_timeout_sec() if check_mx else None
+
+    try:
+        info = validate_email_rfc(
+            raw,
+            check_deliverability=check_mx,
+            timeout=timeout,
+        )
+        normalized = info.normalized
+    except EmailNotValidError:
+        return (
+            False,
+            "Please enter a valid email address (check spelling and domain).",
+            None,
+        )
+
+    if "@" not in normalized:
+        return False, "Please enter a valid email address.", None
+
+    local_part, _, domain = normalized.partition("@")
+    domain_lower = domain.lower()
+    normalized_lower = normalized.lower()
+
     if len(local_part) < 4:
-        return False, "Email address is too short. Please enter a valid email address (at least 4 characters before @)."
-    
-    # STRICT: Local part must contain at least one letter (reject pure numbers like "1234@...")
-    if not re.search(r'[a-zA-Z]', local_part):
-        return False, "Email address must contain at least one letter. Please enter a valid email address."
-    
-    if len(domain) < 4:  # x.co (minimum)
-        return False, "Email domain is too short."
-    
-    if not '.' in domain:
-        return False, "Email domain must contain a dot (e.g., gmail.com)."
-    
-    # Check TLD (top-level domain)
-    tld = domain.split('.')[-1]
-    if len(tld) < 2:
-        return False, "Email must have a valid domain extension (e.g., .com, .org)."
-    
-    # STRICT: Reject common fake/test patterns (case-insensitive)
+        return (
+            False,
+            "Email address is too short before @. Please enter your full address.",
+            None,
+        )
+
+    if not re.search(r"[a-zA-Z]", local_part):
+        return False, "Email address must contain at least one letter.", None
+
+    # Reject common fake/test patterns (case-insensitive)
     fake_patterns = [
-        r'^test@test\.',
-        r'^abc@abc\.',
-        r'^123@123\.',
-        r'^fake@fake\.',
-        r'^example@example\.',
-        r'^demo@demo\.',
-        r'^sample@sample\.',
-        r'^temp@temp\.',
-        r'^user@user\.',
-        r'^email@email\.',
+        r"^test@test\.",
+        r"^abc@abc\.",
+        r"^123@123\.",
+        r"^fake@fake\.",
+        r"^example@example\.",
+        r"^demo@demo\.",
+        r"^sample@sample\.",
+        r"^temp@temp\.",
+        r"^user@user\.",
+        r"^email@email\.",
     ]
     for pattern in fake_patterns:
-        if re.match(pattern, email, re.IGNORECASE):
-            return False, "Please enter a real email address."
-    
-    # STRICT: Reject common fake patterns even if they're 4+ characters
-    # Check for common fake patterns in local part
-    common_fake_patterns = ['abc', 'xyz', 'test', 'demo', 'fake', 'temp', 'user', 'mail', 'sample', 'example']
-    if local_part.lower() in common_fake_patterns:
-        return False, "Please enter a real email address."
-    
-    # STRICT: Reject local parts that are too simple (like "abcd", "test123", etc.)
-    # If local part is exactly 4 characters and all letters, check if it's a common pattern
-    if len(local_part) == 4 and re.match(r'^[a-zA-Z]{4}$', local_part):
-        # Reject common 4-letter fake patterns
-        common_4letter = ['abcd', 'test', 'demo', 'fake', 'temp', 'user', 'mail', 'name', 'info', 'data']
+        if re.match(pattern, normalized_lower, re.IGNORECASE):
+            return False, "Please enter a real email address.", None
+
+    common_fake_locals = frozenset(
+        ("abc", "xyz", "test", "demo", "fake", "temp", "user", "mail", "sample", "example")
+    )
+    if local_part.lower() in common_fake_locals:
+        return False, "Please enter a real email address.", None
+
+    if len(local_part) == 4 and re.match(r"^[a-zA-Z]{4}$", local_part):
+        common_4letter = frozenset(
+            ("abcd", "test", "demo", "fake", "temp", "user", "mail", "name", "info", "data")
+        )
         if local_part.lower() in common_4letter:
-            return False, "Please enter a real email address."
-    
-    # STRICT: Reject domains that look fake
-    fake_domains = ['test.com', 'example.com', 'fake.com', 'demo.com', 'sample.com', 'temp.com', 'abc.com', 'xyz.com']
-    if domain.lower() in fake_domains:
-        return False, "Please enter a real email address."
-    
-    return True, ""
+            return False, "Please enter a real email address.", None
+
+    fake_domains = frozenset(
+        ("test.com", "example.com", "fake.com", "demo.com", "sample.com", "temp.com", "abc.com", "xyz.com")
+    )
+    if domain_lower in fake_domains:
+        return False, "Please enter a real email address.", None
+
+    if _local_part_looks_like_keyboard_mash(local_part):
+        return (
+            False,
+            "That does not look like a real email. Please enter the address you actually use.",
+            None,
+        )
+
+    return True, "", normalized_lower
 
 
 def validate_phone(phone: str) -> Tuple[bool, str]:
@@ -191,9 +248,10 @@ def process_lead_capture_step(
         # Validate user input
         is_valid = False
         error_message = ""
-        
+        normalized_email: Optional[str] = None
+
         if field_type == "email" or validation == "email":
-            is_valid, error_message = validate_email(user_message.strip())
+            is_valid, error_message, normalized_email = validate_email(user_message.strip())
         elif field_type == "phone" or validation == "phone":
             is_valid, error_message = validate_phone(user_message.strip())
         else:
@@ -225,7 +283,7 @@ def process_lead_capture_step(
             lead_data = {}
             
             if field == "email":
-                lead_data["email"] = user_message.strip()
+                lead_data["email"] = normalized_email or user_message.strip()
             elif field == "phone":
                 lead_data["phone"] = user_message.strip()
             else:
