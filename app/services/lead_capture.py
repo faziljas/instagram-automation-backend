@@ -2,157 +2,25 @@
 Lead Capture Service
 Handles multi-step lead capture flows for automation rules.
 """
-import os
 import re
 from typing import Dict, Any, Optional, Tuple
 
-from email_validator import EmailNotValidError, validate_email as validate_email_rfc
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.models.automation_rule import AutomationRule
 from app.models.captured_lead import CapturedLead
 from app.models.automation_rule_stats import AutomationRuleStats
 from app.models.instagram_account import InstagramAccount
-
-
-def _email_check_deliverability() -> bool:
-    """DNS MX/A check via email-validator (no third-party HTTP APIs). Disabled in tests via env."""
-    return os.getenv("EMAIL_CHECK_DELIVERABILITY", "true").lower() in ("1", "true", "yes")
-
-
-def _email_dns_timeout_sec() -> int:
-    return max(3, min(30, int(os.getenv("EMAIL_DNS_TIMEOUT_SEC", "8"))))
-
-
-_VOWELS = frozenset("aeiouyAEIOUY")
-
-
-def _max_consonant_run(local_ascii: str) -> int:
-    max_run = 0
-    run = 0
-    for ch in local_ascii:
-        if ch.isalpha():
-            if ch in _VOWELS:
-                run = 0
-            else:
-                run += 1
-                max_run = max(max_run, run)
-        else:
-            run = 0
-    return max_run
-
-
-def _vowel_ratio_letters_only(local: str) -> float:
-    letters = [c for c in local if c.isalpha()]
-    if not letters:
-        return 1.0
-    vowels = sum(1 for c in letters if c in _VOWELS)
-    return vowels / len(letters)
-
-
-def _local_part_looks_like_keyboard_mash(local: str) -> bool:
-    """
-    Heuristic: random-keyboard locals often have long consonant runs and few vowels (e.g. Hjdhjej).
-    Require both so real words like "rhythm" (y as vowel) are not blocked. No external services.
-    """
-    if len(local) < 6:
-        return False
-    if not re.match(r"^[a-zA-Z]+$", local):
-        return False
-    if _vowel_ratio_letters_only(local) >= 0.22:
-        return False
-    return _max_consonant_run(local) >= 5
+from app.services.lead_capture_email_validation import validate_lead_capture_email
 
 
 def validate_email(email: str) -> Tuple[bool, str, Optional[str]]:
     """
-    Validate email for lead capture: RFC syntax + optional DNS deliverability + light heuristics.
-    No third-party verification APIs.
+    Lead-capture email validation (delegates to isolated layered module).
 
     Returns: (is_valid, error_message, normalized_email_or_none)
     """
-    if not email or not email.strip():
-        return False, "Email cannot be empty.", None
-
-    raw = email.strip()
-    check_mx = _email_check_deliverability()
-    timeout = _email_dns_timeout_sec() if check_mx else None
-
-    try:
-        info = validate_email_rfc(
-            raw,
-            check_deliverability=check_mx,
-            timeout=timeout,
-        )
-        normalized = info.normalized
-    except EmailNotValidError:
-        return (
-            False,
-            "Please enter a valid email address (check spelling and domain).",
-            None,
-        )
-
-    if "@" not in normalized:
-        return False, "Please enter a valid email address.", None
-
-    local_part, _, domain = normalized.partition("@")
-    domain_lower = domain.lower()
-    normalized_lower = normalized.lower()
-
-    if len(local_part) < 4:
-        return (
-            False,
-            "Email address is too short before @. Please enter your full address.",
-            None,
-        )
-
-    if not re.search(r"[a-zA-Z]", local_part):
-        return False, "Email address must contain at least one letter.", None
-
-    # Reject common fake/test patterns (case-insensitive)
-    fake_patterns = [
-        r"^test@test\.",
-        r"^abc@abc\.",
-        r"^123@123\.",
-        r"^fake@fake\.",
-        r"^example@example\.",
-        r"^demo@demo\.",
-        r"^sample@sample\.",
-        r"^temp@temp\.",
-        r"^user@user\.",
-        r"^email@email\.",
-    ]
-    for pattern in fake_patterns:
-        if re.match(pattern, normalized_lower, re.IGNORECASE):
-            return False, "Please enter a real email address.", None
-
-    common_fake_locals = frozenset(
-        ("abc", "xyz", "test", "demo", "fake", "temp", "user", "mail", "sample", "example")
-    )
-    if local_part.lower() in common_fake_locals:
-        return False, "Please enter a real email address.", None
-
-    if len(local_part) == 4 and re.match(r"^[a-zA-Z]{4}$", local_part):
-        common_4letter = frozenset(
-            ("abcd", "test", "demo", "fake", "temp", "user", "mail", "name", "info", "data")
-        )
-        if local_part.lower() in common_4letter:
-            return False, "Please enter a real email address.", None
-
-    fake_domains = frozenset(
-        ("test.com", "example.com", "fake.com", "demo.com", "sample.com", "temp.com", "abc.com", "xyz.com")
-    )
-    if domain_lower in fake_domains:
-        return False, "Please enter a real email address.", None
-
-    if _local_part_looks_like_keyboard_mash(local_part):
-        return (
-            False,
-            "That does not look like a real email. Please enter the address you actually use.",
-            None,
-        )
-
-    return True, "", normalized_lower
+    return validate_lead_capture_email(email)
 
 
 def validate_phone(phone: str) -> Tuple[bool, str]:
